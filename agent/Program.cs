@@ -414,46 +414,78 @@ internal static class Program
         string[] keywords =
         {
             "arduino",
+            "makcu",
+            "moku",
             "ch340",
             "ch341",
+            "ch343",
             "cp210",
             "ftdi",
             "usb serial",
+            "usb-serial",
             "serial port",
-            "com"
+            "vid_2341",
+            "vid_2a03",
+            "vid_1a86",
+            "vid_10c4",
+            "vid_0403",
+            "vid_303a"
         };
 
         var result = new List<SerialDeviceRecord>();
 
         using var searcher =
             new ManagementObjectSearcher(
-                "SELECT Name,DeviceID,PNPDeviceID,Manufacturer,Status FROM Win32_PnPEntity");
+                "SELECT Name,DeviceID,PNPDeviceID,Manufacturer,Status,PNPClass,Service FROM Win32_PnPEntity");
 
         foreach (ManagementObject item in searcher.Get())
         {
+            string name = Convert.ToString(item["Name"]) ?? "";
+            string deviceId = Convert.ToString(item["DeviceID"]) ?? "";
+            string pnpDeviceId = Convert.ToString(item["PNPDeviceID"]) ?? "";
+            string manufacturer = Convert.ToString(item["Manufacturer"]) ?? "";
+            string pnpClass = Convert.ToString(item["PNPClass"]) ?? "";
+            string service = Convert.ToString(item["Service"]) ?? "";
+
             string combined =
                 string.Join(
                     " ",
-                    Convert.ToString(item["Name"]) ?? "",
-                    Convert.ToString(item["DeviceID"]) ?? "",
-                    Convert.ToString(item["PNPDeviceID"]) ?? "",
-                    Convert.ToString(item["Manufacturer"]) ?? "")
+                    name,
+                    deviceId,
+                    pnpDeviceId,
+                    manufacturer,
+                    pnpClass,
+                    service)
                 .ToLowerInvariant();
 
-            if (!keywords.Any(combined.Contains)) continue;
+            bool comPortName =
+                System.Text.RegularExpressions.Regex.IsMatch(
+                    name,
+                    @"\(COM\d+\)",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+            bool serialClass =
+                pnpClass.Equals("Ports", StringComparison.OrdinalIgnoreCase);
+
+            if (!keywords.Any(combined.Contains) && !comPortName && !serialClass)
+                continue;
 
             result.Add(new SerialDeviceRecord
             {
-                Name = Convert.ToString(item["Name"]) ?? "",
-                DeviceId = Convert.ToString(item["DeviceID"]) ?? "",
-                PnpDeviceId = Convert.ToString(item["PNPDeviceID"]) ?? "",
-                Manufacturer = Convert.ToString(item["Manufacturer"]) ?? "",
-                Status = Convert.ToString(item["Status"]) ?? ""
+                Name = name,
+                DeviceId = deviceId,
+                PnpDeviceId = pnpDeviceId,
+                Manufacturer = manufacturer,
+                Status = Convert.ToString(item["Status"]) ?? "",
+                PnpClass = pnpClass,
+                Service = service
             });
         }
 
         return result
-            .GroupBy(x => x.PnpDeviceId + "|" + x.DeviceId, StringComparer.OrdinalIgnoreCase)
+            .GroupBy(
+                x => x.PnpDeviceId + "|" + x.DeviceId,
+                StringComparer.OrdinalIgnoreCase)
             .Select(x => x.First())
             .ToList();
     }
@@ -985,6 +1017,8 @@ internal sealed class SerialDeviceRecord
     public string PnpDeviceId { get; set; } = "";
     public string Manufacturer { get; set; } = "";
     public string Status { get; set; } = "";
+    public string PnpClass { get; set; } = "";
+    public string Service { get; set; } = "";
 }
 
 internal sealed class FileRecord
