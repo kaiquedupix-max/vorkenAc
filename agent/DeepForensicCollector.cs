@@ -251,7 +251,7 @@ internal static class DeepForensicCollector
                 if (!seen.Add(file)) continue;
 
                 string ext = Path.GetExtension(file);
-                if (IsExpectedPeExtension(ext)) continue;
+                if (!IsDeceptiveDocumentExtension(ext)) continue;
 
                 try
                 {
@@ -742,14 +742,19 @@ internal static class DeepForensicCollector
         return null;
     }
 
-    private static bool IsExpectedPeExtension(string ext)
+    private static bool IsDeceptiveDocumentExtension(string ext)
     {
-        string[] executableExtensions =
+        string[] deceptiveExtensions =
         {
-            ".exe", ".dll", ".sys", ".scr", ".cpl", ".ocx", ".com", ".efi"
+            ".txt", ".log", ".csv", ".json", ".xml", ".ini", ".cfg",
+            ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".ico",
+            ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+            ".zip", ".rar", ".7z", ".tar", ".gz",
+            ".mp3", ".wav", ".ogg", ".mp4", ".avi", ".mkv", ".mov",
+            ".html", ".htm", ".css", ".md"
         };
 
-        return executableExtensions.Contains(
+        return deceptiveExtensions.Contains(
             ext,
             StringComparer.OrdinalIgnoreCase);
     }
