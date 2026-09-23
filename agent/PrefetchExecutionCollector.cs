@@ -17,6 +17,14 @@ internal static class PrefetchExecutionCollector
         var deviceMap = GetDosDeviceMap();
         string systemDrive = Environment.GetEnvironmentVariable("SystemDrive") ?? "C:";
         string? systemDevice = QueryDevice(systemDrive);
+        string? systemVolumeGuid = QueryVolumeGuid(systemDrive);
+        var systemAliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (!string.IsNullOrWhiteSpace(systemDevice))
+            systemAliases.Add(NormalizeDevice(systemDevice));
+
+        if (!string.IsNullOrWhiteSpace(systemVolumeGuid))
+            systemAliases.Add(NormalizeDevice(systemVolumeGuid));
 
         foreach (string file in Directory
                      .EnumerateFiles(directory, "*.pf", SearchOption.TopDirectoryOnly)
@@ -94,15 +102,19 @@ internal static class PrefetchExecutionCollector
                         DriveType.Removable.ToString(),
                         StringComparison.OrdinalIgnoreCase) == true;
 
+                bool nativeLooksLikeWindowsSystemPath =
+                    LooksLikeWindowsSystemPath(nativeExecutablePath, resolvedPath);
+
                 bool nonSystemVolume =
                     executableVolume is not null &&
-                    !string.IsNullOrWhiteSpace(systemDevice) &&
-                    !NormalizeDevice(executableVolume.DeviceName)
-                        .Equals(NormalizeDevice(systemDevice), StringComparison.OrdinalIgnoreCase);
+                    !systemAliases.Contains(NormalizeDevice(executableVolume.DeviceName));
 
                 bool likelyDetachedOrRemovable =
-                    currentRemovable ||
-                    (volumeNotMounted && nonSystemVolume);
+                    !nativeLooksLikeWindowsSystemPath &&
+                    (
+                        currentRemovable ||
+                        (volumeNotMounted && nonSystemVolume)
+                    );
 
                 result.Add(new PrefetchExecutionRecord
                 {
@@ -148,12 +160,18 @@ internal static class PrefetchExecutionCollector
             string? device = QueryDevice(driveLetter);
             if (string.IsNullOrWhiteSpace(device)) continue;
 
-            result[NormalizeDevice(device)] = new DosDeviceRecord
+            var record = new DosDeviceRecord
             {
                 DriveLetter = driveLetter,
                 DevicePath = device,
+                VolumeGuidPath = QueryVolumeGuid(driveLetter) ?? "",
                 DriveType = drive.DriveType.ToString()
             };
+
+            result[NormalizeDevice(device)] = record;
+
+            if (!string.IsNullOrWhiteSpace(record.VolumeGuidPath))
+                result[NormalizeDevice(record.VolumeGuidPath)] = record;
         }
 
         return result;
@@ -174,7 +192,15 @@ internal static class PrefetchExecutionCollector
                 continue;
             }
 
-            string suffix = nativePath[pair.Value.DevicePath.Length..]
+            string matchedPrefix =
+                NormalizeDevice(nativePath).StartsWith(
+                    NormalizeDevice(pair.Value.VolumeGuidPath),
+                    StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(pair.Value.VolumeGuidPath)
+                    ? pair.Value.VolumeGuidPath
+                    : pair.Value.DevicePath;
+
+            string suffix = nativePath[Math.Min(matchedPrefix.Length, nativePath.Length)..]
                 .TrimStart('\\');
 
             return pair.Value.DriveLetter + "\\" + suffix;
@@ -201,8 +227,77 @@ internal static class PrefetchExecutionCollector
         }
     }
 
-    private static string NormalizeDevice(string? value) =>
-        (value ?? "").Trim().TrimEnd('\\').ToUpperInvariant();
+    private static string? QueryVolumeGuid(string driveLetter)
+    {
+        try
+        {
+            string mountPoint = driveLetter.TrimEnd('\\') + "\\";
+            var buffer = new StringBuilder(1024);
+
+            return GetVolumeNameForVolumeMountPoint(
+                mountPoint,
+                buffer,
+                buffer.Capacity)
+                ? buffer.ToString()
+                : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static bool LooksLikeWindowsSystemPath(
+        string? nativePath,
+        string? resolvedPath)
+    {
+        string windows = Environment.GetFolderPath(
+            Environment.SpecialFolder.Windows);
+
+        if (!string.IsNullOrWhiteSpace(resolvedPath) &&
+            !string.IsNullOrWhiteSpace(windows))
+        {
+            try
+            {
+                string fullResolved = Path.GetFullPath(resolvedPath);
+                string fullWindows = Path.GetFullPath(windows)
+                    .TrimEnd(Path.DirectorySeparatorChar) +
+                    Path.DirectorySeparatorChar;
+
+                if (fullResolved.StartsWith(
+                    fullWindows,
+                    StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        string normalizedNative = NormalizeDevice(nativePath);
+
+        return normalizedNative.Contains(
+                   @"\WINDOWS\",
+                   StringComparison.OrdinalIgnoreCase) ||
+               normalizedNative.EndsWith(
+                   @"\WINDOWS",
+                   StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeDevice(string? value)
+    {
+        string normalized = (value ?? "")
+            .Trim()
+            .TrimEnd('\\')
+            .ToUpperInvariant();
+
+        if (normalized.StartsWith(@"\\?\VOLUME{", StringComparison.OrdinalIgnoreCase))
+            normalized = "\" + normalized[4..];
+
+        return normalized;
+    }
 
     private static DateTime SafeLastWriteUtc(string path)
     {
@@ -215,12 +310,20 @@ internal static class PrefetchExecutionCollector
         string? lpDeviceName,
         StringBuilder lpTargetPath,
         int ucchMax);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetVolumeNameForVolumeMountPoint(
+        string lpszVolumeMountPoint,
+        StringBuilder lpszVolumeName,
+        int cchBufferLength);
 }
 
 internal sealed class DosDeviceRecord
 {
     public string DriveLetter { get; set; } = "";
     public string DevicePath { get; set; } = "";
+    public string VolumeGuidPath { get; set; } = "";
     public string DriveType { get; set; } = "";
 }
 
