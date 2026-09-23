@@ -224,6 +224,8 @@ async function openReport(id) {
     userAssist: payload.userAssist || [],
     muiCache: payload.muiCache || [],
     pca: payload.pca || [],
+    amcache: payload.amcache || [],
+    shimCache: payload.shimCache || [],
     setupApiUsb: payload.setupApiUsb || [],
     powerShellHits: payload.powerShellHits || [],
     prefetchIntegrity: payload.prefetchIntegrity || [],
@@ -304,6 +306,8 @@ async function openReport(id) {
     <div class="kv"><span>UserAssist</span><span>${arrays.userAssist.length}</span></div>
     <div class="kv"><span>MUICache</span><span>${arrays.muiCache.length}</span></div>
     <div class="kv"><span>PCA Store</span><span>${arrays.pca.length}</span></div>
+    <div class="kv"><span>Amcache</span><span>${arrays.amcache.length}</span></div>
+    <div class="kv"><span>ShimCache</span><span>${arrays.shimCache.length}</span></div>
     <div class="kv"><span>SetupAPI USB</span><span>${arrays.setupApiUsb.length}</span></div>
     <div class="kv"><span>PowerShell por regra</span><span>${arrays.powerShellHits.length}</span></div>
     <div class="kv"><span>Anomalias Prefetch</span><span>${arrays.prefetchIntegrity.length}</span></div>
@@ -531,6 +535,24 @@ async function openReport(id) {
       value: item.path,
       detail: item.fileExists ? "Arquivo presente" : "Arquivo ausente",
       state: ""
+    });
+  }
+
+  for (const item of arrays.amcache.slice(0, 300)) {
+    execArtifacts.push({
+      source: "Amcache",
+      value: item.fullPath || item.name,
+      detail: "Registro: " + formatDate(item.fileKeyLastWriteUtc),
+      state: item.filePresent ? "Arquivo presente" : "Arquivo ausente"
+    });
+  }
+
+  for (const item of arrays.shimCache.slice(0, 300)) {
+    execArtifacts.push({
+      source: "ShimCache",
+      value: item.path,
+      detail: item.lastModifiedUtc ? "Última modificação: " + formatDate(item.lastModifiedUtc) : "Timestamp não disponível",
+      state: item.filePresent ? "Arquivo presente" : "Arquivo ausente"
     });
   }
 
