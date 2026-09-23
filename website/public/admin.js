@@ -97,6 +97,7 @@ logoutBtn.addEventListener("click", async () => {
 document.getElementById("analysisForm").addEventListener("submit", async (event) => {
   event.preventDefault();
 
+  const form = event.currentTarget;
   const box = document.getElementById("analysisCreated");
   box.classList.add("hidden");
 
@@ -121,7 +122,7 @@ document.getElementById("analysisForm").addEventListener("submit", async (event)
       document.getElementById("copyCreatedLink").textContent = "Copiado ✓";
     });
 
-    event.currentTarget.reset();
+    form.reset();
     document.getElementById("analysisTtl").value = "24";
     await loadAnalyses();
   } catch (error) {
@@ -132,6 +133,8 @@ document.getElementById("analysisForm").addEventListener("submit", async (event)
 
 document.getElementById("ruleForm").addEventListener("submit", async (event) => {
   event.preventDefault();
+
+  const form = event.currentTarget;
 
   try {
     await api("/api/admin/rules", {
@@ -145,7 +148,7 @@ document.getElementById("ruleForm").addEventListener("submit", async (event) => 
       }),
     });
 
-    event.currentTarget.reset();
+    form.reset();
     document.getElementById("ruleSeverity").value = "medium";
     await loadRules();
   } catch (error) {
