@@ -344,7 +344,7 @@ internal static class PrefetchExecutionCollector
             .ToUpperInvariant();
 
         if (normalized.StartsWith(@"\\?\VOLUME{", StringComparison.OrdinalIgnoreCase))
-            normalized = "\" + normalized[4..];
+            normalized = "\\" + normalized[4..];
 
         return normalized;
     }
