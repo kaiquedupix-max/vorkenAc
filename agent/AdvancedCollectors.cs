@@ -1,4 +1,6 @@
 using Microsoft.Win32;
+using System.Management;
+using System.Security.Cryptography;
 using System.Text;
 
 namespace Vorken.Agent;
@@ -330,7 +332,190 @@ internal static class AdvancedCollectors
         {
         }
 
+        try
+        {
+            using RegistryKey? bamKey = Registry.LocalMachine.OpenSubKey(
+                @"SYSTEM\CurrentControlSet\Services\bam");
+            result.BamStart = bamKey?.GetValue("Start") is int start ? start : null;
+        }
+        catch
+        {
+        }
+
         return result;
+    }
+
+    public static List<PrefetchIntegrityRecord> CollectPrefetchIntegrity()
+    {
+        var result = new List<PrefetchIntegrityRecord>();
+        string directory = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+            "Prefetch");
+
+        if (!Directory.Exists(directory)) return result;
+
+        var byHash = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (string file in Directory.EnumerateFiles(directory, "*.pf", SearchOption.TopDirectoryOnly).Take(5000))
+        {
+            try
+            {
+                var info = new FileInfo(file);
+                string? hash = TrySha256(file);
+
+                if (!string.IsNullOrWhiteSpace(hash))
+                {
+                    if (!byHash.TryGetValue(hash, out List<string>? names))
+                    {
+                        names = new List<string>();
+                        byHash[hash] = names;
+                    }
+                    names.Add(info.Name);
+                }
+
+                if (info.IsReadOnly)
+                {
+                    result.Add(new PrefetchIntegrityRecord
+                    {
+                        Kind = "read_only",
+                        Name = info.Name,
+                        Detail = "Prefetch marcado como somente leitura.",
+                        Sha256 = hash,
+                        LastWriteUtc = info.LastWriteTimeUtc
+                    });
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        foreach (var pair in byHash.Where(x => x.Value.Count > 1))
+        {
+            result.Add(new PrefetchIntegrityRecord
+            {
+                Kind = "duplicate_hash",
+                Name = string.Join(", ", pair.Value.Take(12)),
+                Detail = "Múltiplos arquivos Prefetch possuem o mesmo SHA-256.",
+                Sha256 = pair.Key
+            });
+        }
+
+        return result.Take(500).ToList();
+    }
+
+    public static List<VolumeRecord> CollectVolumesWithoutDriveLetter()
+    {
+        var result = new List<VolumeRecord>();
+
+        using var searcher = new ManagementObjectSearcher(
+            "SELECT DeviceID,DriveLetter,Label,FileSystem,Capacity,BootVolume,SystemVolume FROM Win32_Volume");
+
+        foreach (ManagementObject item in searcher.Get())
+        {
+            string driveLetter = Convert.ToString(item["DriveLetter"]) ?? "";
+            if (!string.IsNullOrWhiteSpace(driveLetter)) continue;
+
+            bool boot = Convert.ToBoolean(item["BootVolume"] ?? false);
+            bool system = Convert.ToBoolean(item["SystemVolume"] ?? false);
+
+            result.Add(new VolumeRecord
+            {
+                DeviceId = Convert.ToString(item["DeviceID"]) ?? "",
+                Label = Convert.ToString(item["Label"]) ?? "",
+                FileSystem = Convert.ToString(item["FileSystem"]) ?? "",
+                Capacity = item["Capacity"] is null ? null : Convert.ToUInt64(item["Capacity"]),
+                BootVolume = boot,
+                SystemVolume = system,
+                ExpectedSystemVolume = boot || system
+            });
+        }
+
+        return result.Take(100).ToList();
+    }
+
+    public static List<EventLogSignalRecord> CollectRecentLogClearSignals()
+    {
+        var result = new List<EventLogSignalRecord>();
+        ReadWevtutil(
+            "System",
+            "*[System[(EventID=104) and TimeCreated[timediff(@SystemTime) <= 86400000]]]",
+            "System log clear (Event ID 104)",
+            result);
+
+        ReadWevtutil(
+            "Security",
+            "*[System[(EventID=1102) and TimeCreated[timediff(@SystemTime) <= 86400000]]]",
+            "Security audit log clear (Event ID 1102)",
+            result);
+
+        return result;
+    }
+
+    private static void ReadWevtutil(
+        string channel,
+        string query,
+        string signal,
+        List<EventLogSignalRecord> result)
+    {
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "wevtutil.exe",
+                Arguments = $"qe {channel} /q:\"{query}\" /f:text /rd:true /c:10",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using var process = System.Diagnostics.Process.Start(psi);
+            if (process == null) return;
+
+            string output = process.StandardOutput.ReadToEnd();
+            string error = process.StandardError.ReadToEnd();
+
+            if (!process.WaitForExit(8000))
+            {
+                try { process.Kill(true); } catch { }
+                return;
+            }
+
+            if (process.ExitCode != 0 || string.IsNullOrWhiteSpace(output))
+                return;
+
+            string normalized = output.Trim();
+            if (normalized.Length > 12000) normalized = normalized[..12000];
+
+            result.Add(new EventLogSignalRecord
+            {
+                Channel = channel,
+                Signal = signal,
+                WindowHours = 24,
+                Evidence = normalized
+            });
+        }
+        catch
+        {
+        }
+    }
+
+    private static string? TrySha256(string path)
+    {
+        try
+        {
+            using FileStream stream = new(
+                path,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete);
+            return Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static bool SafeFileExists(string value)
@@ -418,4 +603,33 @@ internal sealed class SystemArtifactRecord
     public int? EnablePrefetcher { get; set; }
     public bool AmcacheExists { get; set; }
     public bool SetupApiLogExists { get; set; }
+    public int? BamStart { get; set; }
+}
+
+internal sealed class PrefetchIntegrityRecord
+{
+    public string Kind { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string Detail { get; set; } = "";
+    public string? Sha256 { get; set; }
+    public DateTime? LastWriteUtc { get; set; }
+}
+
+internal sealed class VolumeRecord
+{
+    public string DeviceId { get; set; } = "";
+    public string Label { get; set; } = "";
+    public string FileSystem { get; set; } = "";
+    public ulong? Capacity { get; set; }
+    public bool BootVolume { get; set; }
+    public bool SystemVolume { get; set; }
+    public bool ExpectedSystemVolume { get; set; }
+}
+
+internal sealed class EventLogSignalRecord
+{
+    public string Channel { get; set; } = "";
+    public string Signal { get; set; } = "";
+    public int WindowHours { get; set; }
+    public string Evidence { get; set; } = "";
 }
