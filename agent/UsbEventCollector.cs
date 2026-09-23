@@ -191,12 +191,27 @@ internal static class UsbEventCollector
 
             string? deviceId = FindDeviceIdentifier(values.Select(x => x.Value));
 
+            if (string.IsNullOrWhiteSpace(deviceId) && eventId == 1006)
+            {
+                string? parentId = values
+                    .FirstOrDefault(x => x.Name.Equals("ParentId", StringComparison.OrdinalIgnoreCase))
+                    ?.Value;
+
+                string? serialNumber = values
+                    .FirstOrDefault(x => x.Name.Equals("SerialNumber", StringComparison.OrdinalIgnoreCase))
+                    ?.Value;
+
+                deviceId = !string.IsNullOrWhiteSpace(parentId)
+                    ? parentId
+                    : serialNumber;
+            }
+
             string eventType = eventId switch
             {
                 2003 => "connect",
                 2102 => "disconnect",
                 400 or 410 or 430 => "connect",
-                1006 => "partition_activity",
+                1006 => GetPartitionEventType(values),
                 _ => "device_activity"
             };
 
@@ -226,6 +241,32 @@ internal static class UsbEventCollector
         catch
         {
         }
+    }
+
+    private static string GetPartitionEventType(
+        IEnumerable<dynamic> values)
+    {
+        try
+        {
+            foreach (var item in values)
+            {
+                string name = Convert.ToString(item.Name) ?? "";
+                if (!name.Equals("Capacity", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                string raw = Convert.ToString(item.Value) ?? "";
+                if (!ulong.TryParse(raw, out ulong capacity))
+                    break;
+
+                // Partition/Diagnostic Event 1006 uses Capacity=0 for removal.
+                return capacity == 0 ? "disconnect" : "connect";
+            }
+        }
+        catch
+        {
+        }
+
+        return "partition_activity";
     }
 
     private static string? FindDeviceIdentifier(IEnumerable<string> values)
