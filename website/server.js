@@ -498,278 +498,193 @@ async function insertReviewFinding(
 }
 
 async function addBuiltInReviewFindings(analysisId, report) {
-  for (const item of report.prefetchIntegrity || []) {
-    await insertReviewFinding(
-      analysisId,
-      item.kind === "duplicate_hash"
-        ? "Revisão: arquivos Prefetch com hash duplicado"
-        : "Revisão: integridade do Prefetch",
-      item.kind === "duplicate_hash" ? "medium" : "low",
-      "prefetch_integrity",
-      item.name || item.kind,
-      {
-        ...item,
-        note: "Indicador técnico para revisão; não é prova isolada de cheat.",
-      }
-    );
-  }
-
-  for (const item of report.hiddenVolumes || []) {
-    if (item.expectedSystemVolume) continue;
-
-    await insertReviewFinding(
-      analysisId,
-      "Revisão: volume sem letra de unidade",
-      "low",
-      "volume",
-      item.deviceId || item.label || "volume",
-      {
-        ...item,
-        note: "Volumes sem letra podem ser legítimos; correlacione com outras evidências.",
-      }
-    );
-  }
-
-  for (const item of report.logClearSignals || []) {
-    await insertReviewFinding(
-      analysisId,
-      "Revisão: limpeza recente de log do Windows",
-      "medium",
-      "event_log",
-      item.signal || item.channel,
-      {
-        ...item,
-        note: "Limpeza de log pode ter causa administrativa legítima; requer contexto.",
-      }
-    );
-  }
-
-  const state = report.systemArtifacts || {};
-
-  if (state.prefetchDirectoryExists === false) {
-    await insertReviewFinding(
-      analysisId,
-      "Revisão: diretório Prefetch ausente",
-      "medium",
-      "system_artifact",
-      "Prefetch",
-      {
-        ...state,
-        note: "A ausência do Prefetch reduz evidências de execução e também pode decorrer de configuração do sistema.",
-      }
-    );
-  }
-
-  if (state.enablePrefetcher === 0) {
-    await insertReviewFinding(
-      analysisId,
-      "Revisão: Prefetch desativado",
-      "medium",
-      "system_artifact",
-      "EnablePrefetcher=0",
-      {
-        ...state,
-        note: "Configuração pode ser legítima; correlacione com o restante da análise.",
-      }
-    );
-  }
-
-  if (state.bamStart === 4) {
-    await insertReviewFinding(
-      analysisId,
-      "Revisão: BAM desativado",
-      "medium",
-      "system_artifact",
-      "BAM Start=4",
-      {
-        ...state,
-        note: "BAM desativado reduz um artefato de execução; não implica cheat por si só.",
-      }
-    );
-  }
-
   const now = Date.now();
 
-  for (const execution of report.prefetchExecutions || []) {
-    const lastRunMs = execution.lastRunUtc
-      ? new Date(execution.lastRunUtc).getTime()
-      : 0;
-
-    const ageDays = lastRunMs
-      ? (now - lastRunMs) / 86400000
+  const ageDays = (value) => {
+    if (!value) return Number.POSITIVE_INFINITY;
+    const ms = new Date(value).getTime();
+    return Number.isFinite(ms)
+      ? (now - ms) / 86400000
       : Number.POSITIVE_INFINITY;
+  };
 
-    const executionPath = String(
+  const normalizePath = (value) =>
+    String(value || "")
+      .replaceAll("/", "\\")
+      .toLowerCase();
+
+  const isTrustedInstalledPath = (value) => {
+    const p = normalizePath(value);
+
+    return (
+      p.includes("\\windows\\") ||
+      p.includes("\\program files\\") ||
+      p.includes("\\program files (x86)\\") ||
+      p.includes("\\steam\\steamapps\\common\\") ||
+      p.includes("\\steamapps\\common\\")
+    );
+  };
+
+  const isSuspiciousUserPath = (value) => {
+    const p = normalizePath(value);
+
+    return (
+      p.includes("\\appdata\\local\\temp\\") ||
+      p.includes("\\temp\\") ||
+      p.includes("\\downloads\\") ||
+      p.includes("\\desktop\\")
+    );
+  };
+
+  const isVolumeRootExecutable = (value) => {
+    const p = normalizePath(value);
+    return /^\\volume\{[^}]+\}\\[^\\]+\.(exe|com|scr)$/i.test(p);
+  };
+
+  const fileName = (value) => {
+    const p = normalizePath(value);
+    const parts = p.split("\\").filter(Boolean);
+    return parts.at(-1) || "";
+  };
+
+  // HIGH-SIGNAL EXECUTION: confirmed removable drive, or a recent executable
+  // from a detached non-system volume at the root/user-temporary location.
+  // A generic unresolved Prefetch volume alone is NOT a finding.
+  for (const execution of report.prefetchExecutions || []) {
+    const lastAge = ageDays(execution.lastRunUtc);
+    if (lastAge > 30) continue;
+
+    const executionPath =
       execution.resolvedExecutablePath ||
       execution.nativeExecutablePath ||
-      ""
-    ).replaceAll("/", "\\").toLowerCase();
+      "";
 
-    const windowsSystemExecution =
-      executionPath.includes("\\windows\\") ||
-      executionPath.endsWith("\\windows");
+    if (isTrustedInstalledPath(executionPath))
+      continue;
 
-    if (!windowsSystemExecution &&
-        execution.likelyDetachedOrRemovable &&
-        ageDays <= 30) {
-      await insertReviewFinding(
-        analysisId,
-        "Execução recente em volume removível ou não montado",
-        ageDays <= 7 ? "high" : "medium",
-        "prefetch_execution",
-        execution.executableName || execution.nativeExecutablePath || execution.prefetchFile,
-        {
-          ...execution,
-          note: "O Prefetch confirma execução do programa. O volume associado não está montado atualmente ou era removível.",
-        }
+    const confirmedRemovable =
+      execution.currentRemovable === true;
+
+    const strongDetachedEvidence =
+      execution.volumeNotMounted === true &&
+      execution.nonSystemVolume === true &&
+      execution.executablePresent !== true &&
+      (
+        isVolumeRootExecutable(execution.nativeExecutablePath) ||
+        isSuspiciousUserPath(executionPath)
       );
-    }
 
-    if (!windowsSystemExecution &&
-        execution.executablePresent === false &&
-        execution.nonSystemVolume &&
-        ageDays <= 14) {
-      await insertReviewFinding(
-        analysisId,
-        "Executável recente não está mais presente",
-        "medium",
-        "prefetch_execution",
-        execution.executableName || execution.nativeExecutablePath || execution.prefetchFile,
-        {
-          ...execution,
-          note: "Há evidência de execução recente, mas o executável não foi encontrado no caminho resolvido durante a análise.",
-        }
-      );
-    }
+    if (!confirmedRemovable && !strongDetachedEvidence)
+      continue;
+
+    await insertReviewFinding(
+      analysisId,
+      confirmedRemovable
+        ? "Execução recente em mídia removível"
+        : "Execução recente em volume removido/não montado",
+      confirmedRemovable || lastAge <= 7 ? "high" : "medium",
+      "prefetch_execution",
+      execution.executableName ||
+        execution.nativeExecutablePath ||
+        execution.prefetchFile,
+      {
+        ...execution,
+        confidence: confirmedRemovable ? "high" : "medium",
+        note: confirmedRemovable
+          ? "O Prefetch registrou execução em uma unidade atualmente identificada como removível."
+          : "O Prefetch registrou um executável recente em volume não montado, sem arquivo presente, em caminho compatível com execução portátil. Volume não resolvido sozinho não gera alerta.",
+      }
+    );
   }
 
+  // BAM is useful as corroboration, but stale system/application entries are common.
   for (const item of report.bam || []) {
-    const lastRunMs = item.lastExecutionUtc
-      ? new Date(item.lastExecutionUtc).getTime()
-      : 0;
+    const lastAge = ageDays(item.lastExecutionUtc);
+    const p = item.path || "";
 
-    const ageDays = lastRunMs
-      ? (now - lastRunMs) / 86400000
-      : Number.POSITIVE_INFINITY;
-
-    if (item.fileExists === false && ageDays <= 7) {
-      await insertReviewFinding(
-        analysisId,
-        "BAM: execução recente de arquivo não localizado",
-        "medium",
-        "bam",
-        item.path || "BAM",
-        {
-          ...item,
-          note: "BAM registrou execução recente, mas o arquivo não está disponível no momento da análise. Pode ser remoção, mídia desconectada ou software desinstalado.",
-        }
-      );
+    if (lastAge > 7 ||
+        item.fileExists !== false ||
+        isTrustedInstalledPath(p) ||
+        (!isSuspiciousUserPath(p) && !isVolumeRootExecutable(p))) {
+      continue;
     }
+
+    await insertReviewFinding(
+      analysisId,
+      "BAM: execução recente de arquivo não localizado",
+      "medium",
+      "bam",
+      p || "BAM",
+      {
+        ...item,
+        confidence: "medium",
+        note: "BAM registrou execução recente em caminho temporário/usuário ou raiz de volume, e o arquivo não está mais presente.",
+      }
+    );
   }
 
-  for (const item of report.amcache || []) {
-    const timestampMs = item.fileKeyLastWriteUtc
-      ? new Date(item.fileKeyLastWriteUtc).getTime()
-      : 0;
-
-    const ageDays = timestampMs
-      ? (now - timestampMs) / 86400000
-      : Number.POSITIVE_INFINITY;
-
-    if (item.filePresent === false &&
-        item.isPeFile === true &&
-        ageDays <= 30) {
-      await insertReviewFinding(
-        analysisId,
-        "Amcache: binário histórico não está mais presente",
-        item.driveType === "Removable" || item.driveType === "Network"
-          ? "high"
-          : "medium",
-        "amcache",
-        item.fullPath || item.name || "Amcache",
-        {
-          ...item,
-          note: "Amcache preservou metadados de um binário que não foi localizado durante a análise. Amcache não prova execução sozinho em todas as versões do Windows; correlacione com Prefetch/BAM/PCA/Event Logs.",
-        }
-      );
-    }
-  }
-
-  for (const item of report.shimCache || []) {
-    const lower = String(item.path || "").toLowerCase();
-    const interestingExtension = /\.(exe|dll|scr|com|bat|cmd|ps1)$/.test(lower);
-
-    if (item.filePresent === false && interestingExtension) {
-      await insertReviewFinding(
-        analysisId,
-        "ShimCache: arquivo histórico não localizado",
-        "low",
-        "shimcache",
-        item.path || "ShimCache",
-        {
-          ...item,
-          note: "ShimCache registra presença/compatibilidade de aplicações; em Windows modernos não deve ser tratado isoladamente como prova de execução.",
-        }
-      );
-    }
-  }
-
+  // Event 4688 is strong execution evidence when audit logging was enabled.
   for (const item of report.processCreationEvents || []) {
-    const eventMs = item.timeCreatedUtc
-      ? new Date(item.timeCreatedUtc).getTime()
-      : 0;
+    const lastAge = ageDays(item.timeCreatedUtc);
+    if (lastAge > 14) continue;
 
-    const ageDays = eventMs
-      ? (now - eventMs) / 86400000
-      : Number.POSITIVE_INFINITY;
+    const p = item.processPath || "";
 
-    if (item.processPresent === false && ageDays <= 14) {
-      await insertReviewFinding(
-        analysisId,
-        "Processo executado recentemente e arquivo não localizado",
-        item.driveType === "Removable" || item.driveType === "Network" ? "high" : "medium",
-        "process_history",
-        item.processPath || item.processName || "processo",
-        {
-          ...item,
-          note: "O Event Log de criação de processo registrou a execução, mas o arquivo não está presente durante a análise.",
-        }
+    if (isTrustedInstalledPath(p))
+      continue;
+
+    const external =
+      item.driveType === "Removable" ||
+      item.driveType === "Network";
+
+    const missingSuspicious =
+      item.processPresent === false &&
+      (
+        isSuspiciousUserPath(p) ||
+        isVolumeRootExecutable(p)
       );
-    }
 
-    if ((item.driveType === "Removable" || item.driveType === "Network") &&
-        ageDays <= 30) {
-      await insertReviewFinding(
-        analysisId,
-        item.driveType === "Network"
-          ? "Execução registrada a partir de recurso de rede"
-          : "Execução registrada a partir de mídia removível",
-        "high",
-        "process_history",
-        item.processPath || item.processName || "processo",
-        {
-          ...item,
-          note: "Execução confirmada pelo Event Log 4688 quando a auditoria estava habilitada.",
-        }
-      );
-    }
+    if (!external && !missingSuspicious)
+      continue;
+
+    await insertReviewFinding(
+      analysisId,
+      external
+        ? (item.driveType === "Network"
+            ? "Execução registrada a partir de recurso de rede"
+            : "Execução registrada a partir de mídia removível")
+        : "Processo executado recentemente e arquivo não localizado",
+      external ? "high" : "medium",
+      "process_history",
+      p || item.processName || "processo",
+      {
+        ...item,
+        confidence: external ? "high" : "medium",
+        note: "Execução confirmada pelo Event Log 4688; caminhos normais do Windows e Program Files são ignorados.",
+      }
+    );
   }
 
+  // Only deceptive document/media/archive extensions are collected by the agent.
   for (const item of report.extensionMismatches || []) {
     await insertReviewFinding(
       analysisId,
-      "Arquivo PE com extensão modificada",
+      "Executável disfarçado com extensão não executável",
       "medium",
       "extension_mismatch",
       item.path || item.name || "arquivo",
       {
         ...item,
-        note: "O conteúdo começa com cabeçalho MZ/PE, mas a extensão não é uma extensão executável normal.",
+        confidence: "medium",
+        note: "O arquivo possui cabeçalho PE/MZ, mas usa uma extensão normalmente associada a documento, mídia, arquivo compactado ou texto.",
       }
     );
   }
 
+  // Defender history is useful evidence, but still requires human review.
   for (const item of report.defenderDetections || []) {
+    if (!item.threatName && !item.path) continue;
+
     await insertReviewFinding(
       analysisId,
       "Histórico de detecção do Microsoft Defender",
@@ -778,33 +693,75 @@ async function addBuiltInReviewFindings(analysisId, report) {
       item.threatName || item.path || "Defender",
       {
         ...item,
-        note: "Detecção de antivírus é contexto adicional; confirme o arquivo e o horário antes de qualquer decisão.",
+        confidence: "medium",
+        note: "Registro do Microsoft Defender. Confirme nome, caminho e horário; não é ban automático.",
       }
     );
   }
 
+  const knownOverlayTokens = [
+    "discord",
+    "steam",
+    "gameoverlayrenderer",
+    "nvidia",
+    "nvspcap",
+    "amd",
+    "radeon",
+    "obs",
+    "overwolf",
+    "medal",
+    "steelseries",
+    "logitech",
+    "razer",
+    "microsoft"
+  ];
+
+  // Loaded modules become findings only when they are external, unsigned and
+  // not a known overlay/vendor module.
   for (const item of report.rustModules || []) {
+    const haystack = [
+      item.path,
+      item.moduleName,
+      item.companyName,
+      item.signerSubject
+    ].join(" ").toLowerCase();
+
+    const knownOverlay =
+      knownOverlayTokens.some((token) => haystack.includes(token));
+
     const suspiciousExternal =
+      !knownOverlay &&
       item.signed === false &&
       item.underGameDirectory === false &&
       item.underWindows === false &&
-      (item.underUserProfile === true || item.underTemp === true);
+      (
+        item.underTemp === true ||
+        (
+          item.underUserProfile === true &&
+          !item.underProgramFiles &&
+          !item.companyName
+        )
+      );
 
-    if (!suspiciousExternal) continue;
+    if (!suspiciousExternal)
+      continue;
 
     await insertReviewFinding(
       analysisId,
-      "Módulo não assinado carregado no processo do Rust",
+      "Módulo externo não assinado carregado no Rust",
       item.underTemp ? "high" : "medium",
       "rust_module",
       item.path || item.moduleName || "DLL",
       {
         ...item,
-        note: "Módulo externo e não assinado carregado no processo do jogo. Overlays e ferramentas legítimas podem exigir revisão manual.",
+        confidence: item.underTemp ? "high" : "medium",
+        note: "Módulos conhecidos de Steam/Discord/GPU/overlays são filtrados. Este módulo é externo, não assinado e veio de local de usuário/temporário.",
       }
     );
   }
 
+  // Boot integrity changes are kept because they materially alter Windows
+  // integrity guarantees, but they are not classified as cheat by themselves.
   for (const item of report.bootIntegrity || []) {
     const raw = String(item.raw || "").toLowerCase();
     const enabled =
@@ -821,85 +778,21 @@ async function addBuiltInReviewFindings(analysisId, report) {
       item.raw || item.setting || "BCD",
       {
         ...item,
-        note: "Test mode, debug ou nointegritychecks podem ter uso legítimo, mas alteram garantias de integridade do Windows.",
+        confidence: "context",
+        note: "Test mode, debug ou nointegritychecks alteram garantias do Windows. É contexto técnico, não prova isolada de cheat.",
       }
     );
   }
 
-  const activity = report.activityHistory || {};
-  if (activity.enableActivityFeed === 0 ||
-      activity.publishUserActivities === 0 ||
-      activity.uploadUserActivities === 0) {
-    await insertReviewFinding(
-      analysisId,
-      "Activity History do Windows desativado por política",
-      "low",
-      "activity_history",
-      "Windows Activity History",
-      {
-        ...activity,
-        note: "Pode ser uma configuração legítima de privacidade; é apenas um indicador contextual.",
-      }
-    );
-  }
-
-  for (const item of report.usnJournalState || []) {
-    if (item.active !== false) continue;
-
-    await insertReviewFinding(
-      analysisId,
-      "USN Journal indisponível em volume NTFS",
-      "medium",
-      "usn_state",
-      item.volume || "NTFS",
-      {
-        ...item,
-        note: "O USN Journal é uma fonte forense de alterações em arquivos. A ausência pode ter causas legítimas e requer contexto.",
-      }
-    );
-  }
-
-  for (const item of report.virtualDisks || []) {
-    await insertReviewFinding(
-      analysisId,
-      "Disco virtual detectado",
-      "low",
-      "virtual_disk",
-      item.model || item.caption || item.deviceId || "disco virtual",
-      {
-        ...item,
-        note: "Discos virtuais são comuns em ambientes legítimos; revisar apenas em conjunto com outras evidências.",
-      }
-    );
-  }
-
-  for (const item of report.recentShortcuts || []) {
-    if (item.targetExists !== false) continue;
-
-    const lower = String(item.targetPath || "").toLowerCase();
-    if (!/\.(exe|dll|scr|com|bat|cmd|ps1)$/.test(lower)) continue;
-
-    const eventMs = item.shortcutLastWriteUtc
-      ? new Date(item.shortcutLastWriteUtc).getTime()
-      : 0;
-    const ageDays = eventMs
-      ? (now - eventMs) / 86400000
-      : Number.POSITIVE_INFINITY;
-
-    if (ageDays > 30) continue;
-
-    await insertReviewFinding(
-      analysisId,
-      "Atalho recente aponta para executável ausente",
-      "low",
-      "recent_link",
-      item.targetPath || item.shortcutName || "atalho",
-      {
-        ...item,
-        note: "Atalhos recentes ajudam a reconstruir uso anterior, mas não provam execução sozinhos.",
-      }
-    );
-  }
+  // Deliberately NOT added to 'findings' automatically:
+  // - generic missing Amcache/ShimCache entries
+  // - unresolved Prefetch volumes by themselves
+  // - virtual disks
+  // - Activity History policy
+  // - USN Journal availability
+  // - volumes without drive letters
+  // - generic system time changes
+  // These stay in the report as technical context without inflating detections.
 }
 
 app.get("/health", (_req, res) => {
