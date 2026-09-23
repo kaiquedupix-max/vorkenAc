@@ -11,7 +11,7 @@ namespace Vorken.Agent;
 
 internal static class Program
 {
-    private const string AgentVersion = "0.4.0";
+    private const string AgentVersion = "0.4.1";
 
     private static readonly JsonSerializerOptions JsonOptions =
         new(JsonSerializerDefaults.Web)
