@@ -11,7 +11,7 @@ namespace Vorken.Agent;
 
 internal static class Program
 {
-    private const string AgentVersion = "0.3.0";
+    private const string AgentVersion = "0.4.0";
 
     private static readonly JsonSerializerOptions JsonOptions =
         new(JsonSerializerDefaults.Web)
@@ -191,6 +191,69 @@ internal static class Program
                 AdvancedCollectors.CollectRecentLogClearSignals,
                 errors);
 
+            List<ProcessCreationRecord> processCreationEvents = SafeCollect(
+                "Event Log 4688",
+                DeepForensicCollector.CollectProcessCreationEvents,
+                errors);
+
+            List<DefenderDetectionRecord> defenderDetections = SafeCollect(
+                "Histórico do Microsoft Defender",
+                DeepForensicCollector.CollectDefenderDetections,
+                errors);
+
+            List<RecentShortcutRecord> recentShortcuts = SafeCollect(
+                "Atalhos recentes",
+                DeepForensicCollector.CollectRecentShortcuts,
+                errors);
+
+            List<ExtensionMismatchRecord> extensionMismatches = SafeCollect(
+                "Extensões modificadas",
+                DeepForensicCollector.CollectModifiedExtensions,
+                errors);
+
+            List<DefenderExclusionRecord> defenderExclusions = SafeCollect(
+                "Exclusões do Defender",
+                DeepForensicCollector.CollectDefenderExclusions,
+                errors);
+
+            List<BootIntegrityRecord> bootIntegrity = SafeCollect(
+                "Integridade de boot",
+                DeepForensicCollector.CollectBootIntegrityFlags,
+                errors);
+
+            List<SystemTimeChangeRecord> systemTimeChanges = SafeCollect(
+                "Alterações de horário",
+                DeepForensicCollector.CollectSystemTimeChanges,
+                errors);
+
+            List<VirtualDiskRecord> virtualDisks = SafeCollect(
+                "Discos virtuais",
+                DeepForensicCollector.CollectVirtualDiskIndicators,
+                errors);
+
+            List<RustModuleRecord> rustModules = SafeCollect(
+                "Módulos do Rust",
+                DeepForensicCollector.CollectRustModules,
+                errors);
+
+            List<UsnJournalStateRecord> usnJournalState = SafeCollect(
+                "Estado do USN Journal",
+                DeepForensicCollector.CollectUsnJournalState,
+                errors);
+
+            ActivityHistoryState activityHistory;
+            try
+            {
+                activityHistory = DeepForensicCollector.CollectActivityHistoryState();
+                Console.WriteLine("  ✓ Activity History");
+            }
+            catch (Exception ex)
+            {
+                errors.Add("Activity History: " + ex.Message);
+                activityHistory = new ActivityHistoryState();
+                Console.WriteLine("  ! Activity History: indisponível");
+            }
+
             SystemArtifactRecord systemArtifacts;
             try
             {
@@ -235,6 +298,17 @@ internal static class Program
                 PrefetchIntegrity = prefetchIntegrity,
                 HiddenVolumes = hiddenVolumes,
                 LogClearSignals = logClearSignals,
+                ProcessCreationEvents = processCreationEvents,
+                DefenderDetections = defenderDetections,
+                RecentShortcuts = recentShortcuts,
+                ExtensionMismatches = extensionMismatches,
+                DefenderExclusions = defenderExclusions,
+                BootIntegrity = bootIntegrity,
+                ActivityHistory = activityHistory,
+                SystemTimeChanges = systemTimeChanges,
+                VirtualDisks = virtualDisks,
+                RustModules = rustModules,
+                UsnJournalState = usnJournalState,
                 SystemArtifacts = systemArtifacts,
                 Errors = errors
             };
@@ -1014,6 +1088,17 @@ internal sealed class ScanReport
     public List<PrefetchIntegrityRecord> PrefetchIntegrity { get; set; } = new();
     public List<VolumeRecord> HiddenVolumes { get; set; } = new();
     public List<EventLogSignalRecord> LogClearSignals { get; set; } = new();
+    public List<ProcessCreationRecord> ProcessCreationEvents { get; set; } = new();
+    public List<DefenderDetectionRecord> DefenderDetections { get; set; } = new();
+    public List<RecentShortcutRecord> RecentShortcuts { get; set; } = new();
+    public List<ExtensionMismatchRecord> ExtensionMismatches { get; set; } = new();
+    public List<DefenderExclusionRecord> DefenderExclusions { get; set; } = new();
+    public List<BootIntegrityRecord> BootIntegrity { get; set; } = new();
+    public ActivityHistoryState ActivityHistory { get; set; } = new();
+    public List<SystemTimeChangeRecord> SystemTimeChanges { get; set; } = new();
+    public List<VirtualDiskRecord> VirtualDisks { get; set; } = new();
+    public List<RustModuleRecord> RustModules { get; set; } = new();
+    public List<UsnJournalStateRecord> UsnJournalState { get; set; } = new();
     public SystemArtifactRecord SystemArtifacts { get; set; } = new();
     public List<string> Errors { get; set; } = new();
 }
