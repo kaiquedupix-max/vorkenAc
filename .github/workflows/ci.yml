@@ -1,0 +1,54 @@
+name: Vorken CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  agent:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore agent
+        run: dotnet restore .\agent\Vorken.Agent.csproj
+
+      - name: Build agent
+        run: dotnet build .\agent\Vorken.Agent.csproj -c Release --no-restore
+
+      - name: Publish agent
+        run: dotnet publish .\agent\Vorken.Agent.csproj -c Release -r win-x64 --no-restore -o .\publish
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Vorken-Agent-win-x64
+          path: .\publish\Vorken.Agent.exe
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Check server syntax
+        run: node --check server.js
+
+      - name: Check browser scripts
+        run: |
+          node --check public/admin.js
+          node --check public/analysis.js
