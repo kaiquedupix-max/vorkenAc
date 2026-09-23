@@ -476,7 +476,7 @@ internal static class Program
     {
         var result = new List<UsbHistoryRecord>();
         using RegistryKey? root =
-            Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Enum\USBSTOR");
+            Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Enum\USBSTOR");
 
         if (root == null) return result;
 
@@ -920,25 +920,25 @@ internal static class Program
         var result = new List<StartupRecord>();
 
         CollectRunKey(
-            Registry.CurrentUser,
+            Microsoft.Win32.Registry.CurrentUser,
             @"Software\Microsoft\Windows\CurrentVersion\Run",
             "HKCU Run",
             result);
 
         CollectRunKey(
-            Registry.CurrentUser,
+            Microsoft.Win32.Registry.CurrentUser,
             @"Software\Microsoft\Windows\CurrentVersion\RunOnce",
             "HKCU RunOnce",
             result);
 
         CollectRunKey(
-            Registry.LocalMachine,
+            Microsoft.Win32.Registry.LocalMachine,
             @"Software\Microsoft\Windows\CurrentVersion\Run",
             "HKLM Run",
             result);
 
         CollectRunKey(
-            Registry.LocalMachine,
+            Microsoft.Win32.Registry.LocalMachine,
             @"Software\Microsoft\Windows\CurrentVersion\RunOnce",
             "HKLM RunOnce",
             result);
