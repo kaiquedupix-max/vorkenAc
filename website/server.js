@@ -933,6 +933,52 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
   });
 });
 
+app.post("/api/admin/analyses/:id/rebuild", requireAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: "invalid_id" });
+  }
+
+  const analysisResult = await pool.query(
+    "SELECT id FROM analyses WHERE id=$1 LIMIT 1",
+    [id]
+  );
+
+  if (!analysisResult.rows[0]) {
+    return res.status(404).json({ error: "analysis_not_found" });
+  }
+
+  const reportResult = await pool.query(
+    "SELECT payload FROM scan_reports WHERE analysis_id=$1 ORDER BY id DESC LIMIT 1",
+    [id]
+  );
+
+  const report = reportResult.rows[0]?.payload;
+  if (!report) {
+    return res.status(404).json({
+      error: "report_not_found",
+      message: "Esta análise ainda não possui relatório."
+    });
+  }
+
+  await rebuildFindings(id, report);
+
+  const countResult = await pool.query(
+    `SELECT
+       COUNT(*)::int AS total,
+       COUNT(*) FILTER (WHERE severity IN ('high','critical'))::int AS high
+     FROM scan_findings
+     WHERE analysis_id=$1`,
+    [id]
+  );
+
+  res.json({
+    ok: true,
+    findings: Number(countResult.rows[0]?.total || 0),
+    highFindings: Number(countResult.rows[0]?.high || 0)
+  });
+});
+
 app.get("/api/admin/rules", requireAdmin, async (_req, res) => {
   const result = await pool.query(
     "SELECT * FROM detection_rules ORDER BY enabled DESC, id DESC"
