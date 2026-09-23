@@ -256,6 +256,18 @@ function flattenArtifacts(report) {
     push("powershell", item.matchedLine || item.pattern, item);
   }
 
+  for (const item of report.prefetchIntegrity || []) {
+    push("prefetch_integrity", item.name || item.kind, item);
+  }
+
+  for (const item of report.hiddenVolumes || []) {
+    push("volume", item.deviceId || item.label, item);
+  }
+
+  for (const item of report.logClearSignals || []) {
+    push("log_signal", item.signal || item.channel, item);
+  }
+
   if (report.systemArtifacts) {
     push("system_artifact", "windows-artifact-state", report.systemArtifacts);
   }
@@ -312,6 +324,15 @@ function matchesRule(rule, artifact) {
     case "signer_contains":
       return ["file", "process"].includes(artifact.type) &&
         String(evidence.signerSubject || "").toLowerCase().includes(pattern);
+    case "prefetch_integrity":
+      return artifact.type === "prefetch_integrity" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "volume_keyword":
+      return artifact.type === "volume" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "log_clear_signal":
+      return artifact.type === "log_signal" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
     default:
       return false;
   }
@@ -352,6 +373,124 @@ async function rebuildFindings(analysisId, report) {
         ]
       );
     }
+  }
+
+  await addBuiltInReviewFindings(analysisId, report);
+}
+
+async function insertReviewFinding(
+  analysisId,
+  title,
+  severity,
+  artifactType,
+  artifactValue,
+  evidence
+) {
+  await pool.query(
+    `INSERT INTO scan_findings(
+       analysis_id, rule_id, title, severity, artifact_type, artifact_value, evidence
+     )
+     VALUES ($1,NULL,$2,$3,$4,$5,$6::jsonb)`,
+    [
+      analysisId,
+      title,
+      normalizeSeverity(severity),
+      artifactType,
+      String(artifactValue || "").slice(0, 2000),
+      JSON.stringify(evidence || {}),
+    ]
+  );
+}
+
+async function addBuiltInReviewFindings(analysisId, report) {
+  for (const item of report.prefetchIntegrity || []) {
+    await insertReviewFinding(
+      analysisId,
+      item.kind === "duplicate_hash"
+        ? "Revisão: arquivos Prefetch com hash duplicado"
+        : "Revisão: integridade do Prefetch",
+      item.kind === "duplicate_hash" ? "medium" : "low",
+      "prefetch_integrity",
+      item.name || item.kind,
+      {
+        ...item,
+        note: "Indicador técnico para revisão; não é prova isolada de cheat.",
+      }
+    );
+  }
+
+  for (const item of report.hiddenVolumes || []) {
+    if (item.expectedSystemVolume) continue;
+
+    await insertReviewFinding(
+      analysisId,
+      "Revisão: volume sem letra de unidade",
+      "low",
+      "volume",
+      item.deviceId || item.label || "volume",
+      {
+        ...item,
+        note: "Volumes sem letra podem ser legítimos; correlacione com outras evidências.",
+      }
+    );
+  }
+
+  for (const item of report.logClearSignals || []) {
+    await insertReviewFinding(
+      analysisId,
+      "Revisão: limpeza recente de log do Windows",
+      "medium",
+      "event_log",
+      item.signal || item.channel,
+      {
+        ...item,
+        note: "Limpeza de log pode ter causa administrativa legítima; requer contexto.",
+      }
+    );
+  }
+
+  const state = report.systemArtifacts || {};
+
+  if (state.prefetchDirectoryExists === false) {
+    await insertReviewFinding(
+      analysisId,
+      "Revisão: diretório Prefetch ausente",
+      "medium",
+      "system_artifact",
+      "Prefetch",
+      {
+        ...state,
+        note: "A ausência do Prefetch reduz evidências de execução e também pode decorrer de configuração do sistema.",
+      }
+    );
+  }
+
+  if (state.enablePrefetcher === 0) {
+    await insertReviewFinding(
+      analysisId,
+      "Revisão: Prefetch desativado",
+      "medium",
+      "system_artifact",
+      "EnablePrefetcher=0",
+      {
+        ...state,
+        note: "Configuração pode ser legítima; correlacione com o restante da análise.",
+      }
+    );
+  }
+
+  if (state.bamStart === 4) {
+    await insertReviewFinding(
+      analysisId,
+      "Revisão: BAM desativado",
+      "medium",
+      "system_artifact",
+      "BAM Start=4",
+      {
+        ...state,
+        note: "BAM desativado reduz um artefato de execução; não implica cheat por si só.",
+      }
+    );
   }
 }
 
@@ -501,6 +640,9 @@ app.post("/api/admin/rules", requireAdmin, async (req, res) => {
     "setupapi_contains",
     "powershell_contains",
     "signer_contains",
+    "prefetch_integrity",
+    "volume_keyword",
+    "log_clear_signal",
   ]);
 
   const name = cleanText(req.body?.name, 120);
