@@ -183,24 +183,19 @@ internal static class PrefetchExecutionCollector
     {
         if (string.IsNullOrWhiteSpace(nativePath)) return null;
 
+        string normalizedNative = NormalizeDevice(nativePath);
+
         foreach (var pair in deviceMap
                      .OrderByDescending(x => x.Key.Length))
         {
-            if (!NormalizeDevice(nativePath)
-                    .StartsWith(pair.Key, StringComparison.OrdinalIgnoreCase))
+            if (!normalizedNative.StartsWith(
+                    pair.Key,
+                    StringComparison.OrdinalIgnoreCase))
             {
                 continue;
             }
 
-            string matchedPrefix =
-                NormalizeDevice(nativePath).StartsWith(
-                    NormalizeDevice(pair.Value.VolumeGuidPath),
-                    StringComparison.OrdinalIgnoreCase) &&
-                !string.IsNullOrWhiteSpace(pair.Value.VolumeGuidPath)
-                    ? pair.Value.VolumeGuidPath
-                    : pair.Value.DevicePath;
-
-            string suffix = nativePath[Math.Min(matchedPrefix.Length, nativePath.Length)..]
+            string suffix = normalizedNative[pair.Key.Length..]
                 .TrimStart('\\');
 
             return pair.Value.DriveLetter + "\\" + suffix;
