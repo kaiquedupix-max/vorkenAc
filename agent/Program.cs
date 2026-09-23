@@ -11,7 +11,7 @@ namespace Vorken.Agent;
 
 internal static class Program
 {
-    private const string AgentVersion = "0.2.0";
+    private const string AgentVersion = "0.3.0";
 
     private static readonly JsonSerializerOptions JsonOptions =
         new(JsonSerializerDefaults.Web)
@@ -82,14 +82,43 @@ internal static class Program
                 () => CollectUsbHistory(usbCurrent),
                 errors);
 
+            List<UsbDeviceEventRecord> usbTimeline = SafeCollect(
+                "Linha do tempo USB",
+                UsbEventCollector.Collect,
+                errors);
+
+            try
+            {
+                UsbEventCollector.EnrichUsbHistory(usbHistory, usbTimeline);
+                Console.WriteLine("  ✓ Horários USB correlacionados");
+            }
+            catch (Exception ex)
+            {
+                errors.Add("Correlação USB: " + ex.Message);
+                Console.WriteLine("  ! Correlação USB: indisponível");
+            }
+
             List<SerialDeviceRecord> serialDevices = SafeCollect(
                 "Dispositivos seriais",
                 CollectSerialDevices,
                 errors);
 
+            HardwareSummaryRecord hardwareSummary =
+                HardwareSummaryCollector.Build(serialDevices);
+
+            Console.WriteLine(
+                $"  ✓ Placas: {hardwareSummary.TotalRelevantDevices} | " +
+                $"Arduino: {hardwareSummary.ArduinoCount} | " +
+                $"MAKCU/Moku: {hardwareSummary.MakcuCount}");
+
             List<PrefetchRecord> prefetch = SafeCollect(
-                "Prefetch",
+                "Prefetch básico",
                 CollectPrefetch,
+                errors);
+
+            List<PrefetchExecutionRecord> prefetchExecutions = SafeCollect(
+                "Prefetch detalhado",
+                PrefetchExecutionCollector.Collect,
                 errors);
 
             List<FileRecord> files = SafeCollect(
@@ -187,9 +216,12 @@ internal static class Program
                 },
                 UsbCurrent = usbCurrent,
                 UsbHistory = usbHistory,
+                UsbTimeline = usbTimeline,
                 SerialDevices = serialDevices,
+                HardwareSummary = hardwareSummary,
                 Processes = processes,
                 Prefetch = prefetch,
+                PrefetchExecutions = prefetchExecutions,
                 Services = services,
                 Drivers = drivers,
                 Startup = startup,
@@ -963,9 +995,12 @@ internal sealed class ScanReport
     public MachineRecord Machine { get; set; } = new();
     public List<UsbDeviceRecord> UsbCurrent { get; set; } = new();
     public List<UsbHistoryRecord> UsbHistory { get; set; } = new();
+    public List<UsbDeviceEventRecord> UsbTimeline { get; set; } = new();
     public List<SerialDeviceRecord> SerialDevices { get; set; } = new();
+    public HardwareSummaryRecord HardwareSummary { get; set; } = new();
     public List<ProcessRecord> Processes { get; set; } = new();
     public List<PrefetchRecord> Prefetch { get; set; } = new();
+    public List<PrefetchExecutionRecord> PrefetchExecutions { get; set; } = new();
     public List<ServiceRecord> Services { get; set; } = new();
     public List<DriverRecord> Drivers { get; set; } = new();
     public List<StartupRecord> Startup { get; set; } = new();
@@ -1008,6 +1043,9 @@ internal sealed class UsbHistoryRecord
     public string DeviceDescription { get; set; } = "";
     public string Manufacturer { get; set; } = "";
     public bool Present { get; set; }
+    public DateTime? LastConnectedUtc { get; set; }
+    public DateTime? LastDisconnectedUtc { get; set; }
+    public string TimelineSource { get; set; } = "";
 }
 
 internal sealed class SerialDeviceRecord
