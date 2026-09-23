@@ -86,6 +86,13 @@
                 <option value="driver_name">Driver contém</option>
                 <option value="device_keyword">Dispositivo contém</option>
                 <option value="prefetch_contains">Prefetch contém</option>
+                <option value="bam_contains">BAM/DAM contém</option>
+                <option value="userassist_contains">UserAssist contém</option>
+                <option value="muicache_contains">MUICache contém</option>
+                <option value="pca_contains">PCA Store contém</option>
+                <option value="setupapi_contains">SetupAPI USB contém</option>
+                <option value="powershell_contains">PowerShell contém</option>
+                <option value="signer_contains">Assinante digital contém</option>
               </select>
             </label>
             <label>Valor / padrão
@@ -140,6 +147,11 @@
         <section class="report-section">
           <h3>Arquivos para revisão</h3>
           <div id="candidateFilesList"></div>
+        </section>
+
+        <section class="report-section">
+          <h3>Artefatos de execução do Windows</h3>
+          <div id="executionArtifactsList"></div>
         </section>
 
         <details class="report-section">
