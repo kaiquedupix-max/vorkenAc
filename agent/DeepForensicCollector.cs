@@ -305,7 +305,7 @@ internal static class DeepForensicCollector
         {
             try
             {
-                using RegistryKey? key = Registry.LocalMachine.OpenSubKey(subkey);
+                using RegistryKey? key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(subkey);
                 if (key == null) continue;
 
                 foreach (string valueName in key.GetValueNames())
@@ -391,7 +391,7 @@ internal static class DeepForensicCollector
 
         try
         {
-            using RegistryKey? key = Registry.LocalMachine.OpenSubKey(
+            using RegistryKey? key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
                 @"SOFTWARE\Policies\Microsoft\Windows\System");
 
             result.EnableActivityFeed = ReadDword(key, "EnableActivityFeed");
