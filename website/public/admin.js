@@ -389,9 +389,22 @@ async function openReport(id) {
     : '<div class="message">Nenhum arquivo executável candidato foi coletado.</div>';
 
   const recentExecutions = [...arrays.prefetchExecutions]
-    .filter((item) => item.lastRunUtc)
+    .filter((item) => {
+      if (!item.lastRunUtc || item.likelyDetachedOrRemovable !== true) return false;
+
+      const p = String(item.resolvedExecutablePath || item.nativeExecutablePath || "")
+        .replaceAll("/", "\\").toLowerCase();
+
+      const trusted =
+        p.includes("\\windows\\") ||
+        p.includes("\\program files\\") ||
+        p.includes("\\program files (x86)\\") ||
+        p.includes("\\steamapps\\common\\");
+
+      return !trusted;
+    })
     .sort((a, b) => new Date(b.lastRunUtc) - new Date(a.lastRunUtc))
-    .slice(0, 200);
+    .slice(0, 100);
 
   document.getElementById("recentExecutionList").innerHTML = recentExecutions.length
     ? recentExecutions.map((item) => {
@@ -420,7 +433,7 @@ async function openReport(id) {
           </div>
         `;
       }).join("")
-    : '<div class="message">Nenhuma execução detalhada foi extraída do Prefetch.</div>';
+    : '<div class="message ok">Nenhuma execução suspeita em mídia removível/não montada foi identificada.</div>';
 
   const integritySignals = [];
 
