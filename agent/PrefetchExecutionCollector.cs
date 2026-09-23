@@ -66,13 +66,23 @@ internal static class PrefetchExecutionCollector
                     .Select(v =>
                     {
                         string deviceName = v.DeviceName ?? "";
+                        string serialNumber = v.SerialNumber ?? "";
                         string normalized = NormalizeDevice(deviceName);
+
                         deviceMap.TryGetValue(normalized, out var mapped);
+
+                        if (mapped is null &&
+                            !string.IsNullOrWhiteSpace(serialNumber))
+                        {
+                            deviceMap.TryGetValue(
+                                "SERIAL:" + NormalizeSerial(serialNumber),
+                                out mapped);
+                        }
 
                         return new PrefetchVolumeRecord
                         {
                             DeviceName = deviceName,
-                            SerialNumber = v.SerialNumber ?? "",
+                            SerialNumber = serialNumber,
                             CreationTimeUtc = v.CreationTime.UtcDateTime,
                             CurrentDriveLetter = mapped?.DriveLetter,
                             CurrentDriveType = mapped?.DriveType,
@@ -107,7 +117,13 @@ internal static class PrefetchExecutionCollector
 
                 bool nonSystemVolume =
                     executableVolume is not null &&
-                    !systemAliases.Contains(NormalizeDevice(executableVolume.DeviceName));
+                    (
+                        string.IsNullOrWhiteSpace(executableVolume.CurrentDriveLetter)
+                            ? !systemAliases.Contains(NormalizeDevice(executableVolume.DeviceName))
+                            : !executableVolume.CurrentDriveLetter.Equals(
+                                systemDrive.TrimEnd('\\'),
+                                StringComparison.OrdinalIgnoreCase)
+                    );
 
                 bool likelyDetachedOrRemovable =
                     !nativeLooksLikeWindowsSystemPath &&
@@ -165,6 +181,7 @@ internal static class PrefetchExecutionCollector
                 DriveLetter = driveLetter,
                 DevicePath = device,
                 VolumeGuidPath = QueryVolumeGuid(driveLetter) ?? "",
+                VolumeSerialNumber = QueryVolumeSerial(driveLetter) ?? "",
                 DriveType = drive.DriveType.ToString()
             };
 
@@ -172,6 +189,9 @@ internal static class PrefetchExecutionCollector
 
             if (!string.IsNullOrWhiteSpace(record.VolumeGuidPath))
                 result[NormalizeDevice(record.VolumeGuidPath)] = record;
+
+            if (!string.IsNullOrWhiteSpace(record.VolumeSerialNumber))
+                result["SERIAL:" + NormalizeSerial(record.VolumeSerialNumber)] = record;
         }
 
         return result;
@@ -241,6 +261,41 @@ internal static class PrefetchExecutionCollector
             return null;
         }
     }
+
+    private static string? QueryVolumeSerial(string driveLetter)
+    {
+        try
+        {
+            string root = driveLetter.TrimEnd('\\') + "\\";
+            var volumeName = new StringBuilder(261);
+            var fileSystemName = new StringBuilder(261);
+
+            if (!GetVolumeInformation(
+                    root,
+                    volumeName,
+                    volumeName.Capacity,
+                    out uint serial,
+                    out _,
+                    out _,
+                    fileSystemName,
+                    fileSystemName.Capacity))
+            {
+                return null;
+            }
+
+            return serial.ToString("X8");
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string NormalizeSerial(string? value) =>
+        new string((value ?? "")
+            .Where(char.IsLetterOrDigit)
+            .ToArray())
+            .ToUpperInvariant();
 
     private static bool LooksLikeWindowsSystemPath(
         string? nativePath,
@@ -312,6 +367,18 @@ internal static class PrefetchExecutionCollector
         string lpszVolumeMountPoint,
         StringBuilder lpszVolumeName,
         int cchBufferLength);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetVolumeInformation(
+        string lpRootPathName,
+        StringBuilder lpVolumeNameBuffer,
+        int nVolumeNameSize,
+        out uint lpVolumeSerialNumber,
+        out uint lpMaximumComponentLength,
+        out uint lpFileSystemFlags,
+        StringBuilder lpFileSystemNameBuffer,
+        int nFileSystemNameSize);
 }
 
 internal sealed class DosDeviceRecord
@@ -319,6 +386,7 @@ internal sealed class DosDeviceRecord
     public string DriveLetter { get; set; } = "";
     public string DevicePath { get; set; } = "";
     public string VolumeGuidPath { get; set; } = "";
+    public string VolumeSerialNumber { get; set; } = "";
     public string DriveType { get; set; } = "";
 }
 
