@@ -224,6 +224,9 @@ async function openReport(id) {
     pca: payload.pca || [],
     setupApiUsb: payload.setupApiUsb || [],
     powerShellHits: payload.powerShellHits || [],
+    prefetchIntegrity: payload.prefetchIntegrity || [],
+    hiddenVolumes: payload.hiddenVolumes || [],
+    logClearSignals: payload.logClearSignals || [],
   };
 
   const disconnectedUsb =
@@ -287,6 +290,9 @@ async function openReport(id) {
     <div class="kv"><span>PCA Store</span><span>${arrays.pca.length}</span></div>
     <div class="kv"><span>SetupAPI USB</span><span>${arrays.setupApiUsb.length}</span></div>
     <div class="kv"><span>PowerShell por regra</span><span>${arrays.powerShellHits.length}</span></div>
+    <div class="kv"><span>Anomalias Prefetch</span><span>${arrays.prefetchIntegrity.length}</span></div>
+    <div class="kv"><span>Volumes sem letra</span><span>${arrays.hiddenVolumes.length}</span></div>
+    <div class="kv"><span>Limpezas de log (24h)</span><span>${arrays.logClearSignals.length}</span></div>
     <div class="kv"><span>Prefetch habilitado</span><span>${payload.systemArtifacts?.enablePrefetcher ?? "—"}</span></div>
     <div class="kv"><span>Amcache presente</span><span>${payload.systemArtifacts?.amcacheExists ? "Sim" : "Não"}</span></div>
     <div class="kv"><span>Erros parciais</span><span>${(payload.errors || []).length}</span></div>
