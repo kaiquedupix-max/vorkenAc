@@ -218,6 +218,12 @@ async function openReport(id) {
     drivers: payload.drivers || [],
     startup: payload.startup || [],
     files: payload.files || [],
+    bam: payload.bam || [],
+    userAssist: payload.userAssist || [],
+    muiCache: payload.muiCache || [],
+    pca: payload.pca || [],
+    setupApiUsb: payload.setupApiUsb || [],
+    powerShellHits: payload.powerShellHits || [],
   };
 
   const disconnectedUsb =
@@ -275,6 +281,14 @@ async function openReport(id) {
     <div class="kv"><span>Serviços</span><span>${arrays.services.length}</span></div>
     <div class="kv"><span>Drivers</span><span>${arrays.drivers.length}</span></div>
     <div class="kv"><span>Inicialização</span><span>${arrays.startup.length}</span></div>
+    <div class="kv"><span>BAM/DAM</span><span>${arrays.bam.length}</span></div>
+    <div class="kv"><span>UserAssist</span><span>${arrays.userAssist.length}</span></div>
+    <div class="kv"><span>MUICache</span><span>${arrays.muiCache.length}</span></div>
+    <div class="kv"><span>PCA Store</span><span>${arrays.pca.length}</span></div>
+    <div class="kv"><span>SetupAPI USB</span><span>${arrays.setupApiUsb.length}</span></div>
+    <div class="kv"><span>PowerShell por regra</span><span>${arrays.powerShellHits.length}</span></div>
+    <div class="kv"><span>Prefetch habilitado</span><span>${payload.systemArtifacts?.enablePrefetcher ?? "—"}</span></div>
+    <div class="kv"><span>Amcache presente</span><span>${payload.systemArtifacts?.amcacheExists ? "Sim" : "Não"}</span></div>
     <div class="kv"><span>Erros parciais</span><span>${(payload.errors || []).length}</span></div>
   `;
 
@@ -334,6 +348,58 @@ async function openReport(id) {
         </div>
       `).join("")
     : '<div class="message">Nenhum arquivo executável candidato foi coletado.</div>';
+
+  const execArtifacts = [];
+
+  for (const item of arrays.bam.slice(0, 300)) {
+    execArtifacts.push({
+      source: "BAM/DAM",
+      value: item.path,
+      detail: item.lastExecutionUtc ? "Última execução: " + formatDate(item.lastExecutionUtc) : "Timestamp indisponível",
+      state: item.fileExists ? "Arquivo presente" : "Arquivo ausente"
+    });
+  }
+
+  for (const item of arrays.pca.slice(0, 300)) {
+    execArtifacts.push({
+      source: item.source || "PCA",
+      value: item.path,
+      detail: item.fileExists ? "Arquivo presente" : "Arquivo ausente",
+      state: ""
+    });
+  }
+
+  for (const item of arrays.userAssist.slice(0, 300)) {
+    execArtifacts.push({
+      source: "UserAssist",
+      value: item.decodedName,
+      detail: "Registro de uso da interface do Windows",
+      state: ""
+    });
+  }
+
+  for (const item of arrays.powerShellHits.slice(0, 200)) {
+    execArtifacts.push({
+      source: "PowerShell",
+      value: item.matchedLine,
+      detail: "Regra: " + (item.ruleName || item.pattern || "custom"),
+      state: item.sourceFile || ""
+    });
+  }
+
+  document.getElementById("executionArtifactsList").innerHTML = execArtifacts.length
+    ? execArtifacts.slice(0, 500).map((item) => `
+        <div class="finding">
+          <div class="finding-head">
+            <h4>${escapeHtml(item.source)}</h4>
+            <span class="tag info">EVIDÊNCIA</span>
+          </div>
+          <code>${escapeHtml(item.value || "—")}</code>
+          <div class="kv"><span>Detalhe</span><span>${escapeHtml(item.detail || "—")}</span></div>
+          ${item.state ? '<div class="kv"><span>Estado</span><span>' + escapeHtml(item.state) + '</span></div>' : ""}
+        </div>
+      `).join("")
+    : '<div class="message">Nenhum artefato adicional de execução foi coletado.</div>';
 
   document.getElementById("rawReport").textContent =
     JSON.stringify(payload, null, 2);
