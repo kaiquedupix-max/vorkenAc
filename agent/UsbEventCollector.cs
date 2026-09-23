@@ -61,23 +61,23 @@ internal static class UsbEventCollector
                 })
                 .ToList();
 
-            item.LastConnectedUtc = matching
+            UsbDeviceEventRecord? lastConnect = matching
                 .Where(x => x.EventType == "connect")
                 .OrderByDescending(x => x.TimeCreatedUtc)
-                .Select(x => (DateTime?)x.TimeCreatedUtc)
                 .FirstOrDefault();
 
-            item.LastDisconnectedUtc = matching
+            UsbDeviceEventRecord? lastDisconnect = matching
                 .Where(x => x.EventType == "disconnect")
                 .OrderByDescending(x => x.TimeCreatedUtc)
-                .Select(x => (DateTime?)x.TimeCreatedUtc)
                 .FirstOrDefault();
 
-            item.TimelineSource = item.LastDisconnectedUtc.HasValue
-                ? "DriverFrameworks-UserMode Event 2102"
-                : item.LastConnectedUtc.HasValue
-                    ? "Windows device event log"
-                    : "";
+            item.LastConnectedUtc = lastConnect?.TimeCreatedUtc;
+            item.LastDisconnectedUtc = lastDisconnect?.TimeCreatedUtc;
+
+            UsbDeviceEventRecord? sourceEvent = lastDisconnect ?? lastConnect;
+            item.TimelineSource = sourceEvent is null
+                ? ""
+                : $"{sourceEvent.Provider} Event {sourceEvent.EventId}";
         }
     }
 
@@ -211,7 +211,10 @@ internal static class UsbEventCollector
                 2003 => "connect",
                 2102 => "disconnect",
                 400 or 410 or 430 => "connect",
-                1006 => GetPartitionEventType(values),
+                1006 => ParsePartitionEventType(
+                    values.FirstOrDefault(x =>
+                        x.Name.Equals("Capacity", StringComparison.OrdinalIgnoreCase))
+                    ?.Value),
                 _ => "device_activity"
             };
 
@@ -243,27 +246,12 @@ internal static class UsbEventCollector
         }
     }
 
-    private static string GetPartitionEventType(
-        IEnumerable<dynamic> values)
+    private static string ParsePartitionEventType(string? rawCapacity)
     {
-        try
+        if (ulong.TryParse(rawCapacity, out ulong capacity))
         {
-            foreach (var item in values)
-            {
-                string name = Convert.ToString(item.Name) ?? "";
-                if (!name.Equals("Capacity", StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                string raw = Convert.ToString(item.Value) ?? "";
-                if (!ulong.TryParse(raw, out ulong capacity))
-                    break;
-
-                // Partition/Diagnostic Event 1006 uses Capacity=0 for removal.
-                return capacity == 0 ? "disconnect" : "connect";
-            }
-        }
-        catch
-        {
+            // Partition/Diagnostic Event 1006 records Capacity=0 on removal.
+            return capacity == 0 ? "disconnect" : "connect";
         }
 
         return "partition_activity";
