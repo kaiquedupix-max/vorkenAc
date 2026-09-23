@@ -395,12 +395,15 @@ async function openReport(id) {
 
   document.getElementById("recentExecutionList").innerHTML = recentExecutions.length
     ? recentExecutions.map((item) => {
-        const risky = item.likelyDetachedOrRemovable || item.volumeNotMounted;
+        const risky = item.likelyDetachedOrRemovable === true;
+        const unresolved = item.volumeNotMounted === true && !risky;
         const status = risky
-          ? "VOLUME REMOVIDO / NÃO MONTADO"
-          : item.executablePresent === false
-            ? "ARQUIVO NÃO LOCALIZADO"
-            : "EXECUÇÃO REGISTRADA";
+          ? "VOLUME REMOVÍVEL / NÃO MONTADO"
+          : unresolved
+            ? "VOLUME NÃO CORRELACIONADO"
+            : item.executablePresent === false
+              ? "ARQUIVO NÃO LOCALIZADO"
+              : "EXECUÇÃO REGISTRADA";
 
         return `
           <div class="finding">
@@ -486,38 +489,53 @@ async function openReport(id) {
           <div class="kv"><span>Detalhe</span><span>${escapeHtml(item.detail || "—")}</span></div>
         </div>
       `).join("")
-    : '<div class="message ok">Nenhum sinal adicional de integridade/anti-forense coletado.</div>';
+    : '<div class="message ok">Nenhum contexto adicional de integridade/anti-forense coletado.</div>';
 
-  const rustModules = [...arrays.rustModules]
-    .sort((a, b) => {
-      const ar = (!a.signed && !a.underGameDirectory && !a.underWindows && (a.underUserProfile || a.underTemp)) ? 1 : 0;
-      const br = (!b.signed && !b.underGameDirectory && !b.underWindows && (b.underUserProfile || b.underTemp)) ? 1 : 0;
-      return br - ar;
-    });
+  const knownOverlayTokens = [
+    "discord", "steam", "gameoverlayrenderer", "nvidia", "nvspcap",
+    "amd", "radeon", "obs", "overwolf", "medal", "steelseries",
+    "logitech", "razer", "microsoft"
+  ];
 
-  document.getElementById("rustModulesList").innerHTML = rustModules.length
-    ? rustModules.slice(0, 300).map((item) => {
-        const suspicious = !item.signed &&
-          !item.underGameDirectory &&
-          !item.underWindows &&
-          (item.underUserProfile || item.underTemp);
+  const suspiciousRustModules = arrays.rustModules.filter((item) => {
+    const haystack = [
+      item.path,
+      item.moduleName,
+      item.companyName,
+      item.signerSubject
+    ].join(" ").toLowerCase();
 
-        return `
-          <div class="finding">
-            <div class="finding-head">
-              <h4>${escapeHtml(item.moduleName || "DLL")}</h4>
-              <span class="tag ${suspicious ? "high" : "info"}">${suspicious ? "EXTERNO / NÃO ASSINADO" : "MÓDULO"}</span>
-            </div>
-            <div class="kv"><span>Processo</span><span>${escapeHtml((item.processName || "Rust") + " #" + (item.processId || ""))}</span></div>
-            <div class="kv"><span>Caminho</span><span>${escapeHtml(item.path || "—")}</span></div>
-            <div class="kv"><span>Assinado</span><span>${item.signed ? "Sim" : "Não"}</span></div>
-            <div class="kv"><span>Empresa</span><span>${escapeHtml(item.companyName || "—")}</span></div>
-            <div class="kv"><span>Assinante</span><span>${escapeHtml(item.signerSubject || "—")}</span></div>
+    const knownOverlay = knownOverlayTokens.some((token) =>
+      haystack.includes(token));
+
+    return !knownOverlay &&
+      item.signed === false &&
+      item.underGameDirectory === false &&
+      item.underWindows === false &&
+      (
+        item.underTemp === true ||
+        (
+          item.underUserProfile === true &&
+          !item.underProgramFiles &&
+          !item.companyName
+        )
+      );
+  });
+
+  document.getElementById("rustModulesList").innerHTML = suspiciousRustModules.length
+    ? suspiciousRustModules.slice(0, 100).map((item) => `
+        <div class="finding">
+          <div class="finding-head">
+            <h4>${escapeHtml(item.moduleName || "DLL")}</h4>
+            <span class="tag high">EXTERNO / NÃO ASSINADO</span>
           </div>
-        `;
-      }).join("")
-    : '<div class="message">Rust não estava aberto ou nenhum módulo pôde ser enumerado.</div>';
-
+          <div class="kv"><span>Processo</span><span>${escapeHtml((item.processName || "Rust") + " #" + (item.processId || ""))}</span></div>
+          <div class="kv"><span>Caminho</span><span>${escapeHtml(item.path || "—")}</span></div>
+          <div class="kv"><span>Empresa</span><span>${escapeHtml(item.companyName || "—")}</span></div>
+          <div class="kv"><span>Assinante</span><span>${escapeHtml(item.signerSubject || "—")}</span></div>
+        </div>
+      `).join("")
+    : '<div class="message ok">Nenhum módulo suspeito carregado no Rust. Módulos normais de Steam/Discord/GPU ficam apenas no inventário bruto.</div>';
   const execArtifacts = [];
 
   for (const item of arrays.bam.slice(0, 300)) {
