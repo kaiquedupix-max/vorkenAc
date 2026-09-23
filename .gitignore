@@ -1,0 +1,11 @@
+bin/
+obj/
+.vs/
+.idea/
+node_modules/
+.env
+website/agent-build/
+*.user
+*.suo
+*.pdb
+*.zip
