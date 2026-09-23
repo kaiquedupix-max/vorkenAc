@@ -599,7 +599,19 @@ async function addBuiltInReviewFindings(analysisId, report) {
       ? (now - lastRunMs) / 86400000
       : Number.POSITIVE_INFINITY;
 
-    if (execution.likelyDetachedOrRemovable && ageDays <= 30) {
+    const executionPath = String(
+      execution.resolvedExecutablePath ||
+      execution.nativeExecutablePath ||
+      ""
+    ).replaceAll("/", "\\").toLowerCase();
+
+    const windowsSystemExecution =
+      executionPath.includes("\\windows\\") ||
+      executionPath.endsWith("\\windows");
+
+    if (!windowsSystemExecution &&
+        execution.likelyDetachedOrRemovable &&
+        ageDays <= 30) {
       await insertReviewFinding(
         analysisId,
         "Execução recente em volume removível ou não montado",
@@ -613,7 +625,8 @@ async function addBuiltInReviewFindings(analysisId, report) {
       );
     }
 
-    if (execution.executablePresent === false &&
+    if (!windowsSystemExecution &&
+        execution.executablePresent === false &&
         execution.nonSystemVolume &&
         ageDays <= 14) {
       await insertReviewFinding(
