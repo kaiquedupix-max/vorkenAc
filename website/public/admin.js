@@ -375,7 +375,7 @@ async function openReport(id) {
           <div class="finding-head">
             <h4>${escapeHtml(item.name || "Arquivo")}</h4>
             <span class="tag ${item.prefetchEvidenceUtc ? "medium" : "info"}">
-              ${item.prefetchEvidenceUtc ? "EXECUÇÃO INDICADA" : "REVISAR"}
+              ${item.prefetchEvidenceUtc ? "EXECUÇÃO INDICADA" : "INVENTÁRIO"}
             </span>
           </div>
           <div class="kv"><span>Caminho</span><span>${escapeHtml(item.path || "—")}</span></div>
@@ -437,11 +437,26 @@ async function openReport(id) {
 
   const integritySignals = [];
 
+  const deceptiveExtensions = new Set([
+    ".txt", ".log", ".csv", ".json", ".xml", ".ini", ".cfg",
+    ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".ico",
+    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+    ".zip", ".rar", ".7z", ".tar", ".gz",
+    ".mp3", ".wav", ".ogg", ".mp4", ".avi", ".mkv", ".mov",
+    ".html", ".htm", ".css", ".md"
+  ]);
+
   for (const item of arrays.extensionMismatches.slice(0, 100)) {
+    const candidate = String(item.path || item.name || "");
+    const dot = candidate.lastIndexOf(".");
+    const ext = dot >= 0 ? candidate.slice(dot).toLowerCase() : "";
+
+    if (!deceptiveExtensions.has(ext)) continue;
+
     integritySignals.push({
-      title: "Extensão modificada",
-      value: item.path || item.name,
-      detail: item.reason || "Cabeçalho PE/MZ em extensão não executável.",
+      title: "Executável com extensão disfarçada",
+      value: candidate,
+      detail: item.reason || "Cabeçalho PE/MZ em extensão normalmente usada por documento/mídia.",
       tag: "medium"
     });
   }
@@ -461,33 +476,6 @@ async function openReport(id) {
       value: item.raw || item.setting,
       detail: "Configuração de integridade do Windows",
       tag: "medium"
-    });
-  }
-
-  for (const item of arrays.virtualDisks.slice(0, 50)) {
-    integritySignals.push({
-      title: "Disco virtual",
-      value: item.model || item.caption || item.deviceId,
-      detail: item.pnpDeviceId || item.interfaceType || "",
-      tag: "low"
-    });
-  }
-
-  for (const item of arrays.usnJournalState.filter(x => x.active === false).slice(0, 20)) {
-    integritySignals.push({
-      title: "USN Journal indisponível",
-      value: item.volume || "Volume NTFS",
-      detail: item.detail || "",
-      tag: "medium"
-    });
-  }
-
-  for (const item of arrays.systemTimeChanges.slice(0, 30)) {
-    integritySignals.push({
-      title: "Alteração de horário do sistema",
-      value: item.processName || "Windows",
-      detail: formatDate(item.timeCreatedUtc),
-      tag: "low"
     });
   }
 
