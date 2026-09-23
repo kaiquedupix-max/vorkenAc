@@ -275,6 +275,63 @@ async function openReport(id) {
     <div class="kv"><span>Erros parciais</span><span>${(payload.errors || []).length}</span></div>
   `;
 
+  const disconnected = arrays.usbHistory.filter((item) => item.present === false);
+  document.getElementById("disconnectedUsbList").innerHTML = disconnected.length
+    ? disconnected.map((item) => `
+        <div class="finding">
+          <div class="finding-head">
+            <h4>${escapeHtml(item.friendlyName || item.deviceDescription || item.deviceClass || "Dispositivo USB")}</h4>
+            <span class="tag medium">DESCONECTADO</span>
+          </div>
+          <div class="kv"><span>Fabricante</span><span>${escapeHtml(item.manufacturer || "—")}</span></div>
+          <div class="kv"><span>Instância</span><span>${escapeHtml(item.instanceId || "—")}</span></div>
+          <code>${escapeHtml(item.deviceClass || "")}</code>
+        </div>
+      `).join("")
+    : '<div class="message ok">Nenhum dispositivo USB histórico marcado como desconectado.</div>';
+
+  document.getElementById("serialDeviceList").innerHTML = arrays.serialDevices.length
+    ? arrays.serialDevices.map((item) => `
+        <div class="finding">
+          <div class="finding-head">
+            <h4>${escapeHtml(item.name || "Dispositivo serial")}</h4>
+            <span class="tag info">SERIAL</span>
+          </div>
+          <div class="kv"><span>Fabricante</span><span>${escapeHtml(item.manufacturer || "—")}</span></div>
+          <div class="kv"><span>Status</span><span>${escapeHtml(item.status || "—")}</span></div>
+          <code>${escapeHtml(item.pnpDeviceId || item.deviceId || "")}</code>
+        </div>
+      `).join("")
+    : '<div class="message">Nenhum Arduino/CH340/CP210/FTDI ou porta serial correspondente foi listado.</div>';
+
+  const reviewFiles = [...arrays.files]
+    .sort((a, b) => {
+      const aExec = a.prefetchEvidenceUtc ? 1 : 0;
+      const bExec = b.prefetchEvidenceUtc ? 1 : 0;
+      if (aExec !== bExec) return bExec - aExec;
+      return new Date(b.lastWriteUtc || 0) - new Date(a.lastWriteUtc || 0);
+    })
+    .slice(0, 250);
+
+  document.getElementById("candidateFilesList").innerHTML = reviewFiles.length
+    ? reviewFiles.map((item) => `
+        <div class="finding">
+          <div class="finding-head">
+            <h4>${escapeHtml(item.name || "Arquivo")}</h4>
+            <span class="tag ${item.prefetchEvidenceUtc ? "medium" : "info"}">
+              ${item.prefetchEvidenceUtc ? "EXECUÇÃO INDICADA" : "REVISAR"}
+            </span>
+          </div>
+          <div class="kv"><span>Caminho</span><span>${escapeHtml(item.path || "—")}</span></div>
+          <div class="kv"><span>Última modificação</span><span>${escapeHtml(formatDate(item.lastWriteUtc))}</span></div>
+          <div class="kv"><span>Evidência de execução</span><span>${escapeHtml(formatDate(item.prefetchEvidenceUtc))}</span></div>
+          <div class="kv"><span>Unidade</span><span>${escapeHtml(item.driveType || "—")}</span></div>
+          <div class="kv"><span>Assinado</span><span>${item.signed ? "Sim" : "Não"}${item.signerSubject ? " · " + escapeHtml(item.signerSubject) : ""}</span></div>
+          <code>SHA-256: ${escapeHtml(item.sha256 || "não disponível")}</code>
+        </div>
+      `).join("")
+    : '<div class="message">Nenhum arquivo executável candidato foi coletado.</div>';
+
   document.getElementById("rawReport").textContent =
     JSON.stringify(payload, null, 2);
 
