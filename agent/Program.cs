@@ -11,7 +11,7 @@ namespace Vorken.Agent;
 
 internal static class Program
 {
-    private const string AgentVersion = "0.1.0";
+    private const string AgentVersion = "0.2.0";
 
     private static readonly JsonSerializerOptions JsonOptions =
         new(JsonSerializerDefaults.Web)
@@ -117,6 +117,49 @@ internal static class Program
                 CollectStartupEntries,
                 errors);
 
+            List<BamRecord> bam = SafeCollect(
+                "BAM/DAM",
+                AdvancedCollectors.CollectBam,
+                errors);
+
+            List<UserAssistRecord> userAssist = SafeCollect(
+                "UserAssist",
+                AdvancedCollectors.CollectUserAssist,
+                errors);
+
+            List<MuiCacheRecord> muiCache = SafeCollect(
+                "MUICache",
+                AdvancedCollectors.CollectMuiCache,
+                errors);
+
+            List<PcaRecord> pca = SafeCollect(
+                "PCA Store",
+                AdvancedCollectors.CollectPcaStore,
+                errors);
+
+            List<SetupApiUsbRecord> setupApiUsb = SafeCollect(
+                "SetupAPI USB",
+                AdvancedCollectors.CollectSetupApiUsb,
+                errors);
+
+            List<PowerShellRuleHit> powerShellHits = SafeCollect(
+                "PowerShell por regra",
+                () => AdvancedCollectors.CollectPowerShellRuleHits(rules),
+                errors);
+
+            SystemArtifactRecord systemArtifacts;
+            try
+            {
+                systemArtifacts = AdvancedCollectors.CollectSystemArtifactState();
+                Console.WriteLine("  ✓ Estado dos artefatos do Windows");
+            }
+            catch (Exception ex)
+            {
+                errors.Add("Estado dos artefatos: " + ex.Message);
+                systemArtifacts = new SystemArtifactRecord();
+                Console.WriteLine("  ! Estado dos artefatos: indisponível");
+            }
+
             var report = new ScanReport
             {
                 AgentVersion = AgentVersion,
@@ -136,6 +179,13 @@ internal static class Program
                 Drivers = drivers,
                 Startup = startup,
                 Files = files,
+                Bam = bam,
+                UserAssist = userAssist,
+                MuiCache = muiCache,
+                Pca = pca,
+                SetupApiUsb = setupApiUsb,
+                PowerShellHits = powerShellHits,
+                SystemArtifacts = systemArtifacts,
                 Errors = errors
             };
 
@@ -870,6 +920,13 @@ internal sealed class ScanReport
     public List<DriverRecord> Drivers { get; set; } = new();
     public List<StartupRecord> Startup { get; set; } = new();
     public List<FileRecord> Files { get; set; } = new();
+    public List<BamRecord> Bam { get; set; } = new();
+    public List<UserAssistRecord> UserAssist { get; set; } = new();
+    public List<MuiCacheRecord> MuiCache { get; set; } = new();
+    public List<PcaRecord> Pca { get; set; } = new();
+    public List<SetupApiUsbRecord> SetupApiUsb { get; set; } = new();
+    public List<PowerShellRuleHit> PowerShellHits { get; set; } = new();
+    public SystemArtifactRecord SystemArtifacts { get; set; } = new();
     public List<string> Errors { get; set; } = new();
 }
 
