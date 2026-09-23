@@ -6,7 +6,7 @@
     <Nullable>enable</Nullable>
     <AssemblyName>Vorken.Agent</AssemblyName>
     <RootNamespace>Vorken.Agent</RootNamespace>
-    <Version>0.4.1</Version>
+    <Version>0.4.2</Version>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
