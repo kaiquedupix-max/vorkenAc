@@ -292,53 +292,6 @@ function flattenArtifacts(report) {
     push("log_signal", item.signal || item.channel, item);
   }
 
-  for (const item of report.amcache || []) {
-    const timestampMs = item.fileKeyLastWriteUtc
-      ? new Date(item.fileKeyLastWriteUtc).getTime()
-      : 0;
-
-    const ageDays = timestampMs
-      ? (now - timestampMs) / 86400000
-      : Number.POSITIVE_INFINITY;
-
-    if (item.filePresent === false &&
-        item.isPeFile === true &&
-        ageDays <= 30) {
-      await insertReviewFinding(
-        analysisId,
-        "Amcache: binário histórico não está mais presente",
-        item.driveType === "Removable" || item.driveType === "Network"
-          ? "high"
-          : "medium",
-        "amcache",
-        item.fullPath || item.name || "Amcache",
-        {
-          ...item,
-          note: "Amcache preservou metadados de um binário que não foi localizado durante a análise. Amcache não prova execução sozinho em todas as versões do Windows; correlacione com Prefetch/BAM/PCA/Event Logs.",
-        }
-      );
-    }
-  }
-
-  for (const item of report.shimCache || []) {
-    const lower = String(item.path || "").toLowerCase();
-    const interestingExtension = /\.(exe|dll|scr|com|bat|cmd|ps1)$/.test(lower);
-
-    if (item.filePresent === false && interestingExtension) {
-      await insertReviewFinding(
-        analysisId,
-        "ShimCache: arquivo histórico não localizado",
-        "low",
-        "shimcache",
-        item.path || "ShimCache",
-        {
-          ...item,
-          note: "ShimCache registra presença/compatibilidade de aplicações; em Windows modernos não deve ser tratado isoladamente como prova de execução.",
-        }
-      );
-    }
-  }
-
   for (const item of report.processCreationEvents || []) {
     push("process_history", item.processPath || item.processName, item);
   }
@@ -696,6 +649,53 @@ async function addBuiltInReviewFindings(analysisId, report) {
         {
           ...item,
           note: "BAM registrou execução recente, mas o arquivo não está disponível no momento da análise. Pode ser remoção, mídia desconectada ou software desinstalado.",
+        }
+      );
+    }
+  }
+
+  for (const item of report.amcache || []) {
+    const timestampMs = item.fileKeyLastWriteUtc
+      ? new Date(item.fileKeyLastWriteUtc).getTime()
+      : 0;
+
+    const ageDays = timestampMs
+      ? (now - timestampMs) / 86400000
+      : Number.POSITIVE_INFINITY;
+
+    if (item.filePresent === false &&
+        item.isPeFile === true &&
+        ageDays <= 30) {
+      await insertReviewFinding(
+        analysisId,
+        "Amcache: binário histórico não está mais presente",
+        item.driveType === "Removable" || item.driveType === "Network"
+          ? "high"
+          : "medium",
+        "amcache",
+        item.fullPath || item.name || "Amcache",
+        {
+          ...item,
+          note: "Amcache preservou metadados de um binário que não foi localizado durante a análise. Amcache não prova execução sozinho em todas as versões do Windows; correlacione com Prefetch/BAM/PCA/Event Logs.",
+        }
+      );
+    }
+  }
+
+  for (const item of report.shimCache || []) {
+    const lower = String(item.path || "").toLowerCase();
+    const interestingExtension = /\.(exe|dll|scr|com|bat|cmd|ps1)$/.test(lower);
+
+    if (item.filePresent === false && interestingExtension) {
+      await insertReviewFinding(
+        analysisId,
+        "ShimCache: arquivo histórico não localizado",
+        "low",
+        "shimcache",
+        item.path || "ShimCache",
+        {
+          ...item,
+          note: "ShimCache registra presença/compatibilidade de aplicações; em Windows modernos não deve ser tratado isoladamente como prova de execução.",
         }
       );
     }
