@@ -16,5 +16,6 @@
   <ItemGroup>
     <PackageReference Include="System.Management" Version="8.0.0" />
     <PackageReference Include="Prefetch" Version="2026.5.2" />
+    <PackageReference Include="Amcache" Version="2026.5.2" />
   </ItemGroup>
 </Project>
