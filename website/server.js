@@ -228,6 +228,22 @@ function flattenArtifacts(report) {
     push("prefetch", prefetch.name || prefetch.path, prefetch);
   }
 
+  for (const execution of report.prefetchExecutions || []) {
+    push(
+      "prefetch_execution",
+      execution.executableName || execution.nativeExecutablePath || execution.prefetchFile,
+      execution
+    );
+  }
+
+  for (const usbEvent of report.usbTimeline || []) {
+    push(
+      "usb_event",
+      usbEvent.deviceId || usbEvent.evidence || String(usbEvent.eventId || ""),
+      usbEvent
+    );
+  }
+
   for (const startup of report.startup || []) {
     push("startup", startup.name || startup.command, startup);
   }
@@ -332,6 +348,12 @@ function matchesRule(rule, artifact) {
         JSON.stringify(evidence).toLowerCase().includes(pattern);
     case "log_clear_signal":
       return artifact.type === "log_signal" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "execution_name":
+      return artifact.type === "prefetch_execution" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "usb_event_keyword":
+      return artifact.type === "usb_event" &&
         JSON.stringify(evidence).toLowerCase().includes(pattern);
     default:
       return false;
@@ -492,6 +514,72 @@ async function addBuiltInReviewFindings(analysisId, report) {
       }
     );
   }
+
+  const now = Date.now();
+
+  for (const execution of report.prefetchExecutions || []) {
+    const lastRunMs = execution.lastRunUtc
+      ? new Date(execution.lastRunUtc).getTime()
+      : 0;
+
+    const ageDays = lastRunMs
+      ? (now - lastRunMs) / 86400000
+      : Number.POSITIVE_INFINITY;
+
+    if (execution.likelyDetachedOrRemovable && ageDays <= 30) {
+      await insertReviewFinding(
+        analysisId,
+        "Execução recente em volume removível ou não montado",
+        ageDays <= 7 ? "high" : "medium",
+        "prefetch_execution",
+        execution.executableName || execution.nativeExecutablePath || execution.prefetchFile,
+        {
+          ...execution,
+          note: "O Prefetch confirma execução do programa. O volume associado não está montado atualmente ou era removível.",
+        }
+      );
+    }
+
+    if (execution.executablePresent === false &&
+        execution.nonSystemVolume &&
+        ageDays <= 14) {
+      await insertReviewFinding(
+        analysisId,
+        "Executável recente não está mais presente",
+        "medium",
+        "prefetch_execution",
+        execution.executableName || execution.nativeExecutablePath || execution.prefetchFile,
+        {
+          ...execution,
+          note: "Há evidência de execução recente, mas o executável não foi encontrado no caminho resolvido durante a análise.",
+        }
+      );
+    }
+  }
+
+  for (const item of report.bam || []) {
+    const lastRunMs = item.lastExecutionUtc
+      ? new Date(item.lastExecutionUtc).getTime()
+      : 0;
+
+    const ageDays = lastRunMs
+      ? (now - lastRunMs) / 86400000
+      : Number.POSITIVE_INFINITY;
+
+    if (item.fileExists === false && ageDays <= 7) {
+      await insertReviewFinding(
+        analysisId,
+        "BAM: execução recente de arquivo não localizado",
+        "medium",
+        "bam",
+        item.path || "BAM",
+        {
+          ...item,
+          note: "BAM registrou execução recente, mas o arquivo não está disponível no momento da análise. Pode ser remoção, mídia desconectada ou software desinstalado.",
+        }
+      );
+    }
+  }
 }
 
 app.get("/health", (_req, res) => {
@@ -643,6 +731,8 @@ app.post("/api/admin/rules", requireAdmin, async (req, res) => {
     "prefetch_integrity",
     "volume_keyword",
     "log_clear_signal",
+    "execution_name",
+    "usb_event_keyword",
   ]);
 
   const name = cleanText(req.body?.name, 120);
