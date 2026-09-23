@@ -166,6 +166,16 @@ internal static class Program
                 AdvancedCollectors.CollectPcaStore,
                 errors);
 
+            List<AmcacheExecutionRecord> amcache = SafeCollect(
+                "Amcache",
+                AmcacheExecutionCollector.Collect,
+                errors);
+
+            List<ShimCacheRecord> shimCache = SafeCollect(
+                "ShimCache",
+                ShimCacheExecutionCollector.Collect,
+                errors);
+
             List<SetupApiUsbRecord> setupApiUsb = SafeCollect(
                 "SetupAPI USB",
                 AdvancedCollectors.CollectSetupApiUsb,
@@ -293,6 +303,8 @@ internal static class Program
                 UserAssist = userAssist,
                 MuiCache = muiCache,
                 Pca = pca,
+                Amcache = amcache,
+                ShimCache = shimCache,
                 SetupApiUsb = setupApiUsb,
                 PowerShellHits = powerShellHits,
                 PrefetchIntegrity = prefetchIntegrity,
@@ -1083,6 +1095,8 @@ internal sealed class ScanReport
     public List<UserAssistRecord> UserAssist { get; set; } = new();
     public List<MuiCacheRecord> MuiCache { get; set; } = new();
     public List<PcaRecord> Pca { get; set; } = new();
+    public List<AmcacheExecutionRecord> Amcache { get; set; } = new();
+    public List<ShimCacheRecord> ShimCache { get; set; } = new();
     public List<SetupApiUsbRecord> SetupApiUsb { get; set; } = new();
     public List<PowerShellRuleHit> PowerShellHits { get; set; } = new();
     public List<PrefetchIntegrityRecord> PrefetchIntegrity { get; set; } = new();
