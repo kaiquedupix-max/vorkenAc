@@ -41,7 +41,9 @@ internal static class DeepForensicCollector
                     ProcessPath = processPath,
                     ProcessName = Path.GetFileName(processPath),
                     ParentProcessPath = parentPath,
-                    ParentProcessName = Path.GetFileName(parentPath)
+                    ParentProcessName = Path.GetFileName(parentPath),
+                    ProcessPresent = SafeFileExists(processPath),
+                    DriveType = GetDriveType(processPath)
                 });
             }
             catch
@@ -799,6 +801,28 @@ internal static class DeepForensicCollector
         }
     }
 
+    private static string GetDriveType(string path)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                return "";
+
+            if (path.StartsWith(@"\\", StringComparison.OrdinalIgnoreCase))
+                return "Network";
+
+            string? root = Path.GetPathRoot(path);
+            if (string.IsNullOrWhiteSpace(root))
+                return "";
+
+            return new DriveInfo(root).DriveType.ToString();
+        }
+        catch
+        {
+            return "";
+        }
+    }
+
     private static DateTime SafeLastWriteUtc(string path)
     {
         try { return File.GetLastWriteTimeUtc(path); }
@@ -879,6 +903,8 @@ internal sealed class ProcessCreationRecord
     public string ProcessPath { get; set; } = "";
     public string ParentProcessName { get; set; } = "";
     public string ParentProcessPath { get; set; } = "";
+    public bool ProcessPresent { get; set; }
+    public string DriveType { get; set; } = "";
 }
 
 internal sealed class DefenderDetectionRecord
