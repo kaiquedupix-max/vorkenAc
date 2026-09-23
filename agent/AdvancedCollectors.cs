@@ -16,12 +16,12 @@ internal static class AdvancedCollectors
     public static List<BamRecord> CollectBam()
     {
         var result = new List<BamRecord>();
-        using RegistryKey? root = Registry.LocalMachine.OpenSubKey(
+        using RegistryKey? root = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
             @"SYSTEM\CurrentControlSet\Services\bam\State\UserSettings");
 
         if (root == null)
         {
-            using RegistryKey? legacy = Registry.LocalMachine.OpenSubKey(
+            using RegistryKey? legacy = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
                 @"SYSTEM\CurrentControlSet\Services\bam\UserSettings");
             return legacy == null ? result : ReadBamRoot(legacy);
         }
@@ -82,7 +82,7 @@ internal static class AdvancedCollectors
     public static List<UserAssistRecord> CollectUserAssist()
     {
         var result = new List<UserAssistRecord>();
-        using RegistryKey? root = Registry.CurrentUser.OpenSubKey(
+        using RegistryKey? root = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
             @"Software\Microsoft\Windows\CurrentVersion\Explorer\UserAssist");
 
         if (root == null) return result;
@@ -121,7 +121,7 @@ internal static class AdvancedCollectors
 
         foreach (string registryPath in paths)
         {
-            using RegistryKey? key = Registry.CurrentUser.OpenSubKey(registryPath);
+            using RegistryKey? key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(registryPath);
             if (key == null) continue;
 
             foreach (string name in key.GetValueNames())
@@ -156,7 +156,7 @@ internal static class AdvancedCollectors
 
         foreach (string registryPath in paths)
         {
-            using RegistryKey? key = Registry.CurrentUser.OpenSubKey(registryPath);
+            using RegistryKey? key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(registryPath);
             if (key == null) continue;
 
             foreach (string name in key.GetValueNames())
@@ -325,7 +325,7 @@ internal static class AdvancedCollectors
 
         try
         {
-            using RegistryKey? key = Registry.LocalMachine.OpenSubKey(
+            using RegistryKey? key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
                 @"SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management\PrefetchParameters");
             result.EnablePrefetcher = key?.GetValue("EnablePrefetcher") is int value ? value : null;
         }
@@ -335,7 +335,7 @@ internal static class AdvancedCollectors
 
         try
         {
-            using RegistryKey? bamKey = Registry.LocalMachine.OpenSubKey(
+            using RegistryKey? bamKey = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
                 @"SYSTEM\CurrentControlSet\Services\bam");
             result.BamStart = bamKey?.GetValue("Start") is int start ? start : null;
         }
