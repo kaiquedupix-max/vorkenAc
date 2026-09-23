@@ -23,7 +23,7 @@ jobs:
         run: dotnet build .\agent\Vorken.Agent.csproj -c Release --no-restore
 
       - name: Publish agent
-        run: dotnet publish .\agent\Vorken.Agent.csproj -c Release -r win-x64 --no-restore -o .\publish
+        run: dotnet publish .\agent\Vorken.Agent.csproj -c Release -r win-x64 --self-contained true --no-restore -o .\publish
 
       - uses: actions/upload-artifact@v4
         with:
