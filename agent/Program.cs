@@ -147,6 +147,21 @@ internal static class Program
                 () => AdvancedCollectors.CollectPowerShellRuleHits(rules),
                 errors);
 
+            List<PrefetchIntegrityRecord> prefetchIntegrity = SafeCollect(
+                "Integridade do Prefetch",
+                AdvancedCollectors.CollectPrefetchIntegrity,
+                errors);
+
+            List<VolumeRecord> hiddenVolumes = SafeCollect(
+                "Volumes sem letra",
+                AdvancedCollectors.CollectVolumesWithoutDriveLetter,
+                errors);
+
+            List<EventLogSignalRecord> logClearSignals = SafeCollect(
+                "Sinais de limpeza de logs",
+                AdvancedCollectors.CollectRecentLogClearSignals,
+                errors);
+
             SystemArtifactRecord systemArtifacts;
             try
             {
@@ -185,6 +200,9 @@ internal static class Program
                 Pca = pca,
                 SetupApiUsb = setupApiUsb,
                 PowerShellHits = powerShellHits,
+                PrefetchIntegrity = prefetchIntegrity,
+                HiddenVolumes = hiddenVolumes,
+                LogClearSignals = logClearSignals,
                 SystemArtifacts = systemArtifacts,
                 Errors = errors
             };
@@ -926,6 +944,9 @@ internal sealed class ScanReport
     public List<PcaRecord> Pca { get; set; } = new();
     public List<SetupApiUsbRecord> SetupApiUsb { get; set; } = new();
     public List<PowerShellRuleHit> PowerShellHits { get; set; } = new();
+    public List<PrefetchIntegrityRecord> PrefetchIntegrity { get; set; } = new();
+    public List<VolumeRecord> HiddenVolumes { get; set; } = new();
+    public List<EventLogSignalRecord> LogClearSignals { get; set; } = new();
     public SystemArtifactRecord SystemArtifacts { get; set; } = new();
     public List<string> Errors { get; set; } = new();
 }
