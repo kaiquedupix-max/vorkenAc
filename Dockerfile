@@ -18,6 +18,8 @@ RUN dotnet publish agent/Vorken.Agent.csproj \
 FROM node:22-alpine AS runtime
 WORKDIR /app
 
+RUN apk add --no-cache curl
+
 COPY website/package*.json ./
 RUN npm install --omit=dev
 
