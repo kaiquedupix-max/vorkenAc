@@ -8,7 +8,7 @@ if (Test-Path $Output) {
 }
 
 dotnet restore $Project
-dotnet publish $Project -c Release -r win-x64 --self-contained false -o $Output
+dotnet publish $Project -c Release -r win-x64 --self-contained true -o $Output
 
 $Exe = Join-Path $Output "Vorken.Agent.exe"
 
