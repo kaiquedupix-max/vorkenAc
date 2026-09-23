@@ -211,9 +211,11 @@ async function openReport(id) {
   const arrays = {
     usbCurrent: payload.usbCurrent || [],
     usbHistory: payload.usbHistory || [],
+    usbTimeline: payload.usbTimeline || [],
     serialDevices: payload.serialDevices || [],
     processes: payload.processes || [],
     prefetch: payload.prefetch || [],
+    prefetchExecutions: payload.prefetchExecutions || [],
     services: payload.services || [],
     drivers: payload.drivers || [],
     startup: payload.startup || [],
@@ -277,7 +279,11 @@ async function openReport(id) {
   document.getElementById("artifactSummary").innerHTML = `
     <div class="kv"><span>USB conectados</span><span>${arrays.usbCurrent.length}</span></div>
     <div class="kv"><span>USB no histórico</span><span>${arrays.usbHistory.length} (${disconnectedUsb} desconectados)</span></div>
-    <div class="kv"><span>Arduino / Serial</span><span>${arrays.serialDevices.length}</span></div>
+    <div class="kv"><span>Eventos USB</span><span>${arrays.usbTimeline.length}</span></div>
+    <div class="kv"><span>Placas / Serial</span><span>${payload.hardwareSummary?.totalRelevantDevices ?? arrays.serialDevices.length}</span></div>
+    <div class="kv"><span>Arduino</span><span>${payload.hardwareSummary?.arduinoCount ?? 0}</span></div>
+    <div class="kv"><span>MAKCU / Moku</span><span>${payload.hardwareSummary?.makcuCount ?? 0}</span></div>
+    <div class="kv"><span>Execuções Prefetch</span><span>${arrays.prefetchExecutions.length}</span></div>
     <div class="kv"><span>Arquivos analisados</span><span>${arrays.files.length}</span></div>
     <div class="kv"><span>Processos</span><span>${arrays.processes.length}</span></div>
     <div class="kv"><span>Prefetch</span><span>${arrays.prefetch.length}</span></div>
@@ -300,32 +306,39 @@ async function openReport(id) {
 
   const disconnected = arrays.usbHistory.filter((item) => item.present === false);
   document.getElementById("disconnectedUsbList").innerHTML = disconnected.length
-    ? disconnected.map((item) => `
+    ? disconnected
+        .sort((a, b) =>
+          new Date(b.lastDisconnectedUtc || b.lastConnectedUtc || 0) -
+          new Date(a.lastDisconnectedUtc || a.lastConnectedUtc || 0))
+        .map((item) => `
         <div class="finding">
           <div class="finding-head">
             <h4>${escapeHtml(item.friendlyName || item.deviceDescription || item.deviceClass || "Dispositivo USB")}</h4>
             <span class="tag medium">DESCONECTADO</span>
           </div>
           <div class="kv"><span>Fabricante</span><span>${escapeHtml(item.manufacturer || "—")}</span></div>
-          <div class="kv"><span>Instância</span><span>${escapeHtml(item.instanceId || "—")}</span></div>
+          <div class="kv"><span>Instância / serial</span><span>${escapeHtml(item.instanceId || "—")}</span></div>
+          <div class="kv"><span>Última conexão</span><span>${escapeHtml(formatDate(item.lastConnectedUtc))}</span></div>
+          <div class="kv"><span>Última desconexão</span><span>${escapeHtml(formatDate(item.lastDisconnectedUtc))}</span></div>
+          <div class="kv"><span>Fonte do horário</span><span>${escapeHtml(item.timelineSource || "Não registrado pelo Windows")}</span></div>
           <code>${escapeHtml(item.deviceClass || "")}</code>
         </div>
       `).join("")
     : '<div class="message ok">Nenhum dispositivo USB histórico marcado como desconectado.</div>';
 
-  document.getElementById("serialDeviceList").innerHTML = arrays.serialDevices.length
-    ? arrays.serialDevices.map((item) => `
-        <div class="finding">
-          <div class="finding-head">
-            <h4>${escapeHtml(item.name || "Dispositivo serial")}</h4>
-            <span class="tag info">SERIAL</span>
-          </div>
-          <div class="kv"><span>Fabricante</span><span>${escapeHtml(item.manufacturer || "—")}</span></div>
-          <div class="kv"><span>Status</span><span>${escapeHtml(item.status || "—")}</span></div>
-          <code>${escapeHtml(item.pnpDeviceId || item.deviceId || "")}</code>
-        </div>
-      `).join("")
-    : '<div class="message">Nenhum Arduino/CH340/CP210/FTDI ou porta serial correspondente foi listado.</div>';
+  const hw = payload.hardwareSummary || {};
+  document.getElementById("serialDeviceList").innerHTML = `
+    <div class="metric-grid">
+      <div class="metric"><small>DISPOSITIVOS</small><strong>${Number(hw.totalRelevantDevices ?? arrays.serialDevices.length)}</strong></div>
+      <div class="metric"><small>ARDUINO</small><strong>${Number(hw.arduinoCount ?? 0)}</strong></div>
+      <div class="metric"><small>MAKCU / MOKU</small><strong>${Number(hw.makcuCount ?? 0)}</strong></div>
+      <div class="metric"><small>CH34X</small><strong>${Number(hw.ch34xCount ?? 0)}</strong></div>
+    </div>
+    <div class="kv"><span>CP210x</span><span>${Number(hw.cp210xCount ?? 0)}</span></div>
+    <div class="kv"><span>FTDI</span><span>${Number(hw.ftdiCount ?? 0)}</span></div>
+    <div class="kv"><span>Outros seriais</span><span>${Number(hw.otherSerialCount ?? 0)}</span></div>
+    <div class="message">A contagem identifica famílias/bridges por VID/PID, descritor e fabricante. CH34x/CP210x/FTDI isoladamente não provam qual placa está atrás do bridge.</div>
+  `;
 
   const reviewFiles = [...arrays.files]
     .sort((a, b) => {
@@ -354,6 +367,37 @@ async function openReport(id) {
         </div>
       `).join("")
     : '<div class="message">Nenhum arquivo executável candidato foi coletado.</div>';
+
+  const recentExecutions = [...arrays.prefetchExecutions]
+    .filter((item) => item.lastRunUtc)
+    .sort((a, b) => new Date(b.lastRunUtc) - new Date(a.lastRunUtc))
+    .slice(0, 200);
+
+  document.getElementById("recentExecutionList").innerHTML = recentExecutions.length
+    ? recentExecutions.map((item) => {
+        const risky = item.likelyDetachedOrRemovable || item.volumeNotMounted;
+        const status = risky
+          ? "VOLUME REMOVIDO / NÃO MONTADO"
+          : item.executablePresent === false
+            ? "ARQUIVO NÃO LOCALIZADO"
+            : "EXECUÇÃO REGISTRADA";
+
+        return `
+          <div class="finding">
+            <div class="finding-head">
+              <h4>${escapeHtml(item.executableName || item.prefetchFile || "Executável")}</h4>
+              <span class="tag ${risky ? "high" : "info"}">${escapeHtml(status)}</span>
+            </div>
+            <div class="kv"><span>Última execução</span><span>${escapeHtml(formatDate(item.lastRunUtc))}</span></div>
+            <div class="kv"><span>Quantidade de execuções</span><span>${Number(item.runCount || 0)}</span></div>
+            <div class="kv"><span>Caminho nativo</span><span>${escapeHtml(item.nativeExecutablePath || "—")}</span></div>
+            <div class="kv"><span>Caminho atual</span><span>${escapeHtml(item.resolvedExecutablePath || "Não montado / não resolvido")}</span></div>
+            <div class="kv"><span>Arquivo presente</span><span>${item.executablePresent === true ? "Sim" : item.executablePresent === false ? "Não" : "Indeterminado"}</span></div>
+            <code>${escapeHtml(item.prefetchFile || "")}</code>
+          </div>
+        `;
+      }).join("")
+    : '<div class="message">Nenhuma execução detalhada foi extraída do Prefetch.</div>';
 
   const execArtifacts = [];
 
