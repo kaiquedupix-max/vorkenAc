@@ -229,6 +229,16 @@ async function openReport(id) {
     prefetchIntegrity: payload.prefetchIntegrity || [],
     hiddenVolumes: payload.hiddenVolumes || [],
     logClearSignals: payload.logClearSignals || [],
+    processCreationEvents: payload.processCreationEvents || [],
+    defenderDetections: payload.defenderDetections || [],
+    recentShortcuts: payload.recentShortcuts || [],
+    extensionMismatches: payload.extensionMismatches || [],
+    defenderExclusions: payload.defenderExclusions || [],
+    bootIntegrity: payload.bootIntegrity || [],
+    systemTimeChanges: payload.systemTimeChanges || [],
+    virtualDisks: payload.virtualDisks || [],
+    rustModules: payload.rustModules || [],
+    usnJournalState: payload.usnJournalState || [],
   };
 
   const disconnectedUsb =
@@ -299,6 +309,12 @@ async function openReport(id) {
     <div class="kv"><span>Anomalias Prefetch</span><span>${arrays.prefetchIntegrity.length}</span></div>
     <div class="kv"><span>Volumes sem letra</span><span>${arrays.hiddenVolumes.length}</span></div>
     <div class="kv"><span>Limpezas de log (24h)</span><span>${arrays.logClearSignals.length}</span></div>
+    <div class="kv"><span>Processos históricos (4688)</span><span>${arrays.processCreationEvents.length}</span></div>
+    <div class="kv"><span>Defender</span><span>${arrays.defenderDetections.length} detecções · ${arrays.defenderExclusions.length} exclusões</span></div>
+    <div class="kv"><span>Atalhos recentes</span><span>${arrays.recentShortcuts.length}</span></div>
+    <div class="kv"><span>Extensões modificadas</span><span>${arrays.extensionMismatches.length}</span></div>
+    <div class="kv"><span>Módulos do Rust</span><span>${arrays.rustModules.length}</span></div>
+    <div class="kv"><span>Discos virtuais</span><span>${arrays.virtualDisks.length}</span></div>
     <div class="kv"><span>Prefetch habilitado</span><span>${payload.systemArtifacts?.enablePrefetcher ?? "—"}</span></div>
     <div class="kv"><span>Amcache presente</span><span>${payload.systemArtifacts?.amcacheExists ? "Sim" : "Não"}</span></div>
     <div class="kv"><span>Erros parciais</span><span>${(payload.errors || []).length}</span></div>
@@ -398,6 +414,105 @@ async function openReport(id) {
         `;
       }).join("")
     : '<div class="message">Nenhuma execução detalhada foi extraída do Prefetch.</div>';
+
+  const integritySignals = [];
+
+  for (const item of arrays.extensionMismatches.slice(0, 100)) {
+    integritySignals.push({
+      title: "Extensão modificada",
+      value: item.path || item.name,
+      detail: item.reason || "Cabeçalho PE/MZ em extensão não executável.",
+      tag: "medium"
+    });
+  }
+
+  for (const item of arrays.defenderDetections.slice(0, 100)) {
+    integritySignals.push({
+      title: "Microsoft Defender",
+      value: item.threatName || item.path || "Detecção",
+      detail: [formatDate(item.timeCreatedUtc), item.path, item.action].filter(Boolean).join(" · "),
+      tag: "medium"
+    });
+  }
+
+  for (const item of arrays.bootIntegrity.slice(0, 50)) {
+    integritySignals.push({
+      title: "Boot / BCD",
+      value: item.raw || item.setting,
+      detail: "Configuração de integridade do Windows",
+      tag: "medium"
+    });
+  }
+
+  for (const item of arrays.virtualDisks.slice(0, 50)) {
+    integritySignals.push({
+      title: "Disco virtual",
+      value: item.model || item.caption || item.deviceId,
+      detail: item.pnpDeviceId || item.interfaceType || "",
+      tag: "low"
+    });
+  }
+
+  for (const item of arrays.usnJournalState.filter(x => x.active === false).slice(0, 20)) {
+    integritySignals.push({
+      title: "USN Journal indisponível",
+      value: item.volume || "Volume NTFS",
+      detail: item.detail || "",
+      tag: "medium"
+    });
+  }
+
+  for (const item of arrays.systemTimeChanges.slice(0, 30)) {
+    integritySignals.push({
+      title: "Alteração de horário do sistema",
+      value: item.processName || "Windows",
+      detail: formatDate(item.timeCreatedUtc),
+      tag: "low"
+    });
+  }
+
+  document.getElementById("integritySignalsList").innerHTML = integritySignals.length
+    ? integritySignals.slice(0, 250).map((item) => `
+        <div class="finding">
+          <div class="finding-head">
+            <h4>${escapeHtml(item.title)}</h4>
+            <span class="tag ${escapeHtml(item.tag)}">REVISAR</span>
+          </div>
+          <code>${escapeHtml(item.value || "—")}</code>
+          <div class="kv"><span>Detalhe</span><span>${escapeHtml(item.detail || "—")}</span></div>
+        </div>
+      `).join("")
+    : '<div class="message ok">Nenhum sinal adicional de integridade/anti-forense coletado.</div>';
+
+  const rustModules = [...arrays.rustModules]
+    .sort((a, b) => {
+      const ar = (!a.signed && !a.underGameDirectory && !a.underWindows && (a.underUserProfile || a.underTemp)) ? 1 : 0;
+      const br = (!b.signed && !b.underGameDirectory && !b.underWindows && (b.underUserProfile || b.underTemp)) ? 1 : 0;
+      return br - ar;
+    });
+
+  document.getElementById("rustModulesList").innerHTML = rustModules.length
+    ? rustModules.slice(0, 300).map((item) => {
+        const suspicious = !item.signed &&
+          !item.underGameDirectory &&
+          !item.underWindows &&
+          (item.underUserProfile || item.underTemp);
+
+        return `
+          <div class="finding">
+            <div class="finding-head">
+              <h4>${escapeHtml(item.moduleName || "DLL")}</h4>
+              <span class="tag ${suspicious ? "high" : "info"}">${suspicious ? "EXTERNO / NÃO ASSINADO" : "MÓDULO"}</span>
+            </div>
+            <div class="kv"><span>Processo</span><span>${escapeHtml((item.processName || "Rust") + " #" + (item.processId || ""))}</span></div>
+            <div class="kv"><span>Caminho</span><span>${escapeHtml(item.path || "—")}</span></div>
+            <div class="kv"><span>Assinado</span><span>${item.signed ? "Sim" : "Não"}</span></div>
+            <div class="kv"><span>Empresa</span><span>${escapeHtml(item.companyName || "—")}</span></div>
+            <div class="kv"><span>Assinante</span><span>${escapeHtml(item.signerSubject || "—")}</span></div>
+          </div>
+        `;
+      }).join("")
+    : '<div class="message">Rust não estava aberto ou nenhum módulo pôde ser enumerado.</div>';
 
   const execArtifacts = [];
 
