@@ -1,5 +1,6 @@
 using Microsoft.Win32;
 using System.Management;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -523,8 +524,13 @@ internal static class AdvancedCollectors
         try
         {
             string expanded = Environment.ExpandEnvironmentVariables(value.Trim('"'));
+
             if (expanded.StartsWith(@"\Device\", StringComparison.OrdinalIgnoreCase))
-                return false;
+            {
+                string? resolved = ResolveNativePath(expanded);
+                return !string.IsNullOrWhiteSpace(resolved) && File.Exists(resolved);
+            }
+
             return File.Exists(expanded);
         }
         catch
@@ -532,6 +538,48 @@ internal static class AdvancedCollectors
             return false;
         }
     }
+
+    private static string? ResolveNativePath(string nativePath)
+    {
+        foreach (DriveInfo drive in DriveInfo.GetDrives())
+        {
+            string driveLetter = drive.Name.TrimEnd('\\');
+            string? devicePath = QueryDevice(driveLetter);
+            if (string.IsNullOrWhiteSpace(devicePath)) continue;
+
+            if (!nativePath.StartsWith(devicePath, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            string suffix = nativePath[devicePath.Length..].TrimStart('\\');
+            return driveLetter + "\\" + suffix;
+        }
+
+        return null;
+    }
+
+    private static string? QueryDevice(string driveLetter)
+    {
+        try
+        {
+            var buffer = new StringBuilder(1024);
+            uint result = QueryDosDevice(
+                driveLetter.TrimEnd('\\'),
+                buffer,
+                buffer.Capacity);
+
+            return result == 0 ? null : buffer.ToString();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint QueryDosDevice(
+        string? lpDeviceName,
+        StringBuilder lpTargetPath,
+        int ucchMax);
 
     private static string Rot13(string value)
     {
