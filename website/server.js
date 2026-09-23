@@ -264,6 +264,14 @@ function flattenArtifacts(report) {
     push("pca", item.path, item);
   }
 
+  for (const item of report.amcache || []) {
+    push("amcache", item.fullPath || item.name, item);
+  }
+
+  for (const item of report.shimCache || []) {
+    push("shimcache", item.path, item);
+  }
+
   for (const item of report.setupApiUsb || []) {
     push("setupapi_usb", item.evidence || item.section, item);
   }
@@ -282,6 +290,53 @@ function flattenArtifacts(report) {
 
   for (const item of report.logClearSignals || []) {
     push("log_signal", item.signal || item.channel, item);
+  }
+
+  for (const item of report.amcache || []) {
+    const timestampMs = item.fileKeyLastWriteUtc
+      ? new Date(item.fileKeyLastWriteUtc).getTime()
+      : 0;
+
+    const ageDays = timestampMs
+      ? (now - timestampMs) / 86400000
+      : Number.POSITIVE_INFINITY;
+
+    if (item.filePresent === false &&
+        item.isPeFile === true &&
+        ageDays <= 30) {
+      await insertReviewFinding(
+        analysisId,
+        "Amcache: binário histórico não está mais presente",
+        item.driveType === "Removable" || item.driveType === "Network"
+          ? "high"
+          : "medium",
+        "amcache",
+        item.fullPath || item.name || "Amcache",
+        {
+          ...item,
+          note: "Amcache preservou metadados de um binário que não foi localizado durante a análise. Amcache não prova execução sozinho em todas as versões do Windows; correlacione com Prefetch/BAM/PCA/Event Logs.",
+        }
+      );
+    }
+  }
+
+  for (const item of report.shimCache || []) {
+    const lower = String(item.path || "").toLowerCase();
+    const interestingExtension = /\.(exe|dll|scr|com|bat|cmd|ps1)$/.test(lower);
+
+    if (item.filePresent === false && interestingExtension) {
+      await insertReviewFinding(
+        analysisId,
+        "ShimCache: arquivo histórico não localizado",
+        "low",
+        "shimcache",
+        item.path || "ShimCache",
+        {
+          ...item,
+          note: "ShimCache registra presença/compatibilidade de aplicações; em Windows modernos não deve ser tratado isoladamente como prova de execução.",
+        }
+      );
+    }
   }
 
   for (const item of report.processCreationEvents || []) {
@@ -374,6 +429,12 @@ function matchesRule(rule, artifact) {
         JSON.stringify(evidence).toLowerCase().includes(pattern);
     case "pca_contains":
       return artifact.type === "pca" && value.includes(pattern);
+    case "amcache_contains":
+      return artifact.type === "amcache" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "shimcache_contains":
+      return artifact.type === "shimcache" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
     case "setupapi_contains":
       return artifact.type === "setupapi_usb" &&
         JSON.stringify(evidence).toLowerCase().includes(pattern);
@@ -971,6 +1032,8 @@ app.post("/api/admin/rules", requireAdmin, async (req, res) => {
     "userassist_contains",
     "muicache_contains",
     "pca_contains",
+    "amcache_contains",
+    "shimcache_contains",
     "setupapi_contains",
     "powershell_contains",
     "signer_contains",
