@@ -121,3 +121,68 @@ Examples:
 - an unsigned executable can be completely legitimate.
 
 Vorken should surface evidence, provenance and correlation so a human administrator can review the result.
+
+
+## Additional research supplied for Vorken
+
+### Ocean / anticheat.ac
+
+Public feature and detection documentation reviewed:
+
+- https://anticheat.ac/features
+- https://anticheat.ac/docs
+- https://anticheat.ac/docs/detections/detection-systems
+- https://anticheat.ac/docs/detections/integrity-checks
+
+High-value ideas adopted as independent Vorken implementations:
+
+- correlate Prefetch, Amcache, ShimCache, BAM, PCA, EVTX and live process state;
+- executed-and-deleted correlation;
+- external/removable-device execution;
+- network-path execution context;
+- modified-extension / PE-header mismatch review;
+- Microsoft Defender detection history correlation;
+- Activity History / forensic-source integrity checks;
+- USN Journal state checks;
+- boot-integrity checks;
+- virtual-disk indicators;
+- loaded DLL/module inspection in the Rust process.
+
+Ocean is not open source. Vorken does not copy Ocean code or proprietary databases. Public documentation is used only to identify forensic concepts worth implementing independently.
+
+### SLAUC91/AntiCheat
+
+- https://github.com/SLAUC91/AntiCheat
+- useful research ideas: process/module enumeration, PEB vs virtual-memory comparison, handle/thread/driver inspection and USN scanning.
+- no repository license was visible during review, so Vorken does not copy source from this project.
+
+### Likon69/WardenScanner
+
+- https://github.com/Likon69/WardenScanner
+- useful read-only concepts: executable-memory regions, hidden PE/module discovery and process module integrity.
+- the project is specialized for WoW/Warden and includes anti-detection research that is not appropriate to copy into Vorken.
+- no repository license was visible during review, so Vorken uses only high-level defensive concepts.
+
+### ThiagoSales17/op1br-anticheat
+
+- https://github.com/ThiagoSales17/op1br-anticheat
+- README describes MIT licensing, but no root LICENSE file was visible during review.
+- useful coverage ideas: Prefetch, Amcache, ShimCache, BAM, Recent LNKs, Security event 4688 and anti-tampering checks.
+- Vorken implements these concepts independently or through clearly MIT-licensed upstream parsers.
+
+### PickAngE/AntiCheat-Scanner
+
+- https://github.com/PickAngE/AntiCheat-Scanner
+- repository source is public but its LICENSE explicitly marks it proprietary.
+- useful architectural ideas: normalized detections, multi-source attribution, metadata/signature correlation, scheduled tasks, Defender exclusions, named pipes and boot configuration.
+- no source code from this repository is copied into Vorken.
+
+### MIT parsers now used directly
+
+The following upstream libraries have explicit MIT licensing and are integrated as NuGet dependencies:
+
+- EricZimmerman/Prefetch -> NuGet `Prefetch`
+- EricZimmerman/AmcacheParser -> NuGet `Amcache`
+- EricZimmerman/AppCompatCacheParser -> NuGet `AppCompatCache`
+
+These parsers are preferable to fragile hand-written binary parsing and improve support across Windows 10/11 versions.
