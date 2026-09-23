@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#070a0d">
+  <title>Análise · Vorken Anti Cheat</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="shell nav">
+      <a class="brand" href="/"><span class="brand-mark">V</span><span>Vorken<small>ANTI CHEAT</small></span></a>
+    </div>
+  </header>
+
+  <main class="shell page">
+    <section id="loading" class="card download-box">
+      <div class="eyebrow">VORKEN SESSION</div>
+      <h1>Carregando análise...</h1>
+    </section>
+
+    <section id="analysisView" class="card download-box hidden">
+      <div class="eyebrow">ANÁLISE AUTORIZADA</div>
+      <h1 id="analysisLabel">Vorken</h1>
+      <p id="analysisText"></p>
+
+      <div class="consent">
+        Antes de iniciar, o aplicativo mostrará exatamente quais categorias técnicas serão analisadas
+        e exigirá consentimento explícito. O Vorken não coleta senhas, cookies, mensagens,
+        fotos, documentos ou conteúdo pessoal dos arquivos.
+      </div>
+
+      <div class="hero-actions">
+        <a id="downloadBtn" class="button primary" href="#">Baixar Vorken</a>
+      </div>
+
+      <div id="analysisStatus" class="message"></div>
+    </section>
+
+    <section id="errorView" class="card download-box hidden">
+      <div class="eyebrow">LINK INDISPONÍVEL</div>
+      <h1>Não foi possível abrir esta análise.</h1>
+      <p id="errorText"></p>
+    </section>
+  </main>
+
+  <script src="/analysis.js"></script>
+</body>
+</html>
