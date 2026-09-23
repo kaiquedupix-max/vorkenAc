@@ -665,14 +665,30 @@ async function addBuiltInReviewFindings(analysisId, report) {
     );
   }
 
-  // Only deceptive document/media/archive extensions are collected by the agent.
+  // Defense in depth: older agents may have sent legitimate PE-based
+  // formats such as .node/.winmd. Only deceptive user-facing extensions count.
+  const deceptiveExtensions = new Set([
+    ".txt", ".log", ".csv", ".json", ".xml", ".ini", ".cfg",
+    ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".ico",
+    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+    ".zip", ".rar", ".7z", ".tar", ".gz",
+    ".mp3", ".wav", ".ogg", ".mp4", ".avi", ".mkv", ".mov",
+    ".html", ".htm", ".css", ".md"
+  ]);
+
   for (const item of report.extensionMismatches || []) {
+    const candidatePath = String(item.path || item.name || "");
+    const extension = path.extname(candidatePath).toLowerCase();
+
+    if (!deceptiveExtensions.has(extension))
+      continue;
+
     await insertReviewFinding(
       analysisId,
       "Executável disfarçado com extensão não executável",
       "medium",
       "extension_mismatch",
-      item.path || item.name || "arquivo",
+      candidatePath || "arquivo",
       {
         ...item,
         confidence: "medium",
