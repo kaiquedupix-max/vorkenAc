@@ -4,6 +4,7 @@ const logoutBtn = document.getElementById("logoutBtn");
 const analysesBody = document.getElementById("analysesBody");
 const rulesList = document.getElementById("rulesList");
 const reportCard = document.getElementById("reportCard");
+let currentReportId = null;
 
 async function api(url, options = {}) {
   const response = await fetch(url, {
@@ -159,6 +160,32 @@ document.getElementById("ruleForm").addEventListener("submit", async (event) => 
 document.getElementById("refreshBtn").addEventListener("click", refreshAll);
 document.getElementById("closeReportBtn").addEventListener("click", () => {
   reportCard.classList.add("hidden");
+  currentReportId = null;
+});
+
+document.getElementById("rebuildFindingsBtn").addEventListener("click", async () => {
+  if (!currentReportId) return;
+
+  const button = document.getElementById("rebuildFindingsBtn");
+  const original = button.textContent;
+
+  try {
+    button.disabled = true;
+    button.textContent = "Recalculando...";
+
+    await api(
+      "/api/admin/analyses/" + encodeURIComponent(currentReportId) + "/rebuild",
+      { method: "POST" }
+    );
+
+    await loadAnalyses();
+    await openReport(currentReportId);
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
 });
 
 async function loadAnalyses() {
@@ -201,6 +228,7 @@ async function loadAnalyses() {
 }
 
 async function openReport(id) {
+  currentReportId = id;
   const data = await api("/api/admin/analyses/" + encodeURIComponent(id));
   const { analysis, report, findings } = data;
   const payload = report?.payload || {};
