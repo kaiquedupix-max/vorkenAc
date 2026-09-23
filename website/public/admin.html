@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#070a0d">
+  <title>Admin · Vorken Anti Cheat</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="shell nav">
+      <a class="brand" href="/"><span class="brand-mark">V</span><span>Vorken<small>ANTI CHEAT</small></span></a>
+      <button id="logoutBtn" class="button ghost hidden">Sair</button>
+    </div>
+  </header>
+
+  <main class="shell page">
+    <section id="loginView" class="card login-card">
+      <div class="eyebrow">ADMINISTRAÇÃO</div>
+      <h1>Entrar</h1>
+      <form id="loginForm">
+        <label>Senha administrativa
+          <input id="adminPassword" type="password" autocomplete="current-password" required>
+        </label>
+        <button class="button primary" type="submit">Entrar</button>
+      </form>
+      <div id="loginMessage" class="message hidden"></div>
+    </section>
+
+    <section id="dashboardView" class="hidden">
+      <div class="page-head">
+        <div>
+          <div class="eyebrow">VORKEN CONTROL</div>
+          <h1>Análises</h1>
+        </div>
+        <button id="refreshBtn" class="button ghost">Atualizar</button>
+      </div>
+
+      <div class="grid two">
+        <article class="card">
+          <h2>Nova análise</h2>
+          <form id="analysisForm">
+            <label>Nome / identificação
+              <input id="analysisLabel" maxlength="140" placeholder="Ex.: João - Guerra Fria" required>
+            </label>
+            <label>Validade do link
+              <select id="analysisTtl">
+                <option value="6">6 horas</option>
+                <option value="12">12 horas</option>
+                <option value="24" selected>24 horas</option>
+                <option value="48">48 horas</option>
+                <option value="72">72 horas</option>
+                <option value="168">7 dias</option>
+              </select>
+            </label>
+            <button class="button primary" type="submit">Gerar análise</button>
+          </form>
+          <div id="analysisCreated" class="message hidden"></div>
+        </article>
+
+        <article class="card">
+          <h2>Nova regra</h2>
+          <form id="ruleForm">
+            <div class="form-row">
+              <label>Nome
+                <input id="ruleName" maxlength="120" placeholder="Ex.: Loader X" required>
+              </label>
+              <label>Severidade
+                <select id="ruleSeverity">
+                  <option value="info">Info</option>
+                  <option value="low">Baixa</option>
+                  <option value="medium" selected>Média</option>
+                  <option value="high">Alta</option>
+                  <option value="critical">Crítica</option>
+                </select>
+              </label>
+            </div>
+            <label>Tipo
+              <select id="ruleType">
+                <option value="filename_contains">Nome do arquivo contém</option>
+                <option value="path_contains">Caminho contém</option>
+                <option value="sha256">SHA-256 exato</option>
+                <option value="process_name">Processo contém</option>
+                <option value="service_name">Serviço contém</option>
+                <option value="driver_name">Driver contém</option>
+                <option value="device_keyword">Dispositivo contém</option>
+                <option value="prefetch_contains">Prefetch contém</option>
+              </select>
+            </label>
+            <label>Valor / padrão
+              <input id="rulePattern" maxlength="500" placeholder="loader.exe ou hash..." required>
+            </label>
+            <label>Descrição
+              <textarea id="ruleDescription" rows="2" maxlength="600" placeholder="Por que esta evidência merece revisão?"></textarea>
+            </label>
+            <button class="button primary" type="submit">Salvar regra</button>
+          </form>
+        </article>
+      </div>
+
+      <article class="card report-section">
+        <div class="page-head">
+          <div><div class="eyebrow">FILA</div><h2>Análises recentes</h2></div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>ID</th><th>IDENTIFICAÇÃO</th><th>STATUS</th><th>ACHADOS</th><th>CRIADA</th><th>AÇÃO</th></tr></thead>
+            <tbody id="analysesBody"></tbody>
+          </table>
+        </div>
+      </article>
+
+      <article id="reportCard" class="card report-section hidden">
+        <div class="page-head">
+          <div><div class="eyebrow">RELATÓRIO</div><h2 id="reportTitle">Análise</h2></div>
+          <button id="closeReportBtn" class="button ghost">Fechar</button>
+        </div>
+        <div id="reportMetrics" class="metric-grid"></div>
+        <div id="reportMeta"></div>
+        <section class="report-section">
+          <h3>Achados</h3>
+          <div id="findingsList"></div>
+        </section>
+        <section class="report-section">
+          <h3>Resumo técnico</h3>
+          <div id="artifactSummary"></div>
+        </section>
+        <details class="report-section">
+          <summary>Dados brutos da análise</summary>
+          <pre id="rawReport" class="raw"></pre>
+        </details>
+      </article>
+
+      <article class="card report-section">
+        <div class="page-head">
+          <div><div class="eyebrow">DETECTION RULES</div><h2>Regras customizadas</h2></div>
+        </div>
+        <div id="rulesList" class="rule-list"></div>
+      </article>
+    </section>
+  </main>
+
+  <script src="/admin.js"></script>
+</body>
+</html>
