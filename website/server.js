@@ -284,6 +284,50 @@ function flattenArtifacts(report) {
     push("log_signal", item.signal || item.channel, item);
   }
 
+  for (const item of report.processCreationEvents || []) {
+    push("process_history", item.processPath || item.processName, item);
+  }
+
+  for (const item of report.defenderDetections || []) {
+    push("defender_detection", item.threatName || item.path, item);
+  }
+
+  for (const item of report.recentShortcuts || []) {
+    push("recent_link", item.targetPath || item.shortcutName, item);
+  }
+
+  for (const item of report.extensionMismatches || []) {
+    push("extension_mismatch", item.path || item.name, item);
+  }
+
+  for (const item of report.defenderExclusions || []) {
+    push("defender_exclusion", item.value || item.category, item);
+  }
+
+  for (const item of report.bootIntegrity || []) {
+    push("boot_integrity", item.raw || item.setting, item);
+  }
+
+  for (const item of report.systemTimeChanges || []) {
+    push("time_change", item.processName || item.newTime, item);
+  }
+
+  for (const item of report.virtualDisks || []) {
+    push("virtual_disk", item.model || item.caption || item.deviceId, item);
+  }
+
+  for (const item of report.rustModules || []) {
+    push("rust_module", item.path || item.moduleName, item);
+  }
+
+  for (const item of report.usnJournalState || []) {
+    push("usn_state", item.volume, item);
+  }
+
+  if (report.activityHistory) {
+    push("activity_history", "activity-history-state", report.activityHistory);
+  }
+
   if (report.systemArtifacts) {
     push("system_artifact", "windows-artifact-state", report.systemArtifacts);
   }
@@ -354,6 +398,21 @@ function matchesRule(rule, artifact) {
         JSON.stringify(evidence).toLowerCase().includes(pattern);
     case "usb_event_keyword":
       return artifact.type === "usb_event" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "process_history_contains":
+      return artifact.type === "process_history" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "recent_link_contains":
+      return artifact.type === "recent_link" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "rust_module_contains":
+      return artifact.type === "rust_module" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "defender_history_contains":
+      return artifact.type === "defender_detection" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "defender_exclusion_contains":
+      return artifact.type === "defender_exclusion" &&
         JSON.stringify(evidence).toLowerCase().includes(pattern);
     default:
       return false;
@@ -580,6 +639,193 @@ async function addBuiltInReviewFindings(analysisId, report) {
       );
     }
   }
+
+  for (const item of report.processCreationEvents || []) {
+    const eventMs = item.timeCreatedUtc
+      ? new Date(item.timeCreatedUtc).getTime()
+      : 0;
+
+    const ageDays = eventMs
+      ? (now - eventMs) / 86400000
+      : Number.POSITIVE_INFINITY;
+
+    if (item.processPresent === false && ageDays <= 14) {
+      await insertReviewFinding(
+        analysisId,
+        "Processo executado recentemente e arquivo não localizado",
+        item.driveType === "Removable" || item.driveType === "Network" ? "high" : "medium",
+        "process_history",
+        item.processPath || item.processName || "processo",
+        {
+          ...item,
+          note: "O Event Log de criação de processo registrou a execução, mas o arquivo não está presente durante a análise.",
+        }
+      );
+    }
+
+    if ((item.driveType === "Removable" || item.driveType === "Network") &&
+        ageDays <= 30) {
+      await insertReviewFinding(
+        analysisId,
+        item.driveType === "Network"
+          ? "Execução registrada a partir de recurso de rede"
+          : "Execução registrada a partir de mídia removível",
+        "high",
+        "process_history",
+        item.processPath || item.processName || "processo",
+        {
+          ...item,
+          note: "Execução confirmada pelo Event Log 4688 quando a auditoria estava habilitada.",
+        }
+      );
+    }
+  }
+
+  for (const item of report.extensionMismatches || []) {
+    await insertReviewFinding(
+      analysisId,
+      "Arquivo PE com extensão modificada",
+      "medium",
+      "extension_mismatch",
+      item.path || item.name || "arquivo",
+      {
+        ...item,
+        note: "O conteúdo começa com cabeçalho MZ/PE, mas a extensão não é uma extensão executável normal.",
+      }
+    );
+  }
+
+  for (const item of report.defenderDetections || []) {
+    await insertReviewFinding(
+      analysisId,
+      "Histórico de detecção do Microsoft Defender",
+      "medium",
+      "defender_detection",
+      item.threatName || item.path || "Defender",
+      {
+        ...item,
+        note: "Detecção de antivírus é contexto adicional; confirme o arquivo e o horário antes de qualquer decisão.",
+      }
+    );
+  }
+
+  for (const item of report.rustModules || []) {
+    const suspiciousExternal =
+      item.signed === false &&
+      item.underGameDirectory === false &&
+      item.underWindows === false &&
+      (item.underUserProfile === true || item.underTemp === true);
+
+    if (!suspiciousExternal) continue;
+
+    await insertReviewFinding(
+      analysisId,
+      "Módulo não assinado carregado no processo do Rust",
+      item.underTemp ? "high" : "medium",
+      "rust_module",
+      item.path || item.moduleName || "DLL",
+      {
+        ...item,
+        note: "Módulo externo e não assinado carregado no processo do jogo. Overlays e ferramentas legítimas podem exigir revisão manual.",
+      }
+    );
+  }
+
+  for (const item of report.bootIntegrity || []) {
+    const raw = String(item.raw || "").toLowerCase();
+    const enabled =
+      /\b(yes|sim|on|true|1)\b/.test(raw) &&
+      !/\b(no|não|off|false|0)\b/.test(raw);
+
+    if (!enabled) continue;
+
+    await insertReviewFinding(
+      analysisId,
+      "Configuração de integridade de boot alterada",
+      "medium",
+      "boot_integrity",
+      item.raw || item.setting || "BCD",
+      {
+        ...item,
+        note: "Test mode, debug ou nointegritychecks podem ter uso legítimo, mas alteram garantias de integridade do Windows.",
+      }
+    );
+  }
+
+  const activity = report.activityHistory || {};
+  if (activity.enableActivityFeed === 0 ||
+      activity.publishUserActivities === 0 ||
+      activity.uploadUserActivities === 0) {
+    await insertReviewFinding(
+      analysisId,
+      "Activity History do Windows desativado por política",
+      "low",
+      "activity_history",
+      "Windows Activity History",
+      {
+        ...activity,
+        note: "Pode ser uma configuração legítima de privacidade; é apenas um indicador contextual.",
+      }
+    );
+  }
+
+  for (const item of report.usnJournalState || []) {
+    if (item.active !== false) continue;
+
+    await insertReviewFinding(
+      analysisId,
+      "USN Journal indisponível em volume NTFS",
+      "medium",
+      "usn_state",
+      item.volume || "NTFS",
+      {
+        ...item,
+        note: "O USN Journal é uma fonte forense de alterações em arquivos. A ausência pode ter causas legítimas e requer contexto.",
+      }
+    );
+  }
+
+  for (const item of report.virtualDisks || []) {
+    await insertReviewFinding(
+      analysisId,
+      "Disco virtual detectado",
+      "low",
+      "virtual_disk",
+      item.model || item.caption || item.deviceId || "disco virtual",
+      {
+        ...item,
+        note: "Discos virtuais são comuns em ambientes legítimos; revisar apenas em conjunto com outras evidências.",
+      }
+    );
+  }
+
+  for (const item of report.recentShortcuts || []) {
+    if (item.targetExists !== false) continue;
+
+    const lower = String(item.targetPath || "").toLowerCase();
+    if (!/\.(exe|dll|scr|com|bat|cmd|ps1)$/.test(lower)) continue;
+
+    const eventMs = item.shortcutLastWriteUtc
+      ? new Date(item.shortcutLastWriteUtc).getTime()
+      : 0;
+    const ageDays = eventMs
+      ? (now - eventMs) / 86400000
+      : Number.POSITIVE_INFINITY;
+
+    if (ageDays > 30) continue;
+
+    await insertReviewFinding(
+      analysisId,
+      "Atalho recente aponta para executável ausente",
+      "low",
+      "recent_link",
+      item.targetPath || item.shortcutName || "atalho",
+      {
+        ...item,
+        note: "Atalhos recentes ajudam a reconstruir uso anterior, mas não provam execução sozinhos.",
+      }
+    );
+  }
 }
 
 app.get("/health", (_req, res) => {
@@ -733,6 +979,11 @@ app.post("/api/admin/rules", requireAdmin, async (req, res) => {
     "log_clear_signal",
     "execution_name",
     "usb_event_keyword",
+    "process_history_contains",
+    "recent_link_contains",
+    "rust_module_contains",
+    "defender_history_contains",
+    "defender_exclusion_contains",
   ]);
 
   const name = cleanText(req.body?.name, 120);
