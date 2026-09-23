@@ -25,7 +25,7 @@ const ADMIN_COOKIE = "vorken_admin";
 const ADMIN_SESSION_MS = 12 * 60 * 60 * 1000;
 
 app.disable("x-powered-by");
-app.use(express.json({ limit: "8mb" }));
+app.use(express.json({ limit: "24mb" }));
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, "public"), {
@@ -232,6 +232,34 @@ function flattenArtifacts(report) {
     push("startup", startup.name || startup.command, startup);
   }
 
+  for (const bam of report.bam || []) {
+    push("bam", bam.path, bam);
+  }
+
+  for (const item of report.userAssist || []) {
+    push("userassist", item.decodedName || item.encodedName, item);
+  }
+
+  for (const item of report.muiCache || []) {
+    push("muicache", item.path || item.displayName, item);
+  }
+
+  for (const item of report.pca || []) {
+    push("pca", item.path, item);
+  }
+
+  for (const item of report.setupApiUsb || []) {
+    push("setupapi_usb", item.evidence || item.section, item);
+  }
+
+  for (const item of report.powerShellHits || []) {
+    push("powershell", item.matchedLine || item.pattern, item);
+  }
+
+  if (report.systemArtifacts) {
+    push("system_artifact", "windows-artifact-state", report.systemArtifacts);
+  }
+
   return items;
 }
 
@@ -265,6 +293,25 @@ function matchesRule(rule, artifact) {
         JSON.stringify(evidence).toLowerCase().includes(pattern);
     case "prefetch_contains":
       return artifact.type === "prefetch" && value.includes(pattern);
+    case "bam_contains":
+      return artifact.type === "bam" && value.includes(pattern);
+    case "userassist_contains":
+      return artifact.type === "userassist" && value.includes(pattern);
+    case "muicache_contains":
+      return artifact.type === "muicache" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "pca_contains":
+      return artifact.type === "pca" && value.includes(pattern);
+    case "setupapi_contains":
+      return artifact.type === "setupapi_usb" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "powershell_contains":
+      return artifact.type === "powershell" &&
+        (value.includes(pattern) ||
+         String(evidence.pattern || "").toLowerCase() === pattern);
+    case "signer_contains":
+      return ["file", "process"].includes(artifact.type) &&
+        String(evidence.signerSubject || "").toLowerCase().includes(pattern);
     default:
       return false;
   }
@@ -447,6 +494,13 @@ app.post("/api/admin/rules", requireAdmin, async (req, res) => {
     "driver_name",
     "device_keyword",
     "prefetch_contains",
+    "bam_contains",
+    "userassist_contains",
+    "muicache_contains",
+    "pca_contains",
+    "setupapi_contains",
+    "powershell_contains",
+    "signer_contains",
   ]);
 
   const name = cleanText(req.body?.name, 120);
