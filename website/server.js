@@ -535,6 +535,30 @@ function flattenArtifacts(report) {
     push("file", file.path || file.name, file);
   }
 
+  for (const item of report.peInspections || []) {
+    push("pe_inspection", item.path || item.name, item);
+  }
+
+  for (const item of report.zoneIdentifiers || []) {
+    push("zone_identifier", item.path || item.hostUrl || item.fileName, item);
+  }
+
+  for (const item of report.alternateDataStreams || []) {
+    push("alternate_stream", (item.path || "") + (item.streamName || ""), item);
+  }
+
+  for (const item of report.autorunIntegrity || []) {
+    push("autorun_integrity", item.executablePath || item.command || item.name, item);
+  }
+
+  for (const item of report.processModuleIntegrity || []) {
+    push("module_integrity", item.modulePath || item.moduleName, item);
+  }
+
+  for (const item of report.protectedWindows || []) {
+    push("protected_window", item.processPath || item.processName, item);
+  }
+
   for (const process of report.processes || []) {
     push("process", process.name || process.path, process);
   }
@@ -607,6 +631,10 @@ function flattenArtifacts(report) {
     push("powershell", item.matchedLine || item.pattern, item);
   }
 
+  for (const item of report.powerShellArtifacts || []) {
+    push("powershell_artifact", item.command || item.source, item);
+  }
+
   for (const item of report.prefetchIntegrity || []) {
     push("prefetch_integrity", item.name || item.kind, item);
   }
@@ -631,6 +659,14 @@ function flattenArtifacts(report) {
     push("recent_link", item.targetPath || item.shortcutName, item);
   }
 
+  for (const item of report.crashArtifacts || []) {
+    push("crash_artifact", item.appPath || item.appName || item.artifactPath, item);
+  }
+
+  for (const item of report.securityProducts || []) {
+    push("security_product", item.displayName || item.category, item);
+  }
+
   for (const item of report.browserDownloads || []) {
     push(
       "browser_download",
@@ -651,6 +687,14 @@ function flattenArtifacts(report) {
     push(
       "browser_recovery",
       item.recoveredUrl || item.recoveredFileName || item.sourceArtifact,
+      item
+    );
+  }
+
+  for (const item of report.networkIndicators || []) {
+    push(
+      "network_indicator",
+      item.domain || item.processPath || item.remoteAddress || item.processName,
       item
     );
   }
@@ -697,6 +741,14 @@ function flattenArtifacts(report) {
 
   for (const item of report.usnJournalState || []) {
     push("usn_state", item.volume, item);
+  }
+
+  for (const item of report.usnActivity || []) {
+    push("usn_activity", item.fileName || item.volume, item);
+  }
+
+  for (const item of report.systemIntegrityExpansion || []) {
+    push("system_integrity_expansion", item.name || item.kind || item.detail, item);
   }
 
   if (report.activityHistory) {
@@ -836,6 +888,36 @@ function matchesRule(rule, artifact) {
         JSON.stringify(evidence).toLowerCase().includes(pattern);
     case "defender_exclusion_contains":
       return artifact.type === "defender_exclusion" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "pe_indicator_contains":
+      return artifact.type === "pe_inspection" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "zone_url_contains":
+      return artifact.type === "zone_identifier" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "ads_contains":
+      return artifact.type === "alternate_stream" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "autorun_contains":
+      return artifact.type === "autorun_integrity" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "powershell_artifact_contains":
+      return artifact.type === "powershell_artifact" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "network_indicator_contains":
+      return artifact.type === "network_indicator" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "usn_activity_contains":
+      return artifact.type === "usn_activity" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "system_integrity_contains":
+      return artifact.type === "system_integrity_expansion" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "module_integrity_contains":
+      return artifact.type === "module_integrity" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "crash_contains":
+      return artifact.type === "crash_artifact" &&
         JSON.stringify(evidence).toLowerCase().includes(pattern);
     default:
       return false;
@@ -1207,6 +1289,512 @@ async function addBuiltInReviewFindings(analysisId, report) {
           matchedRiskTerms,
           confidence: "medium",
           note: "O arquivo foi apagado e o nome contém termo frequentemente associado a loaders/scripts/cheats. Não é necessário haver Prefetch para esta ocorrência.",
+        }
+      );
+    }
+  }
+
+  // PE / StringExplorer-style metadata checks.
+  for (const item of report.peInspections || []) {
+    const pathValue = item.path || item.name || "PE";
+
+    if (item.randomLikeName === true && item.signed !== true) {
+      await insertReviewFinding(
+        analysisId,
+        "Executável aleatório com indicadores PE",
+        "critical",
+        "pe_inspection",
+        pathValue,
+        {
+          ...item,
+          confidence: "high",
+          note: "Executável com nome aleatório e sem assinatura confiável também apresentou metadados PE relevantes."
+        }
+      );
+      continue;
+    }
+
+    if (item.packedLike === true && item.signed !== true) {
+      await insertReviewFinding(
+        analysisId,
+        "Executável não assinado com packer/protector",
+        (item.packerIndicators || []).length > 0 ? "high" : "medium",
+        "pe_inspection",
+        pathValue,
+        {
+          ...item,
+          confidence: (item.packerIndicators || []).length > 0 ? "high" : "medium",
+          note: "Packer/protector ou entropia alta detectada. Isso pode ocorrer em software legítimo, portanto requer revisão."
+        }
+      );
+    }
+
+    if (
+      item.signed !== true &&
+      (item.suspiciousApis || []).length >= 3 &&
+      isSuspiciousUserPath(pathValue)
+    ) {
+      await insertReviewFinding(
+        analysisId,
+        "Executável não assinado com APIs de injeção/memória",
+        "high",
+        "pe_inspection",
+        pathValue,
+        {
+          ...item,
+          confidence: "medium",
+          note: "O arquivo contém várias referências a APIs usadas para manipulação/injeção de processos. As APIs também podem existir em ferramentas legítimas."
+        }
+      );
+    }
+  }
+
+  // Mark-of-the-Web / SavedFiles-style origin checks.
+  for (const item of report.zoneIdentifiers || []) {
+    await addCatalogFindings(
+      "zone_identifier",
+      item.path || item.fileName || item.hostUrl,
+      item,
+      [item.fileName, item.path, item.hostUrl, item.referrerUrl]
+    );
+
+    const name = item.fileName || item.path || "";
+    const source = [
+      item.hostUrl,
+      item.referrerUrl
+    ].filter(Boolean).join(" ").toLowerCase();
+
+    const social =
+      source.includes("discord.com/") ||
+      source.includes("discordapp.com/") ||
+      source.includes("cdn.discordapp.com/") ||
+      source.includes("t.me/") ||
+      source.includes("telegram.org/");
+
+    if (social && isRiskyDownloadName(name)) {
+      const randomExe =
+        path.extname(name).toLowerCase() === ".exe" &&
+        looksRandomExecutableName(name);
+
+      await insertReviewFinding(
+        analysisId,
+        "Arquivo com origem Discord/Telegram preservada no Zone.Identifier",
+        randomExe ? "critical" : "medium",
+        "zone_identifier",
+        item.path || name,
+        {
+          ...item,
+          confidence: randomExe ? "high" : "medium",
+          note: "A origem sobrevive no Mark-of-the-Web mesmo quando o histórico do navegador não está mais disponível."
+        }
+      );
+    }
+  }
+
+  // Alternate Data Streams.
+  for (const item of report.alternateDataStreams || []) {
+    if (item.suspicious !== true)
+      continue;
+
+    await insertReviewFinding(
+      analysisId,
+      item.executableLike === true
+        ? "Alternate Data Stream executável/suspeito"
+        : "Alternate Data Stream suspeito",
+      item.executableLike === true ? "high" : "medium",
+      "alternate_stream",
+      (item.path || "") + (item.streamName || ""),
+      {
+        ...item,
+        confidence: "medium",
+        note: "Foi encontrado um fluxo NTFS alternativo não padrão. A presença isolada não prova execução por ADS."
+      }
+    );
+  }
+
+  // Autoruns / persistence integrity.
+  for (const item of report.autorunIntegrity || []) {
+    if (item.suspicious !== true)
+      continue;
+
+    await insertReviewFinding(
+      analysisId,
+      "Autorun/tarefa suspeita em caminho gravável pelo usuário",
+      item.fileExists === true && item.signed !== true ? "high" : "medium",
+      "autorun_integrity",
+      item.executablePath || item.command || item.name,
+      {
+        ...item,
+        confidence: "medium",
+        note: "Entrada de inicialização aponta para caminho do usuário/Temp ou executável não assinado."
+      }
+    );
+  }
+
+  // Full PowerShell history/event correlation.
+  for (const item of report.powerShellArtifacts || []) {
+    const command = String(item.command || "").toLowerCase();
+    const strong =
+      item.longEncodedPayload === true ||
+      command.includes("add-mppreference") ||
+      command.includes("set-mppreference") ||
+      command.includes("writeprocessmemory") ||
+      command.includes("createremotethread") ||
+      command.includes("frombase64string") ||
+      command.includes("-encodedcommand");
+
+    await insertReviewFinding(
+      analysisId,
+      "PowerShell com padrão de alto interesse",
+      strong ? "high" : "medium",
+      "powershell_artifact",
+      item.command || item.source || "PowerShell",
+      {
+        ...item,
+        confidence: strong ? "high" : "medium",
+        note: "Comando preservado em PSReadLine/Event Log contém padrões associados a download, execução codificada, exclusões do Defender ou manipulação de processos."
+      }
+    );
+  }
+
+  // Unsigned modules loaded into Rust/system processes.
+  for (const item of report.processModuleIntegrity || []) {
+    if (item.suspicious !== true)
+      continue;
+
+    const processName = String(item.processName || "").toLowerCase();
+    const gameProcess =
+      processName === "rust" ||
+      processName === "rustclient";
+
+    await insertReviewFinding(
+      analysisId,
+      gameProcess
+        ? "DLL externa não assinada carregada no Rust"
+        : "Módulo não assinado em processo de alto valor",
+      gameProcess ? "high" : "medium",
+      "module_integrity",
+      item.modulePath || item.moduleName,
+      {
+        ...item,
+        confidence: gameProcess ? "high" : "medium",
+        note: "Módulo vindo do perfil do usuário/Temp foi carregado em processo relevante e não possui assinatura Authenticode confiável."
+      }
+    );
+  }
+
+  // Streamproof / display-affinity indicators.
+  for (const item of report.protectedWindows || []) {
+    if (item.excludedFromCapture !== true)
+      continue;
+
+    const appInfo = findCommonAppByFileName(
+      item.processPath || ((item.processName || "") + ".exe")
+    );
+
+    const trustedCommon =
+      appInfo &&
+      item.signed === true &&
+      signerMatchesCommonApp(appInfo, item.signerSubject);
+
+    if (trustedCommon)
+      continue;
+
+    await insertReviewFinding(
+      analysisId,
+      "Janela excluída de captura de tela",
+      item.signed === true ? "medium" : "high",
+      "protected_window",
+      item.processPath || item.processName || "window",
+      {
+        ...item,
+        confidence: item.signed === true ? "medium" : "high",
+        note: "O processo usa WDA_EXCLUDEFROMCAPTURE. Esse recurso possui usos legítimos, mas também é usado por aplicações streamproof."
+      }
+    );
+  }
+
+  // Crash / WER correlation.
+  for (const item of report.crashArtifacts || []) {
+    const value =
+      item.appPath ||
+      item.appName ||
+      item.faultingModulePath ||
+      "";
+
+    const matches = findRustCatalogMatches(
+      value,
+      item.faultingModulePath,
+      item.artifactPath
+    );
+
+    if (matches.length > 0) {
+      await insertReviewFinding(
+        analysisId,
+        "Artefato de crash ligado ao catálogo Rust",
+        "high",
+        "crash_artifact",
+        value || item.artifactPath,
+        {
+          ...item,
+          catalogMatches: matches,
+          confidence: "high",
+          note: "Windows Error Reporting preservou referência a nome/caminho ligado ao catálogo defensivo."
+        }
+      );
+    } else if (
+      /\.exe$/i.test(value) &&
+      looksRandomExecutableName(value)
+    ) {
+      await insertReviewFinding(
+        analysisId,
+        "Crash preservou executável com nome aleatório",
+        "high",
+        "crash_artifact",
+        value,
+        {
+          ...item,
+          confidence: "medium",
+          note: "WER/minidump preservou referência a um executável com nome de alta aleatoriedade."
+        }
+      );
+    }
+  }
+
+  // Network/DNS indicators. DNS cache is intentionally not presented as
+  // proof of which process made the request.
+  for (const item of report.networkIndicators || []) {
+    if (String(item.source || "") === "DNS Cache") {
+      const indicators = item.matchedIndicators || [];
+      const authHit = indicators.some((value) =>
+        ["keyauth.cc", "keyauth.win", "eauth.us.to"].includes(
+          String(value || "").toLowerCase()
+        )
+      );
+
+      const catalogHit = indicators.some((value) =>
+        !["keyauth.cc", "keyauth.win", "eauth.us.to"].includes(
+          String(value || "").toLowerCase()
+        )
+      );
+
+      await insertReviewFinding(
+        analysisId,
+        catalogHit
+          ? "Domínio do catálogo Rust encontrado no cache DNS"
+          : "Domínio de autenticação de alto interesse no cache DNS",
+        catalogHit ? "critical" : authHit ? "medium" : "info",
+        "network_indicator",
+        item.domain || "DNS",
+        {
+          ...item,
+          confidence: catalogHit ? "high" : "low",
+          note: "Cache DNS indica resolução do domínio, mas não atribui sozinho a consulta a um executável específico."
+        }
+      );
+      continue;
+    }
+
+    if (
+      item.processSigned !== true &&
+      isSuspiciousUserPath(item.processPath)
+    ) {
+      await insertReviewFinding(
+        analysisId,
+        "Executável não assinado com conexão TCP ativa",
+        "medium",
+        "network_indicator",
+        item.processPath || item.processName || item.remoteAddress,
+        {
+          ...item,
+          confidence: "low",
+          note: "Conexão de rede atual de processo não assinado em caminho do usuário/Temp. Requer correlação com outras evidências."
+        }
+      );
+    }
+  }
+
+  // USN Journal activity and anti-forensic changes.
+  for (const item of report.usnActivity || []) {
+    if (item.deleted !== true)
+      continue;
+
+    const name = String(item.fileName || "");
+    const lower = name.toLowerCase();
+
+    if (
+      item.underPrefetchDirectory === true &&
+      lower.endsWith(".pf")
+    ) {
+      await insertReviewFinding(
+        analysisId,
+        "Prefetch apagado",
+        "high",
+        "usn_activity",
+        name,
+        {
+          ...item,
+          confidence: "high",
+          note: "O USN Journal registrou exclusão de arquivo .PF dentro do diretório Prefetch."
+        }
+      );
+      continue;
+    }
+
+    if (
+      item.browserDatabase === true
+    ) {
+      await insertReviewFinding(
+        analysisId,
+        "Banco de histórico do navegador apagado/alterado",
+        "medium",
+        "usn_activity",
+        name,
+        {
+          ...item,
+          confidence: "medium",
+          note: "O USN Journal registrou exclusão de banco do navegador como History/places.sqlite."
+        }
+      );
+      continue;
+    }
+
+    if (
+      item.windowsForensicArtifact === true &&
+      (
+        lower === "srudb.dat" ||
+        lower.endsWith(".evtx") ||
+        lower.endsWith(".hve")
+      )
+    ) {
+      await insertReviewFinding(
+        analysisId,
+        "Artefato forense do Windows apagado",
+        "high",
+        "usn_activity",
+        name,
+        {
+          ...item,
+          confidence: "high",
+          note: "O USN Journal registrou exclusão de artefato usado em análise forense do Windows."
+        }
+      );
+    }
+  }
+
+  // System integrity expansion.
+  for (const item of report.systemIntegrityExpansion || []) {
+    const severity =
+      String(item.severityHint || "info").toLowerCase();
+
+    if (!["medium", "high", "critical"].includes(severity))
+      continue;
+
+    await insertReviewFinding(
+      analysisId,
+      "Integridade do sistema: " + (item.name || item.kind || "sinal"),
+      severity,
+      "system_integrity_expansion",
+      item.detail || item.name || item.kind,
+      {
+        ...item,
+        confidence: severity === "high" ? "high" : "medium",
+        note: "Configuração/estado do Windows relevante para a confiabilidade do scan."
+      }
+    );
+  }
+
+  // Executed and later modified (self-destruct / replacement signal).
+  for (const item of report.files || []) {
+    if (!item.prefetchEvidenceUtc || !item.lastWriteUtc)
+      continue;
+
+    const executed = new Date(item.prefetchEvidenceUtc).getTime();
+    const modified = new Date(item.lastWriteUtc).getTime();
+
+    if (!Number.isFinite(executed) || !Number.isFinite(modified))
+      continue;
+
+    if (modified <= executed + 120000)
+      continue;
+
+    if (
+      ageDays(item.lastWriteUtc) > 30 ||
+      isTrustedInstalledPath(item.path)
+    ) {
+      continue;
+    }
+
+    await insertReviewFinding(
+      analysisId,
+      "Executado e modificado depois",
+      "medium",
+      "file",
+      item.path || item.name,
+      {
+        ...item,
+        confidence: "medium",
+        note: "O arquivo possui evidência de execução anterior e data de modificação posterior, compatível com atualização legítima ou self-destruct/replacement."
+      }
+    );
+  }
+
+  // Bypass routes: network paths and common RAR temporary execution paths.
+  const executionSources = [
+    ...(report.prefetchExecutions || []).map((item) => ({
+      type: "prefetch_execution",
+      value:
+        item.resolvedExecutablePath ||
+        item.nativeExecutablePath ||
+        item.executableName,
+      evidence: item
+    })),
+    ...(report.bam || []).map((item) => ({
+      type: "bam",
+      value: item.path,
+      evidence: item
+    })),
+    ...(report.processCreationEvents || []).map((item) => ({
+      type: "process_history",
+      value: item.processPath,
+      evidence: item
+    }))
+  ];
+
+  for (const execution of executionSources) {
+    const value = String(execution.value || "");
+    const normalized = normalizePath(value);
+
+    if (value.startsWith("\\")) {
+      await insertReviewFinding(
+        analysisId,
+        "Execução a partir de recurso de rede",
+        "high",
+        execution.type,
+        value,
+        {
+          ...execution.evidence,
+          confidence: "high",
+          note: "A execução aponta para caminho UNC/recurso de rede."
+        }
+      );
+    }
+
+    if (
+      normalized.includes("\\rar$") ||
+      normalized.includes("\\winrar\\") &&
+      normalized.includes("\\temp\\")
+    ) {
+      await insertReviewFinding(
+        analysisId,
+        "Execução a partir de extração temporária RAR",
+        "high",
+        execution.type,
+        value,
+        {
+          ...execution.evidence,
+          confidence: "medium",
+          note: "Caminho é compatível com execução temporária proveniente de arquivo RAR/WinRAR."
         }
       );
     }
@@ -2294,6 +2882,16 @@ app.post("/api/admin/rules", requireAdmin, async (req, res) => {
     "rust_module_contains",
     "defender_history_contains",
     "defender_exclusion_contains",
+    "pe_indicator_contains",
+    "zone_url_contains",
+    "ads_contains",
+    "autorun_contains",
+    "powershell_artifact_contains",
+    "network_indicator_contains",
+    "usn_activity_contains",
+    "system_integrity_contains",
+    "module_integrity_contains",
+    "crash_contains",
   ]);
 
   const name = cleanText(req.body?.name, 120);
