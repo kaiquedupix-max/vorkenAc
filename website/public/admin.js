@@ -311,15 +311,43 @@ async function openReport(id) {
   const disconnectedUsb =
     arrays.usbHistory.filter((item) => item.present === false).length;
 
-  const high =
-    findings.filter((item) => ["high", "critical"].includes(item.severity)).length;
+  const criticalFindings =
+    findings.filter((item) => ["critical", "high"].includes(item.severity));
+
+  const mediumFindings =
+    findings.filter((item) => item.severity === "medium");
+
+  const infoFindings =
+    findings.filter((item) => ["low", "info"].includes(item.severity));
+
+  const hardwareCount =
+    disconnectedUsb +
+    Number(payload.hardwareSummary?.totalRelevantDevices ?? arrays.serialDevices.length);
+
+  const informationalCount =
+    infoFindings.length +
+    arrays.files.length +
+    arrays.browserDownloads.length +
+    arrays.recycleBin.length;
 
   document.getElementById("reportMetrics").innerHTML = `
     <div class="metric"><small>STATUS</small><strong>${escapeHtml(statusLabel(analysis.status))}</strong></div>
-    <div class="metric"><small>ACHADOS</small><strong>${findings.length}</strong></div>
-    <div class="metric"><small>ALTO RISCO</small><strong>${high}</strong></div>
+    <div class="metric danger-metric"><small>CRÍTICOS / ALTOS</small><strong>${criticalFindings.length}</strong></div>
+    <div class="metric warning-metric"><small>MÉDIOS</small><strong>${mediumFindings.length}</strong></div>
     <div class="metric"><small>USB DESCONECTADOS</small><strong>${disconnectedUsb}</strong></div>
   `;
+
+  document.getElementById("severityOverview").innerHTML = `
+    <div class="metric danger-metric"><small>VERMELHO</small><strong>${criticalFindings.length}</strong><span>Crítico / alto</span></div>
+    <div class="metric warning-metric"><small>AMARELO</small><strong>${mediumFindings.length}</strong><span>Revisar</span></div>
+    <div class="metric hardware-metric"><small>HARDWARE / USB</small><strong>${hardwareCount}</strong><span>Separado</span></div>
+    <div class="metric info-metric"><small>INFORMATIVO</small><strong>${informationalCount}</strong><span>Recolhido</span></div>
+  `;
+
+  document.getElementById("criticalCountBadge").textContent = criticalFindings.length;
+  document.getElementById("mediumCountBadge").textContent = mediumFindings.length;
+  document.getElementById("hardwareCountBadge").textContent = hardwareCount;
+  document.getElementById("infoCountBadge").textContent = informationalCount;
 
   document.getElementById("reportMeta").innerHTML = `
     <div class="kv"><span>Computador</span><span>${escapeHtml(analysis.machine_name || "—")}</span></div>
@@ -329,16 +357,23 @@ async function openReport(id) {
     <div class="kv"><span>Conclusão</span><span>${escapeHtml(formatDate(analysis.finished_at))}</span></div>
   `;
 
-  const findingsList = document.getElementById("findingsList");
-  findingsList.innerHTML = "";
+  const renderFindings = (elementId, rows, emptyMessage) => {
+    const target = document.getElementById(elementId);
+    target.innerHTML = "";
 
-  if (!findings.length) {
-    findingsList.innerHTML =
-      '<div class="message ok">Nenhum indício correspondente às regras atuais foi encontrado.</div>';
-  } else {
-    for (const finding of findings) {
+    if (!rows.length) {
+      target.innerHTML = '<div class="message ok">' + escapeHtml(emptyMessage) + '</div>';
+      return;
+    }
+
+    for (const finding of rows) {
       const element = document.createElement("article");
-      element.className = "finding";
+      element.className = "finding severity-card " + escapeHtml(finding.severity || "info");
+
+      const evidence = finding.evidence || {};
+      const catalogName = evidence.catalogMatch?.name
+        ? '<div class="kv"><span>Catálogo</span><span>' + escapeHtml(evidence.catalogMatch.name) + '</span></div>'
+        : "";
 
       element.innerHTML = `
         <div class="finding-head">
@@ -346,12 +381,35 @@ async function openReport(id) {
           <span class="tag ${escapeHtml(finding.severity)}">${escapeHtml(severityLabel(finding.severity))}</span>
         </div>
         <code>${escapeHtml(finding.artifact_value)}</code>
-        <pre>${escapeHtml(JSON.stringify(finding.evidence || {}, null, 2))}</pre>
+        ${catalogName}
+        ${evidence.note ? '<div class="kv"><span>Motivo</span><span>' + escapeHtml(evidence.note) + '</span></div>' : ""}
+        <details class="evidence-details">
+          <summary>Ver evidência completa</summary>
+          <pre>${escapeHtml(JSON.stringify(evidence, null, 2))}</pre>
+        </details>
       `;
 
-      findingsList.appendChild(element);
+      target.appendChild(element);
     }
-  }
+  };
+
+  renderFindings(
+    "criticalFindingsList",
+    criticalFindings,
+    "Nenhum achado crítico ou alto."
+  );
+
+  renderFindings(
+    "mediumFindingsList",
+    mediumFindings,
+    "Nenhum achado médio."
+  );
+
+  renderFindings(
+    "infoFindingsList",
+    infoFindings,
+    "Nenhum achado informativo/baixo."
+  );
 
   document.getElementById("artifactSummary").innerHTML = `
     <div class="kv"><span>USB conectados</span><span>${arrays.usbCurrent.length}</span></div>
