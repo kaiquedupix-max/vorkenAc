@@ -145,7 +145,11 @@ async function initDb() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    ALTER TABLE analyses
+      ADD COLUMN IF NOT EXISTS machine_fingerprint TEXT NULL;
+
     CREATE INDEX IF NOT EXISTS idx_analyses_created ON analyses(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_analyses_fingerprint ON analyses(machine_fingerprint);
     CREATE INDEX IF NOT EXISTS idx_findings_analysis ON scan_findings(analysis_id, id);
     CREATE INDEX IF NOT EXISTS idx_reports_analysis ON scan_reports(analysis_id, id DESC);
 
@@ -1118,10 +1122,35 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
     [id]
   );
 
+  let relatedAnalyses = [];
+
+  if (analysis.machine_fingerprint) {
+    const relatedResult = await pool.query(
+      `SELECT
+         id,
+         label,
+         status,
+         created_at,
+         started_at,
+         finished_at,
+         machine_name,
+         agent_version
+       FROM analyses
+       WHERE machine_fingerprint = $1
+         AND id <> $2
+       ORDER BY id DESC
+       LIMIT 20`,
+      [analysis.machine_fingerprint, id]
+    );
+
+    relatedAnalyses = relatedResult.rows;
+  }
+
   res.json({
     analysis,
     report: reportResult.rows[0] || null,
     findings: findingsResult.rows,
+    relatedAnalyses,
   });
 });
 
@@ -1340,13 +1369,15 @@ app.post("/api/agent/:token/start", async (req, res) => {
          started_at=COALESCE(started_at, NOW()),
          machine_name=COALESCE($2, machine_name),
          os_version=COALESCE($3, os_version),
-         agent_version=COALESCE($4, agent_version)
+         agent_version=COALESCE($4, agent_version),
+         machine_fingerprint=COALESCE($5, machine_fingerprint)
      WHERE id=$1`,
     [
       analysis.id,
       cleanText(req.body?.machineName, 180) || null,
       cleanText(req.body?.osVersion, 250) || null,
       cleanText(req.body?.agentVersion, 80) || null,
+      cleanText(req.body?.machineFingerprint, 128) || null,
     ]
   );
 
@@ -1377,13 +1408,15 @@ app.post("/api/agent/:token/report", async (req, res) => {
          finished_at=NOW(),
          machine_name=COALESCE($2, machine_name),
          os_version=COALESCE($3, os_version),
-         agent_version=COALESCE($4, agent_version)
+         agent_version=COALESCE($4, agent_version),
+         machine_fingerprint=COALESCE($5, machine_fingerprint)
      WHERE id=$1`,
     [
       analysis.id,
       cleanText(report.machine?.machineName, 180) || null,
       cleanText(report.machine?.osVersion, 250) || null,
       cleanText(report.agentVersion, 80) || null,
+      cleanText(report.machine?.fingerprint, 128) || null,
     ]
   );
 
