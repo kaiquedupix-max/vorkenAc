@@ -1300,6 +1300,7 @@ async function rebuildFindings(analysisId, report) {
   }
 
   await addBuiltInReviewFindings(analysisId, report);
+  await downgradeUnexecutedExeFindings(analysisId, report);
 }
 
 async function insertReviewFinding(
@@ -1345,6 +1346,133 @@ async function insertReviewFinding(
       JSON.stringify(evidence || {}),
     ]
   );
+}
+
+async function downgradeUnexecutedExeFindings(analysisId, report) {
+  const normalize = (value) =>
+    String(value || "")
+      .replaceAll("/", "\\")
+      .toLowerCase()
+      .trim();
+
+  const baseName = (value) => {
+    const normalized = normalize(value);
+    const parts = normalized.split("\\").filter(Boolean);
+    return parts.at(-1) || "";
+  };
+
+  const executedPaths = new Set();
+  const executedNames = new Set();
+
+  const remember = (...values) => {
+    for (const raw of values.flat(Infinity)) {
+      const normalized = normalize(raw);
+      if (!normalized)
+        continue;
+
+      executedPaths.add(normalized);
+
+      const name = baseName(normalized);
+      if (name)
+        executedNames.add(name);
+    }
+  };
+
+  for (const item of report.processes || []) {
+    remember(item.path, item.name);
+  }
+
+  for (const item of report.prefetchExecutions || []) {
+    remember(
+      item.resolvedExecutablePath,
+      item.nativeExecutablePath,
+      item.executableName
+    );
+  }
+
+  for (const item of report.bam || []) {
+    remember(item.path);
+  }
+
+  for (const item of report.processCreationEvents || []) {
+    remember(item.processPath, item.processName);
+  }
+
+  const executed = (...values) =>
+    values
+      .flat(Infinity)
+      .filter((value) => value !== null && value !== undefined)
+      .some((raw) => {
+        const normalized = normalize(raw);
+        if (!normalized)
+          return false;
+
+        if (executedPaths.has(normalized))
+          return true;
+
+        const name = baseName(normalized);
+        return Boolean(name && executedNames.has(name));
+      });
+
+  const fileOnlyTypes = new Set([
+    "file",
+    "pe_inspection",
+    "browser_download",
+    "browser_recovery",
+    "usn_delete",
+    "recycle_bin",
+    "unknown_app",
+    "hash_reputation",
+    "zone_identifier"
+  ]);
+
+  const findings = await pool.query(
+    `SELECT id, title, severity, artifact_type, artifact_value, evidence
+     FROM scan_findings
+     WHERE analysis_id = $1
+       AND severity IN ('high','critical')`,
+    [analysisId]
+  );
+
+  for (const finding of findings.rows) {
+    if (!fileOnlyTypes.has(String(finding.artifact_type || "")))
+      continue;
+
+    const evidence = finding.evidence || {};
+    const candidates = [
+      finding.artifact_value,
+      evidence.name,
+      evidence.fileName,
+      evidence.path,
+      evidence.targetPath,
+      evidence.currentPath,
+      evidence.originalPath,
+      evidence.recoveredFileName
+    ].filter(Boolean);
+
+    const exeCandidate = candidates.some((value) =>
+      /\.exe(?:$|[?#])/i.test(String(value || "").trim()));
+
+    if (!exeCandidate || executed(candidates))
+      continue;
+
+    const updatedEvidence = {
+      ...evidence,
+      originalSeverity: finding.severity,
+      executionConfirmed: false,
+      executionGate: "catalog_or_file_only",
+      note:
+        "Arquivo EXE identificado por catálogo/reputação/artefato, mas sem evidência independente de execução no PC. Mantido apenas como catálogo/inventário azul."
+    };
+
+    await pool.query(
+      `UPDATE scan_findings
+       SET severity = 'info',
+           evidence = $2::jsonb
+       WHERE id = $1`,
+      [finding.id, JSON.stringify(updatedEvidence)]
+    );
+  }
 }
 
 async function addBuiltInReviewFindings(analysisId, report) {
