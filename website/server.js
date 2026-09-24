@@ -648,6 +648,22 @@ function flattenArtifacts(report) {
     );
   }
 
+  for (const item of report.browserRecoveredArtifacts || []) {
+    push(
+      "browser_recovery",
+      item.recoveredUrl || item.recoveredFileName || item.sourceArtifact,
+      item
+    );
+  }
+
+  for (const item of report.deletedUsnRecords || []) {
+    push(
+      "usn_delete",
+      item.fileName || item.volume,
+      item
+    );
+  }
+
   for (const item of report.recycleBin || []) {
     push(
       "recycle_bin",
@@ -799,6 +815,12 @@ function matchesRule(rule, artifact) {
           ...(Array.isArray(evidence.matchedTerms) ? evidence.matchedTerms : []),
         ].some((value) =>
           String(value || "").toLowerCase().includes(pattern));
+    case "browser_recovery_contains":
+      return artifact.type === "browser_recovery" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "deleted_name_contains":
+      return artifact.type === "usn_delete" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
     case "recycle_name_contains":
       return artifact.type === "recycle_bin" &&
         [
@@ -1017,6 +1039,29 @@ async function addBuiltInReviewFindings(analysisId, report) {
     );
   }
 
+  for (const item of report.browserRecoveredArtifacts || []) {
+    await addCatalogFindings(
+      "browser_recovery",
+      item.recoveredUrl || item.recoveredFileName || item.sourceArtifact,
+      item,
+      [
+        item.recoveredUrl,
+        item.recoveredFileName,
+        item.catalogMatches,
+        item.matchedTerms
+      ]
+    );
+  }
+
+  for (const item of report.deletedUsnRecords || []) {
+    await addCatalogFindings(
+      "usn_delete",
+      item.fileName || item.volume,
+      item,
+      [item.fileName]
+    );
+  }
+
   for (const item of report.recycleBin || []) {
     await addCatalogFindings(
       "recycle_bin",
@@ -1049,6 +1094,123 @@ async function addBuiltInReviewFindings(analysisId, report) {
       item,
       [item.path]
     );
+  }
+
+  const liveBrowserText = JSON.stringify([
+    ...(report.browserDownloads || []),
+    ...(report.browserHistorySignals || [])
+  ]).toLowerCase();
+
+  for (const item of report.browserRecoveredArtifacts || []) {
+    const recoveredUrl = String(item.recoveredUrl || "");
+    const recoveredFileName = String(item.recoveredFileName || "");
+
+    const alreadyLive =
+      (recoveredUrl && liveBrowserText.includes(recoveredUrl.toLowerCase())) ||
+      (recoveredFileName && liveBrowserText.includes(recoveredFileName.toLowerCase()));
+
+    if (alreadyLive)
+      continue;
+
+    const catalogHit =
+      Array.isArray(item.catalogMatches) &&
+      item.catalogMatches.length > 0;
+
+    const strongTerms =
+      Array.isArray(item.matchedTerms) &&
+      item.matchedTerms.length >= 2;
+
+    let severity = "medium";
+    let title = "Vestígio recuperado de histórico apagado";
+
+    if (item.randomLikeName === true ||
+        item.deceptiveDoubleExtension === true ||
+        catalogHit) {
+      severity = "critical";
+      title = "Vestígio crítico recuperado de histórico apagado";
+    } else if (strongTerms) {
+      severity = "high";
+    }
+
+    await insertReviewFinding(
+      analysisId,
+      title,
+      severity,
+      "browser_recovery",
+      recoveredUrl || recoveredFileName || item.sourceArtifact || "SQLite",
+      {
+        ...item,
+        confidence: severity === "critical" ? "high" : "medium",
+        note: "O dado não estava presente nas tabelas ativas do histórico, mas foi recuperado de páginas SQLite/WAL/journal ainda não sobrescritas. Isso é vestígio forense e pode sobreviver após a limpeza do histórico.",
+      }
+    );
+  }
+
+  const deletedRiskTerms = [
+    "loader",
+    "injector",
+    "cheat",
+    "hack",
+    "script",
+    "aimbot",
+    "recoil",
+    "spoofer",
+    "bypass",
+    "eac"
+  ];
+
+  for (const item of report.deletedUsnRecords || []) {
+    if (String(item.reason || "") !== "FILE_DELETE")
+      continue;
+
+    if (ageDays(item.timestampUtc) > 30)
+      continue;
+
+    const name = String(item.fileName || "");
+    const lower = name.toLowerCase();
+    const catalogMatches = findRustCatalogMatches(name);
+    const matchedRiskTerms = deletedRiskTerms.filter((term) =>
+      lower.includes(term));
+
+    const critical =
+      item.randomLikeName === true ||
+      item.deceptiveDoubleExtension === true ||
+      catalogMatches.length > 0;
+
+    if (critical) {
+      await insertReviewFinding(
+        analysisId,
+        "Arquivo apagado recuperado pelo USN Journal",
+        "critical",
+        "usn_delete",
+        name || item.volume || "arquivo apagado",
+        {
+          ...item,
+          catalogMatches,
+          matchedRiskTerms,
+          confidence: "high",
+          note: "O NTFS registrou a exclusão do arquivo no USN Journal. Essa evidência não depende de o arquivo ter sido executado.",
+        }
+      );
+
+      continue;
+    }
+
+    if (matchedRiskTerms.length > 0) {
+      await insertReviewFinding(
+        analysisId,
+        "Arquivo apagado com nome de alto interesse",
+        "high",
+        "usn_delete",
+        name,
+        {
+          ...item,
+          matchedRiskTerms,
+          confidence: "medium",
+          note: "O arquivo foi apagado e o nome contém termo frequentemente associado a loaders/scripts/cheats. Não é necessário haver Prefetch para esta ocorrência.",
+        }
+      );
+    }
   }
 
   // Known applications are trusted only when their signature and/or
@@ -2077,6 +2239,8 @@ app.post("/api/admin/rules", requireAdmin, async (req, res) => {
     "download_url_contains",
     "download_name_contains",
     "browser_history_contains",
+    "browser_recovery_contains",
+    "deleted_name_contains",
     "recycle_name_contains",
     "rust_module_contains",
     "defender_history_contains",
