@@ -1212,20 +1212,15 @@ internal static class Program
 
     private static (bool Signed, string? Subject) TrySigner(string path)
     {
-        try
-        {
-            X509Certificate certificate =
-                X509Certificate.CreateFromSignedFile(path);
+        (bool trusted, string subject) =
+            AuthenticodeVerifier.Verify(path);
 
-            using var certificate2 =
-                new X509Certificate2(certificate);
-
-            return (true, certificate2.Subject);
-        }
-        catch
-        {
-            return (false, null);
-        }
+        return (
+            trusted,
+            string.IsNullOrWhiteSpace(subject)
+                ? null
+                : subject
+        );
     }
 
     private static DateTime? TryGetStartTime(Process process)
