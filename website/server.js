@@ -4975,12 +4975,18 @@ async function addBuiltInReviewFindings(analysisId, report) {
         ? correlatedDisconnectedUsb(execution)
         : null;
 
+    const detachedRemovableCandidate =
+      strongDetachedEvidence &&
+      execution.likelyDetachedOrRemovable === true &&
+      lastAge <= 7;
+
     const maximumUsbPriority =
       exeLike &&
       !trustedExecutable &&
       (
         confirmedRemovable ||
-        Boolean(disconnectedUsb)
+        Boolean(disconnectedUsb) ||
+        detachedRemovableCandidate
       );
 
     if (
@@ -5025,7 +5031,9 @@ async function addBuiltInReviewFindings(analysisId, report) {
         note: maximumUsbPriority
           ? confirmedRemovable
             ? "O Prefetch confirma execução de EXE não confiável em unidade atualmente removível. Deve aparecer no topo da prioridade."
-            : "O Prefetch confirma execução de EXE não confiável em volume não montado e o horário é compatível com pendrive desconectado recentemente. Deve aparecer no topo da prioridade."
+            : disconnectedUsb
+              ? "O Prefetch confirma execução de EXE não confiável em volume não montado e o horário é compatível com pendrive desconectado recentemente. Deve aparecer no topo da prioridade."
+              : "O Prefetch confirma execução recente de EXE não confiável em volume removido/não montado, não sistêmico e compatível com mídia removível. Deve aparecer no topo da prioridade."
           : confirmedRemovable
             ? "O Prefetch registrou execução em uma unidade atualmente identificada como removível."
             : "O Prefetch registrou um executável recente em volume não montado, sem arquivo presente, em caminho compatível com execução portátil. Volume não resolvido sozinho não gera alerta.",
