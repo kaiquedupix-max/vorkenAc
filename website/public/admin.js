@@ -507,16 +507,16 @@ async function openReport(id) {
   timeline.sort((a, b) => new Date(b.time) - new Date(a.time));
 
   document.getElementById("forensicTimelineList").innerHTML = timeline.length
-    ? timeline.slice(0, 300).map((item) => \`
+    ? timeline.slice(0, 300).map((item) => `
         <div class="finding">
           <div class="finding-head">
-            <h4>\${escapeHtml(item.action)}</h4>
-            <span class="tag \${escapeHtml(item.tag)}">\${escapeHtml(formatDate(item.time))}</span>
+            <h4>${escapeHtml(item.action)}</h4>
+            <span class="tag ${escapeHtml(item.tag)}">${escapeHtml(formatDate(item.time))}</span>
           </div>
-          <code>\${escapeHtml(item.path || "—")}</code>
-          <div class="kv"><span>Fonte / detalhe</span><span>\${escapeHtml(item.detail || "—")}</span></div>
+          <code>${escapeHtml(item.path || "—")}</code>
+          <div class="kv"><span>Fonte / detalhe</span><span>${escapeHtml(item.detail || "—")}</span></div>
         </div>
-      \`).join("")
+      `).join("")
     : '<div class="message">Nenhum evento suficiente para montar a linha do tempo.</div>';
 
   const recycleEntries = [...arrays.recycleBin]
@@ -526,18 +526,18 @@ async function openReport(id) {
   document.getElementById("recycleBinList").innerHTML = recycleEntries.length
     ? recycleEntries.map((item) => {
         const executable = /\.(exe|dll|com|scr|bat|cmd|ps1|msi)$/i.test(item.fileName || "");
-        return \`
+        return `
           <div class="finding">
             <div class="finding-head">
-              <h4>\${escapeHtml(item.fileName || "Arquivo excluído")}</h4>
-              <span class="tag \${executable ? "medium" : "info"}">LIXEIRA</span>
+              <h4>${escapeHtml(item.fileName || "Arquivo excluído")}</h4>
+              <span class="tag ${executable ? "medium" : "info"}">LIXEIRA</span>
             </div>
-            <div class="kv"><span>Excluído em</span><span>\${escapeHtml(formatDate(item.deletedAtUtc))}</span></div>
-            <div class="kv"><span>Caminho original</span><span>\${escapeHtml(item.originalPath || "—")}</span></div>
-            <div class="kv"><span>Tamanho original</span><span>\${Number(item.originalSize || 0).toLocaleString("pt-BR")} bytes</span></div>
-            <div class="kv"><span>Dados ainda na Lixeira</span><span>\${item.recycledDataPresent ? "Sim" : "Não"}</span></div>
+            <div class="kv"><span>Excluído em</span><span>${escapeHtml(formatDate(item.deletedAtUtc))}</span></div>
+            <div class="kv"><span>Caminho original</span><span>${escapeHtml(item.originalPath || "—")}</span></div>
+            <div class="kv"><span>Tamanho original</span><span>${Number(item.originalSize || 0).toLocaleString("pt-BR")} bytes</span></div>
+            <div class="kv"><span>Dados ainda na Lixeira</span><span>${item.recycledDataPresent ? "Sim" : "Não"}</span></div>
           </div>
-        \`;
+        `;
       }).join("")
     : '<div class="message ok">Nenhum metadado de arquivo excluído foi encontrado na Lixeira.</div>';
 
@@ -547,17 +547,17 @@ async function openReport(id) {
     .slice(0, 250);
 
   document.getElementById("processStartList").innerHTML = processStarts.length
-    ? processStarts.map((item) => \`
+    ? processStarts.map((item) => `
         <div class="finding">
           <div class="finding-head">
-            <h4>\${escapeHtml(item.name || "Processo")}</h4>
-            <span class="tag info">PID \${Number(item.pid || 0)}</span>
+            <h4>${escapeHtml(item.name || "Processo")}</h4>
+            <span class="tag info">PID ${Number(item.pid || 0)}</span>
           </div>
-          <div class="kv"><span>Iniciado em</span><span>\${escapeHtml(formatDate(item.startTimeUtc))}</span></div>
-          <div class="kv"><span>Caminho</span><span>\${escapeHtml(item.path || "—")}</span></div>
-          <div class="kv"><span>Assinado</span><span>\${item.signed ? "Sim" : "Não"}\${item.signerSubject ? " · " + escapeHtml(item.signerSubject) : ""}</span></div>
+          <div class="kv"><span>Iniciado em</span><span>${escapeHtml(formatDate(item.startTimeUtc))}</span></div>
+          <div class="kv"><span>Caminho</span><span>${escapeHtml(item.path || "—")}</span></div>
+          <div class="kv"><span>Assinado</span><span>${item.signed ? "Sim" : "Não"}${item.signerSubject ? " · " + escapeHtml(item.signerSubject) : ""}</span></div>
         </div>
-      \`).join("")
+      `).join("")
     : '<div class="message">Nenhum horário de início de processo disponível.</div>';
 
   const compileTimes = [];
@@ -585,16 +585,16 @@ async function openReport(id) {
   compileTimes.sort((a, b) => new Date(b.time) - new Date(a.time));
 
   document.getElementById("compilationTimesList").innerHTML = compileTimes.length
-    ? compileTimes.slice(0, 300).map((item) => \`
+    ? compileTimes.slice(0, 300).map((item) => `
         <div class="finding">
           <div class="finding-head">
-            <h4>\${escapeHtml(item.source)}</h4>
-            <span class="tag info">\${escapeHtml(formatDate(item.time))}</span>
+            <h4>${escapeHtml(item.source)}</h4>
+            <span class="tag info">${escapeHtml(formatDate(item.time))}</span>
           </div>
-          <code>\${escapeHtml(item.path || "—")}</code>
-          \${item.signer ? '<div class="kv"><span>Publisher / assinante</span><span>' + escapeHtml(item.signer) + '</span></div>' : ""}
+          <code>${escapeHtml(item.path || "—")}</code>
+          ${item.signer ? '<div class="kv"><span>Publisher / assinante</span><span>' + escapeHtml(item.signer) + '</span></div>' : ""}
         </div>
-      \`).join("")
+      `).join("")
     : '<div class="message">Nenhum timestamp de compilação PE disponível.</div>';
 
   const reviewFiles = [...arrays.files]
