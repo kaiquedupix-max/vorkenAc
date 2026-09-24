@@ -17,7 +17,7 @@ namespace Vorken.Agent;
 
 internal static class Program
 {
-    private const string AgentVersion = "1.0.11";
+    private const string AgentVersion = "1.0.12";
     private const string DefaultServerUrl = "https://vorkenac.guerrafriarust.com.br";
 
     private static readonly JsonSerializerOptions JsonOptions =
@@ -706,6 +706,51 @@ internal static class Program
         Console.ResetColor();
     }
 
+    private static string? ReadEmbeddedAnalysisToken()
+    {
+        try
+        {
+            using Stream? stream =
+                typeof(Program)
+                    .Assembly
+                    .GetManifestResourceStream(
+                        "Vorken.AnalysisToken");
+
+            if (stream == null)
+                return null;
+
+            using var reader =
+                new StreamReader(
+                    stream,
+                    Encoding.UTF8,
+                    detectEncodingFromByteOrderMarks: true,
+                    leaveOpen: false);
+
+            string value =
+                reader.ReadToEnd().Trim();
+
+            if (
+                string.IsNullOrWhiteSpace(value) ||
+                value.StartsWith(
+                    "__VORKEN_ANALYSIS_TOKEN_SLOT__",
+                    StringComparison.Ordinal)
+            )
+            {
+                return null;
+            }
+
+            return Regex.IsMatch(
+                value,
+                @"^[A-Za-z0-9_-]{20,80}$")
+                    ? value
+                    : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private static AgentConfig LoadConfig(string[] args)
     {
         string? token = null;
@@ -734,6 +779,15 @@ internal static class Program
 
             token ??= fileConfig?.Token;
             server ??= fileConfig?.ServerUrl;
+        }
+
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            token =
+                ReadEmbeddedAnalysisToken();
+
+            if (!string.IsNullOrWhiteSpace(token))
+                server ??= DefaultServerUrl;
         }
 
         if (string.IsNullOrWhiteSpace(token))
