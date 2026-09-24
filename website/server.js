@@ -2200,6 +2200,10 @@ function flattenArtifacts(report) {
     push("device", device.name || device.deviceId || device.instanceId, device);
   }
 
+  for (const file of report.usbFiles || []) {
+    push("usb_file", file.path || file.relativePath || file.name, file);
+  }
+
   for (const service of report.services || []) {
     push("service", service.name || service.displayName, service);
   }
@@ -2590,6 +2594,94 @@ function artifactFileExtension(artifactValue, evidence = {}) {
   return "";
 }
 
+function isVorkenOwnedArtifact(value, evidence = {}) {
+  const candidates = [
+    value,
+    evidence?.name,
+    evidence?.fileName,
+    evidence?.path,
+    evidence?.fullPath,
+    evidence?.processPath,
+    evidence?.modulePath,
+    evidence?.originalPath,
+    evidence?.targetPath,
+    evidence?.currentPath,
+    evidence?.sourceUrl,
+    evidence?.finalUrl,
+    evidence?.pageUrl,
+    evidence?.siteUrl,
+    evidence?.referrerUrl,
+    evidence?.hostUrl,
+    evidence?.recoveredUrl,
+    ...(Array.isArray(evidence?.urlChain) ? evidence.urlChain : [])
+  ]
+    .filter(Boolean)
+    .map((item) => String(item).replaceAll("/", "\\").toLowerCase());
+
+  return candidates.some((item) =>
+    item.includes("vorkenac.guerrafriarust.com.br") ||
+    item.includes("\\vorken\\") ||
+    item.includes("\\vorken.") ||
+    item.includes("\\vorken-") ||
+    item.includes("\\vorken_") ||
+    /(^|\\)vorken(?:[._-][^\\]+)?\.(exe|dll|json|log|tmp|zip)$/i.test(item) ||
+    /(^|\\)vorken(?:\.agent)?\.exe$/i.test(item)
+  );
+}
+
+function isTrustedPortableExecutableName(value) {
+  const name = path.basename(
+    String(value || "")
+      .replaceAll("/", "\\")
+      .toLowerCase()
+  );
+
+  if (!name)
+    return false;
+
+  const exact = new Set([
+    "discord.exe",
+    "discordsetup.exe",
+    "update.exe",
+    "steam.exe",
+    "steamsetup.exe",
+    "chrome.exe",
+    "chromesetup.exe",
+    "msedge.exe",
+    "microsoftedgeupdate.exe",
+    "firefox.exe",
+    "firefox installer.exe",
+    "opera.exe",
+    "operasetup.exe",
+    "brave.exe",
+    "bravesetup.exe",
+    "epicgameslauncher.exe",
+    "epicinstaller.exe",
+    "riotclientservices.exe",
+    "battle.net.exe",
+    "battle.net-setup.exe",
+    "nvidia app.exe",
+    "nvidiaapp.exe",
+    "geforce_experience.exe",
+    "radeonsoftware.exe",
+    "obs64.exe",
+    "obs-studio.exe",
+    "medal.exe",
+    "spotify.exe",
+    "telegram.exe",
+    "whatsapp.exe",
+    "teams.exe",
+    "ms-teams.exe",
+    "logioptionsplus.exe",
+    "razercentral.exe"
+  ]);
+
+  if (exact.has(name))
+    return true;
+
+  return /^(discord|steam|chrome|firefox|opera|brave|epic|riot|battle[ ._-]?net|nvidia|geforce|radeon|amd|obs|medal|spotify|telegram|whatsapp|teams|logi|logitech|razer).*(setup|installer|update|updater|launcher)?\.exe$/i.test(name);
+}
+
 function capFindingSeverityForArtifact(severity, artifactType, artifactValue, evidence = {}) {
   const normalized = normalizeSeverity(severity);
   const extension = artifactFileExtension(artifactValue, evidence);
@@ -2667,6 +2759,7 @@ async function rebuildFindings(analysisId, report) {
 
   for (const rule of rulesResult.rows) {
     for (const artifact of artifacts) {
+      if (isVorkenOwnedArtifact(artifact.value, artifact.evidence)) continue;
       if (!matchesRule(rule, artifact)) continue;
       if (isKnownBenignPeNoise(artifact.value)) continue;
 
@@ -2746,6 +2839,9 @@ async function insertReviewFinding(
   evidence
 ) {
   const normalizedValue = String(artifactValue || "").slice(0, 2000);
+
+  if (isVorkenOwnedArtifact(normalizedValue, evidence || {}))
+    return;
 
   if (isKnownBenignPeNoise(normalizedValue))
     return;
@@ -2987,7 +3083,11 @@ async function addBuiltInReviewFindings(analysisId, report) {
     if (!candidateName)
       return false;
 
-    if (isKnownBenignPeNoise(candidateName))
+    if (
+      isKnownBenignPeNoise(candidateName) ||
+      isVorkenOwnedArtifact(candidatePath) ||
+      isTrustedPortableExecutableName(candidateName)
+    )
       return true;
 
     return (report.files || []).some((item) => {
