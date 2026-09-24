@@ -1249,7 +1249,8 @@ function forceInformationalFinding(artifactType, evidence = {}, title = "") {
   return (
     lowerTitle.includes("prefetch apagado") ||
     lowerTitle.includes("artefato forense") ||
-    lowerTitle.includes("powershell")
+    lowerTitle.includes("powershell") ||
+    lowerTitle.includes("recurso de rede")
   );
 }
 
@@ -1299,6 +1300,7 @@ async function rebuildFindings(analysisId, report) {
   }
 
   await addBuiltInReviewFindings(analysisId, report);
+  await downgradeUnexecutedExeFindings(analysisId, report);
 }
 
 async function insertReviewFinding(
@@ -1344,6 +1346,133 @@ async function insertReviewFinding(
       JSON.stringify(evidence || {}),
     ]
   );
+}
+
+async function downgradeUnexecutedExeFindings(analysisId, report) {
+  const normalize = (value) =>
+    String(value || "")
+      .replaceAll("/", "\\")
+      .toLowerCase()
+      .trim();
+
+  const baseName = (value) => {
+    const normalized = normalize(value);
+    const parts = normalized.split("\\").filter(Boolean);
+    return parts.at(-1) || "";
+  };
+
+  const executedPaths = new Set();
+  const executedNames = new Set();
+
+  const remember = (...values) => {
+    for (const raw of values.flat(Infinity)) {
+      const normalized = normalize(raw);
+      if (!normalized)
+        continue;
+
+      executedPaths.add(normalized);
+
+      const name = baseName(normalized);
+      if (name)
+        executedNames.add(name);
+    }
+  };
+
+  for (const item of report.processes || []) {
+    remember(item.path, item.name);
+  }
+
+  for (const item of report.prefetchExecutions || []) {
+    remember(
+      item.resolvedExecutablePath,
+      item.nativeExecutablePath,
+      item.executableName
+    );
+  }
+
+  for (const item of report.bam || []) {
+    remember(item.path);
+  }
+
+  for (const item of report.processCreationEvents || []) {
+    remember(item.processPath, item.processName);
+  }
+
+  const executed = (...values) =>
+    values
+      .flat(Infinity)
+      .filter((value) => value !== null && value !== undefined)
+      .some((raw) => {
+        const normalized = normalize(raw);
+        if (!normalized)
+          return false;
+
+        if (executedPaths.has(normalized))
+          return true;
+
+        const name = baseName(normalized);
+        return Boolean(name && executedNames.has(name));
+      });
+
+  const fileOnlyTypes = new Set([
+    "file",
+    "pe_inspection",
+    "browser_download",
+    "browser_recovery",
+    "usn_delete",
+    "recycle_bin",
+    "unknown_app",
+    "hash_reputation",
+    "zone_identifier"
+  ]);
+
+  const findings = await pool.query(
+    `SELECT id, title, severity, artifact_type, artifact_value, evidence
+     FROM scan_findings
+     WHERE analysis_id = $1
+       AND severity IN ('high','critical')`,
+    [analysisId]
+  );
+
+  for (const finding of findings.rows) {
+    if (!fileOnlyTypes.has(String(finding.artifact_type || "")))
+      continue;
+
+    const evidence = finding.evidence || {};
+    const candidates = [
+      finding.artifact_value,
+      evidence.name,
+      evidence.fileName,
+      evidence.path,
+      evidence.targetPath,
+      evidence.currentPath,
+      evidence.originalPath,
+      evidence.recoveredFileName
+    ].filter(Boolean);
+
+    const exeCandidate = candidates.some((value) =>
+      /\.exe(?:$|[?#])/i.test(String(value || "").trim()));
+
+    if (!exeCandidate || executed(candidates))
+      continue;
+
+    const updatedEvidence = {
+      ...evidence,
+      originalSeverity: finding.severity,
+      executionConfirmed: false,
+      executionGate: "catalog_or_file_only",
+      note:
+        "Arquivo EXE identificado por catálogo/reputação/artefato, mas sem evidência independente de execução no PC. Mantido apenas como catálogo/inventário azul."
+    };
+
+    await pool.query(
+      `UPDATE scan_findings
+       SET severity = 'info',
+           evidence = $2::jsonb
+       WHERE id = $1`,
+      [finding.id, JSON.stringify(updatedEvidence)]
+    );
+  }
 }
 
 async function addBuiltInReviewFindings(analysisId, report) {
@@ -1396,6 +1525,69 @@ async function addBuiltInReviewFindings(analysisId, report) {
     return parts.at(-1) || "";
   };
 
+  // Keep file reputation/catalog matches separate from proof of execution.
+  // A file being present, downloaded, deleted or named like a catalog entry
+  // is not execution evidence by itself.
+  const executedPaths = new Set();
+  const executedNames = new Set();
+
+  const rememberExecution = (...values) => {
+    for (const raw of values.flat(Infinity)) {
+      const normalized = normalizePath(raw);
+      if (!normalized)
+        continue;
+
+      executedPaths.add(normalized);
+
+      const name = fileName(normalized);
+      if (name)
+        executedNames.add(name);
+    }
+  };
+
+  for (const item of report.processes || []) {
+    rememberExecution(item.path, item.name);
+  }
+
+  for (const item of report.prefetchExecutions || []) {
+    rememberExecution(
+      item.resolvedExecutablePath,
+      item.nativeExecutablePath,
+      item.executableName
+    );
+  }
+
+  for (const item of report.bam || []) {
+    rememberExecution(item.path);
+  }
+
+  for (const item of report.processCreationEvents || []) {
+    rememberExecution(item.processPath, item.processName);
+  }
+
+  const hasExecutionEvidence = (...values) =>
+    values
+      .flat(Infinity)
+      .filter((value) => value !== null && value !== undefined)
+      .some((raw) => {
+        const normalized = normalizePath(raw);
+        if (!normalized)
+          return false;
+
+        if (executedPaths.has(normalized))
+          return true;
+
+        const name = fileName(normalized);
+        return Boolean(name && executedNames.has(name));
+      });
+
+  const isExeCandidate = (...values) =>
+    values
+      .flat(Infinity)
+      .filter(Boolean)
+      .some((value) =>
+        /\.exe(?:$|[?#])/i.test(String(value || "").trim()));
+
   const catalogFindingKeys = new Set();
 
   const addCatalogFindings = async (artifactType, artifactValue, evidence, values) => {
@@ -1445,6 +1637,37 @@ async function addBuiltInReviewFindings(analysisId, report) {
           : "high";
       }
 
+      const fileLikeArtifact =
+        ["file", "browser_download", "usn_delete", "recycle_bin"]
+          .includes(artifactType);
+
+      const unexecutedExe =
+        fileLikeArtifact &&
+        isExeCandidate(
+          artifactValue,
+          values,
+          evidence?.name,
+          evidence?.fileName,
+          evidence?.path,
+          evidence?.targetPath,
+          evidence?.currentPath,
+          evidence?.originalPath
+        ) &&
+        !hasExecutionEvidence(
+          artifactValue,
+          values,
+          evidence?.name,
+          evidence?.fileName,
+          evidence?.path,
+          evidence?.targetPath,
+          evidence?.currentPath,
+          evidence?.originalPath
+        );
+
+      if (unexecutedExe) {
+        catalogSeverity = "info";
+      }
+
       await insertReviewFinding(
         analysisId,
         "Catálogo Rust: " + match.name,
@@ -1454,9 +1677,16 @@ async function addBuiltInReviewFindings(analysisId, report) {
         {
           ...evidence,
           catalogMatch: match,
-          confidence: catalogSeverity === "medium" ? "medium" : "high",
+          confidence:
+            catalogSeverity === "info"
+              ? "info"
+              : catalogSeverity === "medium"
+                ? "medium"
+                : "high",
           note:
-            artifactType === "browser_history" && (
+            unexecutedExe
+              ? "O arquivo corresponde ao catálogo, mas não há evidência de execução no PC. Mantido apenas como catálogo/inventário azul."
+              : artifactType === "browser_history" && (
               Boolean(String(evidence?.searchQuery || "").trim()) ||
               isSearchEngineUrl(evidence?.url)
             )
@@ -1682,6 +1912,14 @@ async function addBuiltInReviewFindings(analysisId, report) {
     const removable =
       String(item.driveType || "").toLowerCase() === "removable";
 
+    const executed =
+      hasExecutionEvidence(
+        name,
+        item.fileName,
+        item.originalPath,
+        item.path
+      );
+
     const strongMatch =
       item.deceptiveDoubleExtension === true ||
       catalogMatches.length > 0;
@@ -1689,6 +1927,35 @@ async function addBuiltInReviewFindings(analysisId, report) {
     const recentRandomExecutable =
       item.randomLikeName === true &&
       ageDays(item.timestampUtc) <= 3;
+
+    // Deleted/present EXEs are not detections unless there is independent
+    // proof they actually executed. Keep them blue for catalog/inventory.
+    if (extension === ".exe" && !executed) {
+      if (
+        strongMatch ||
+        recentRandomExecutable
+      ) {
+        await insertReviewFinding(
+          analysisId,
+          catalogMatches.length > 0
+            ? "Catálogo Rust: arquivo EXE sem evidência de execução"
+            : "Arquivo EXE apagado sem evidência de execução",
+          "info",
+          "usn_delete",
+          name || item.volume || "arquivo apagado",
+          {
+            ...item,
+            catalogMatches,
+            confidence: "info",
+            note: catalogMatches.length > 0
+              ? "O nome corresponde ao catálogo, porém não foi encontrada evidência independente de execução. Mantido somente como catálogo/inventário azul."
+              : "O USN registrou o arquivo, mas não há evidência independente de execução. Mantido somente como inventário azul."
+          }
+        );
+      }
+
+      continue;
+    }
 
     if (strongMatch || recentRandomExecutable) {
       await insertReviewFinding(
@@ -2316,17 +2583,19 @@ async function addBuiltInReviewFindings(analysisId, report) {
     const value = String(execution.value || "");
     const normalized = normalizePath(value);
 
-    if (value.startsWith("\\")) {
+    // True UNC paths start with two backslashes. A single leading slash is
+    // also used by NT volume paths such as \\VOLUME{GUID} and is NOT network.
+    if (value.startsWith("\\\\")) {
       await insertReviewFinding(
         analysisId,
-        "Execução a partir de recurso de rede",
-        "high",
+        "Execução a partir de recurso de rede (informativo)",
+        "info",
         execution.type,
         value,
         {
           ...execution.evidence,
-          confidence: "high",
-          note: "A execução aponta para caminho UNC/recurso de rede."
+          confidence: "info",
+          note: "A execução aponta para caminho UNC/recurso de rede. Mantido apenas como contexto azul; não é considerado detecção por si só."
         }
       );
     }
@@ -2876,16 +3145,27 @@ async function addBuiltInReviewFindings(analysisId, report) {
       analysisId,
       external
         ? (item.driveType === "Network"
-            ? "Execução registrada a partir de recurso de rede"
+            ? "Execução registrada a partir de recurso de rede (informativo)"
             : "Execução registrada a partir de mídia removível")
         : "Processo executado recentemente e arquivo não localizado",
-      external ? "high" : "medium",
+      item.driveType === "Network"
+        ? "info"
+        : external
+          ? "high"
+          : "medium",
       "process_history",
       p || item.processName || "processo",
       {
         ...item,
-        confidence: external ? "high" : "medium",
-        note: "Execução confirmada pelo Event Log 4688; caminhos normais do Windows e Program Files são ignorados.",
+        confidence:
+          item.driveType === "Network"
+            ? "info"
+            : external
+              ? "high"
+              : "medium",
+        note: item.driveType === "Network"
+          ? "Execução confirmada pelo Event Log 4688 a partir de recurso de rede. Mantida apenas como contexto azul."
+          : "Execução confirmada pelo Event Log 4688; caminhos normais do Windows e Program Files são ignorados.",
       }
     );
   }
