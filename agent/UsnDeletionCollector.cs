@@ -229,7 +229,7 @@ internal static class UsnDeletionCollector
 
             bool riskyExtension = extension is
                 ".exe" or ".com" or ".scr" or ".dll" or ".sys" or
-                ".msi" or ".bat" or ".cmd" or ".ps1" or
+                ".msi" or ".bat" or ".cmd" or
                 ".zip" or ".rar" or ".7z";
 
             if (!riskyExtension)
