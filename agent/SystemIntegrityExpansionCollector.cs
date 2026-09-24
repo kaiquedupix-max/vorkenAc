@@ -1,6 +1,5 @@
 using Microsoft.Win32;
 using System.Diagnostics;
-using System.ServiceProcess;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 
@@ -45,7 +44,7 @@ internal static class SystemIntegrityExpansionCollector
         try
         {
             using RegistryKey? key =
-                Registry.LocalMachine.OpenSubKey(
+                Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
                     @"SYSTEM\CurrentControlSet\Control\SecureBoot\State");
 
             object? raw = key?.GetValue(
@@ -173,7 +172,7 @@ internal static class SystemIntegrityExpansionCollector
             try
             {
                 using RegistryKey? key =
-                    Registry.LocalMachine.OpenSubKey(
+                    Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
                         @"SYSTEM\CurrentControlSet\Services\" +
                         serviceName);
 
