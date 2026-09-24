@@ -461,6 +461,8 @@ async function openReport(id) {
   const analysis = data.analysis || {};
   const report = data.report || null;
   const findings = safeArray(data.findings);
+  const aiFilteredFindings = safeArray(data.aiFilteredFindings);
+  const aiReview = data.aiReview || {};
   const relatedAnalyses = safeArray(data.relatedAnalyses);
   const payload = report?.payload && typeof report.payload === "object"
     ? report.payload
@@ -578,8 +580,9 @@ async function openReport(id) {
 
   document.getElementById("reportMetrics").innerHTML = `
     <div class="metric"><small>STATUS</small><strong>${escapeHtml(statusLabel(analysis.status))}</strong></div>
-    <div class="metric danger-metric"><small>VERMELHO · CRÍTICO/ALTO</small><strong>${criticalFindings.length}</strong><span>Clique na seção vermelha abaixo</span></div>
-    <div class="metric warning-metric"><small>AMARELO · REVISAR</small><strong>${mediumFindings.length}</strong><span>Clique na seção amarela abaixo</span></div>
+    <div class="metric danger-metric"><small>VERMELHO · CRÍTICO/ALTO</small><strong>${criticalFindings.length}</strong><span>Resultado final pós-IA</span></div>
+    <div class="metric warning-metric"><small>AMARELO · REVISAR</small><strong>${mediumFindings.length}</strong><span>Resultado final pós-IA</span></div>
+    <div class="metric info-metric"><small>IA FILTROU</small><strong>${aiFilteredFindings.length}</strong><span>Prováveis falsos positivos</span></div>
     <div class="metric hardware-metric"><small>HARDWARE / USB</small><strong>${hardwareCount}</strong><span>Pendrives e placas separados</span></div>
     <div class="metric priority-metric"><small>ARQUIVOS PRIORITÁRIOS</small><strong id="summaryPriorityCount">0</strong><span>EXE/ZIP/RAR/7Z suspeitos</span></div>
     <div class="metric"><small>MÓDULOS FORENSES</small><strong>${advancedForensicsCount}</strong><span>PE · USN · rede · PowerShell · WER</span></div>
@@ -591,10 +594,21 @@ async function openReport(id) {
   document.getElementById("hardwareCountBadge").textContent = hardwareCount;
   document.getElementById("infoCountBadge").textContent = informationalCount;
 
+  const aiStatusLabel = {
+    completed: "Concluída",
+    running: "Em andamento",
+    disabled: "Desativada",
+    not_configured: "Não configurada",
+    error: "Falhou · usando filtro normal",
+    pending: "Pendente",
+  }[aiReview.status] || aiReview.status || "Pendente";
+
   document.getElementById("reportMeta").innerHTML = `
     <div class="kv"><span>Computador</span><span>${escapeHtml(analysis.machine_name || "—")}</span></div>
     <div class="kv"><span>Sistema</span><span>${escapeHtml(analysis.os_version || "—")}</span></div>
     <div class="kv"><span>Agente</span><span>${escapeHtml(analysis.agent_version || "—")}</span></div>
+    <div class="kv"><span>Filtro IA</span><span>${escapeHtml(aiStatusLabel)}</span></div>
+    <div class="kv"><span>Revisão IA</span><span>${escapeHtml(formatDate(aiReview.reviewedAt))}</span></div>
     <div class="kv"><span>Início</span><span>${escapeHtml(formatDate(analysis.started_at))}</span></div>
     <div class="kv"><span>Conclusão</span><span>${escapeHtml(formatDate(analysis.finished_at))}</span></div>
   `;
@@ -613,17 +627,43 @@ async function openReport(id) {
       element.className = "finding severity-card " + escapeHtml(finding.severity || "info");
 
       const evidence = finding.evidence || {};
+      const ai = finding.ai_review || null;
+      const filteredByAi = ai?.verdict === "likely_false_positive";
+      const displaySeverity = filteredByAi ? "info" : (finding.severity || "info");
+      element.className = "finding severity-card " + escapeHtml(displaySeverity);
+
       const catalogName = evidence.catalogMatch?.name
         ? '<div class="kv"><span>Catálogo</span><span>' + escapeHtml(evidence.catalogMatch.name) + '</span></div>'
         : "";
 
+      const aiLabel = ai
+        ? ai.verdict === "likely_cheat"
+          ? "IA CONFIRMOU"
+          : ai.verdict === "likely_false_positive"
+            ? "IA FILTROU"
+            : "IA · REVISAR"
+        : "";
+
+      const aiConfidence = ai
+        ? Math.round(Number(ai.confidence || 0) * 100)
+        : 0;
+
+      const aiBlock = ai
+        ? '<div class="kv"><span>' + escapeHtml(aiLabel) + '</span><span>' +
+            escapeHtml(String(aiConfidence) + "% · " + (ai.reason || "Sem justificativa.")) +
+          '</span></div>'
+        : evidence.priorityMaximum === true
+          ? '<div class="kv"><span>IA</span><span>Prioridade máxima protegida · não pode ser rebaixada</span></div>'
+          : "";
+
       element.innerHTML = `
         <div class="finding-head">
           <h4>${escapeHtml(finding.title)}</h4>
-          <span class="tag ${escapeHtml(finding.severity)}">${escapeHtml(severityLabel(finding.severity))}</span>
+          <span class="tag ${escapeHtml(displaySeverity)}">${escapeHtml(filteredByAi ? "FILTRADO IA" : severityLabel(finding.severity))}</span>
         </div>
         <code>${escapeHtml(finding.artifact_value)}</code>
         ${catalogName}
+        ${aiBlock}
         ${evidence.note ? '<div class="kv"><span>Motivo</span><span>' + escapeHtml(evidence.note) + '</span></div>' : ""}
         <details class="evidence-details">
           <summary>Ver evidência completa</summary>
@@ -651,6 +691,35 @@ async function openReport(id) {
     "infoFindingsList",
     infoFindings,
     "Nenhum achado informativo/baixo."
+  );
+
+  document.getElementById("aiFilteredCountBadge").textContent =
+    aiFilteredFindings.length;
+
+  const aiStatusBox = document.getElementById("aiReviewStatus");
+  aiStatusBox.className =
+    "message " +
+    (aiReview.status === "completed"
+      ? "ok"
+      : aiReview.status === "error"
+        ? "error"
+        : "");
+
+  aiStatusBox.textContent =
+    aiReview.status === "completed"
+      ? "Segunda camada concluída. A lista principal já está filtrada pela IA."
+      : aiReview.status === "error"
+        ? "A revisão por IA falhou nesta análise. O Vorken manteve o resultado do filtro normal."
+        : aiReview.status === "disabled"
+          ? "Filtro por IA desativado. Resultado exibido somente pelo motor normal."
+          : aiReview.status === "not_configured"
+            ? "Filtro por IA ainda não está configurado no servidor."
+            : "Revisão por IA pendente ou em andamento.";
+
+  renderFindings(
+    "aiFilteredFindingsList",
+    aiFilteredFindings,
+    "A IA não removeu nenhum provável falso positivo desta análise."
   );
 
   const unknownAppFindings = findings.filter((item) =>
