@@ -43,8 +43,11 @@ jobs:
 
           $pfxPath = Join-Path $env:RUNNER_TEMP "vorken-signing.pfx"
           [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:VORKEN_SIGNING_PFX_BASE64))
-          $securePassword = ConvertTo-SecureString $env:VORKEN_SIGNING_PFX_PASSWORD -AsPlainText -Force
-          $certificate = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($pfxPath, $securePassword, [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable)
+          $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new(
+            $pfxPath,
+            $env:VORKEN_SIGNING_PFX_PASSWORD,
+            [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable
+          )
           $signature = Set-AuthenticodeSignature -FilePath .\publish\Vorken.Agent.exe -Certificate $certificate -TimestampServer "http://timestamp.digicert.com" -HashAlgorithm SHA256
 
           if ($signature.Status -ne "Valid") {
