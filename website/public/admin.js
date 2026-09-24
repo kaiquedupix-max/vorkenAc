@@ -393,18 +393,49 @@ document.getElementById("rebuildFindingsBtn").addEventListener("click", async ()
 
   const button = document.getElementById("rebuildFindingsBtn");
   const original = button.textContent;
+  const analysisId = currentReportId;
 
   try {
     button.disabled = true;
-    button.textContent = "Recalculando...";
+    button.textContent = "Iniciando...";
 
     await api(
-      "/api/admin/analyses/" + encodeURIComponent(currentReportId) + "/rebuild",
+      "/api/admin/analyses/" + encodeURIComponent(analysisId) + "/rebuild",
       { method: "POST" }
     );
 
-    await loadAnalyses();
-    await openReport(currentReportId);
+    const startedAt = Date.now();
+    const timeoutMs = 5 * 60 * 1000;
+
+    while (Date.now() - startedAt < timeoutMs) {
+      button.textContent = "Recalculando + IA...";
+
+      const status = await api(
+        "/api/admin/analyses/" +
+        encodeURIComponent(analysisId) +
+        "/rebuild-status"
+      );
+
+      if (!status.processing) {
+        await loadAnalyses();
+        await openReport(analysisId);
+
+        if (status.aiReviewStatus === "error") {
+          alert(
+            "O filtro normal foi recalculado, mas a revisão por IA encontrou um erro. " +
+            (status.aiReviewError || "O resultado normal foi mantido.")
+          );
+        }
+
+        return;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 2200));
+    }
+
+    throw new Error(
+      "O recálculo continua sendo processado no servidor. Aguarde alguns instantes e abra o relatório novamente."
+    );
   } catch (error) {
     alert(error.message);
   } finally {
