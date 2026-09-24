@@ -5355,9 +5355,8 @@ function requireGuerraFriaIntegration(req, res, next) {
 
 function normalizeVerificationCode(value) {
   return String(value || "")
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, "")
-    .slice(0, 12);
+    .replace(/\D/g, "")
+    .slice(0, 4);
 }
 
 app.post(
@@ -5373,7 +5372,7 @@ app.post(
       Math.min(3600, Math.trunc(Number(req.body?.ttlSeconds || 600)))
     );
 
-    if (!/^[A-Z0-9]{6,12}$/.test(code))
+    if (!/^\d{4}$/.test(code))
       return res.status(400).json({ error: "invalid_verification_code" });
 
     if (!/^7656119\d{10}$/.test(steamId))
@@ -5402,7 +5401,12 @@ app.post(
          steam_id=EXCLUDED.steam_id,
          player_name=EXCLUDED.player_name,
          administrator_id=EXCLUDED.administrator_id,
+         discord_user_id=NULL,
+         ticket_channel_id=NULL,
+         analysis_id=NULL,
+         status='pending',
          expires_at=EXCLUDED.expires_at,
+         redeemed_at=NULL,
          updated_at=NOW()
        RETURNING verification_code, steam_id, player_name, status, expires_at`,
       [code, steamId, playerName, administratorId, String(ttlSeconds)]
@@ -5419,7 +5423,7 @@ app.post(
     const code = normalizeVerificationCode(req.body?.code);
     const discordUserId = cleanText(req.body?.discordUserId, 40);
 
-    if (!/^[A-Z0-9]{6,12}$/.test(code))
+    if (!/^\d{4}$/.test(code))
       return res.status(400).json({ error: "invalid_verification_code", message: "Código inválido." });
 
     if (!/^\d{16,20}$/.test(discordUserId))
