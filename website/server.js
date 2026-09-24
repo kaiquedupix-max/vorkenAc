@@ -6011,6 +6011,134 @@ app.post("/api/agent/:token/report", async (req, res) => {
   }
 });
 
+
+app.get("/api/agent/:token/result", async (req, res) => {
+  try {
+    const token = String(req.params.token || "");
+    const analysis =
+      validToken(token)
+        ? await getAnalysisByToken(token)
+        : null;
+
+    if (!ensureAnalysisUsable(analysis, res)) return;
+
+    const reportResult = await pool.query(
+      `SELECT payload, payload_raw, payload_encoding, created_at
+       FROM scan_reports
+       WHERE analysis_id = $1
+       ORDER BY id DESC
+       LIMIT 1`,
+      [analysis.id]
+    );
+
+    let payload = {};
+
+    if (reportResult.rows[0]) {
+      try {
+        payload =
+          decodeStoredRawReport(reportResult.rows[0]) || {};
+      } catch {
+        payload =
+          reportResult.rows[0].payload || {};
+      }
+    }
+
+    const findingsResult = await pool.query(
+      `SELECT
+         sf.id,
+         sf.title,
+         sf.severity,
+         sf.artifact_type,
+         sf.artifact_value,
+         sf.evidence
+       FROM scan_findings sf
+       LEFT JOIN ai_finding_reviews ar
+         ON ar.analysis_id = sf.analysis_id
+        AND ar.finding_id = sf.id
+       WHERE sf.analysis_id = $1
+         AND (
+           sf.evidence->>'priorityMaximum' = 'true'
+           OR ar.verdict IS DISTINCT FROM 'likely_false_positive'
+         )
+       ORDER BY
+         CASE WHEN sf.evidence->>'priorityMaximum' = 'true' THEN 100 ELSE 0 END DESC,
+         CASE sf.severity
+           WHEN 'critical' THEN 5
+           WHEN 'high' THEN 4
+           WHEN 'medium' THEN 3
+           WHEN 'low' THEN 2
+           ELSE 1
+         END DESC,
+         sf.id ASC
+       LIMIT 80`,
+      [analysis.id]
+    );
+
+    const findings =
+      findingsResult.rows.map((item) => ({
+        id: Number(item.id),
+        title: item.title || "Evidência detectada",
+        severity: item.severity || "info",
+        artifactType: item.artifact_type || "",
+        artifactValue: item.artifact_value || "",
+        evidence: item.evidence || {},
+      }));
+
+    const critical =
+      findings.filter((item) =>
+        item.severity === "critical" ||
+        item.severity === "high"
+      ).length;
+
+    const review =
+      findings.filter((item) =>
+        item.severity === "medium"
+      ).length;
+
+    let inventory = 0;
+
+    try {
+      inventory =
+        flattenArtifacts(payload).length;
+    } catch {
+      inventory = 0;
+    }
+
+    res.json({
+      analysisId: Number(analysis.id),
+      label: analysis.label || "",
+      status: analysis.status || "pending",
+      processingStage:
+        analysis.processing_stage || "waiting",
+      processingMessage:
+        analysis.processing_message || "",
+      startedAt: analysis.started_at || null,
+      finishedAt: analysis.finished_at || null,
+      summary: {
+        critical,
+        review,
+        inventory,
+      },
+      findings,
+    });
+  } catch (error) {
+    console.error(
+      "Falha ao consultar resultado para o agente:",
+      {
+        message: error?.message,
+        code: error?.code,
+      }
+    );
+
+    if (!res.headersSent) {
+      res.status(500).json({
+        error: "agent_result_failed",
+        message: "Não foi possível consultar o resultado da análise.",
+      });
+    }
+  }
+});
+
 app.get("/admin", (_req, res) => {
   res.sendFile(path.join(__dirname, "public", "admin.html"));
 });

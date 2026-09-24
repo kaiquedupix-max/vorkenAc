@@ -35,7 +35,7 @@ internal static class Program
         Application.Run(new AgentMainForm(args));
     }
 
-    internal static async Task<int> RunAnalysisAsync(
+    internal static async Task<AgentRunResult> RunAnalysisAsync(
         string[] args,
         Action<string>? status = null)
     {
@@ -503,18 +503,110 @@ internal static class Program
                             body.Trim().Replace("\r", " ").Replace("\n", " "));
                     }
 
-                    return 3;
+                    return new AgentRunResult
+                    {
+                        ExitCode = 3,
+                        Error = "Falha ao enviar os dados ao servidor."
+                    };
                 }
             }
 
+            ReportStatus("Dados enviados. Aguardando o processamento final do relatório...");
+
+            AgentResultSnapshot? finalResult = null;
+
+            try
+            {
+                finalResult = await WaitForAnalysisResultAsync(
+                    http,
+                    config.Token);
+            }
+            catch (Exception ex)
+            {
+                ReportStatus(
+                    "Relatório enviado. Não foi possível acompanhar o processamento final: " +
+                    ex.Message);
+            }
+
             ReportStatus("Dados enviados para análise com sucesso.");
-            return 0;
+
+            return new AgentRunResult
+            {
+                ExitCode = 0,
+                Result = finalResult
+            };
         }
         catch (Exception ex)
         {
             ReportStatus("Falha no Vorken: " + ex.Message);
-            return 1;
+
+            return new AgentRunResult
+            {
+                ExitCode = 1,
+                Error = ex.Message
+            };
         }
+    }
+
+    private static async Task<AgentResultSnapshot?> WaitForAnalysisResultAsync(
+        HttpClient http,
+        string token)
+    {
+        string route =
+            $"api/agent/{Uri.EscapeDataString(token)}/result";
+
+        string? lastStage = null;
+
+        for (int attempt = 0; attempt < 90; attempt++)
+        {
+            using HttpResponseMessage response =
+                await http.GetAsync(route);
+
+            if (response.StatusCode == HttpStatusCode.NotFound)
+                return null;
+
+            if (!response.IsSuccessStatusCode)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(2));
+                continue;
+            }
+
+            AgentResultSnapshot? snapshot =
+                await response.Content.ReadFromJsonAsync<AgentResultSnapshot>(
+                    JsonOptions);
+
+            if (snapshot == null)
+                return null;
+
+            if (!string.Equals(
+                    lastStage,
+                    snapshot.ProcessingStage,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                lastStage = snapshot.ProcessingStage;
+
+                if (!string.IsNullOrWhiteSpace(snapshot.ProcessingMessage))
+                {
+                    ReportStatus(snapshot.ProcessingMessage);
+                }
+            }
+
+            if (string.Equals(
+                    snapshot.Status,
+                    "completed",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                ReportStatus("Processamento final concluído.");
+                return snapshot;
+            }
+
+            await Task.Delay(TimeSpan.FromSeconds(2));
+        }
+
+        ReportStatus(
+            "O relatório foi enviado e continuará sendo processado no servidor.");
+
+        return null;
     }
 
     private static void ReportStatus(string message)
@@ -1898,3 +1990,41 @@ internal sealed class StartupRecord
     public string Name { get; set; } = "";
     public string Command { get; set; } = "";
 }
+
+internal sealed class AgentRunResult
+{
+    public int ExitCode { get; set; }
+    public string? Error { get; set; }
+    public AgentResultSnapshot? Result { get; set; }
+}
+
+internal sealed class AgentResultSnapshot
+{
+    public long AnalysisId { get; set; }
+    public string Label { get; set; } = "";
+    public string Status { get; set; } = "";
+    public string ProcessingStage { get; set; } = "";
+    public string ProcessingMessage { get; set; } = "";
+    public DateTimeOffset? StartedAt { get; set; }
+    public DateTimeOffset? FinishedAt { get; set; }
+    public AgentResultSummary Summary { get; set; } = new();
+    public List<AgentFindingSnapshot> Findings { get; set; } = new();
+}
+
+internal sealed class AgentResultSummary
+{
+    public int Critical { get; set; }
+    public int Review { get; set; }
+    public int Inventory { get; set; }
+}
+
+internal sealed class AgentFindingSnapshot
+{
+    public long Id { get; set; }
+    public string Title { get; set; } = "";
+    public string Severity { get; set; } = "info";
+    public string ArtifactType { get; set; } = "";
+    public string ArtifactValue { get; set; } = "";
+    public JsonElement Evidence { get; set; }
+}
+

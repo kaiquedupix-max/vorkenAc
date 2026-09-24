@@ -421,6 +421,10 @@ function setLoggedIn(logged) {
   dashboardView.classList.toggle("hidden", !logged);
   logoutBtn.classList.toggle("hidden", !logged);
 
+  document.getElementById("adminMainNav")?.classList.toggle("hidden", !logged);
+  document.getElementById("adminReadyState")?.classList.toggle("hidden", !logged);
+  document.getElementById("refreshBtn")?.classList.toggle("hidden", !logged);
+
   if (logged && !dashboardPollTimer) {
     dashboardPollTimer =
       setInterval(
@@ -530,6 +534,7 @@ document.getElementById("ruleForm").addEventListener("submit", async (event) => 
 document.getElementById("refreshBtn").addEventListener("click", refreshAll);
 document.getElementById("closeReportBtn").addEventListener("click", () => {
   reportCard.classList.add("hidden");
+  document.getElementById("reportEmptyState")?.classList.remove("hidden");
   currentReportId = null;
   showWithoutAiResult = false;
   lastOpenReportProcessing = null;
@@ -641,19 +646,44 @@ async function loadAnalyses() {
           '</small>'
         : "";
 
+    const sessionKind =
+      Number(item.high_findings || 0) > 0
+        ? "critical"
+        : Number(item.total_findings || 0) > 0
+          ? "review"
+          : item.status === "completed"
+            ? "clean"
+            : "review";
+
+    row.dataset.sessionKind = sessionKind;
+    row.dataset.searchText = [
+      item.id,
+      item.label,
+      item.machine_name,
+      item.status,
+      stageLabel
+    ].filter(Boolean).join(" ").toLowerCase();
+
+    const resultTag =
+      sessionKind === "critical"
+        ? '<span class="tag high">CRÍTICO</span>'
+        : sessionKind === "review"
+          ? '<span class="tag medium">REVISAR</span>'
+          : '<span class="tag low">LIMPO</span>';
+
     row.innerHTML = `
-      <td>#${escapeHtml(item.id)}</td>
+      <td><span class="session-check"></span></td>
+      <td><code>VKN-${escapeHtml(String(item.id).padStart(6, "0"))}</code></td>
       <td>
         <strong>${escapeHtml(item.label)}</strong><br>
         <small class="muted">${escapeHtml(item.machine_name || "Aguardando PC")}</small>
       </td>
-      <td>
-        <span class="tag ${escapeHtml(stageClass)}">${escapeHtml(stageLabel)}</span>
-        ${stageMessage}
-      </td>
-      <td>${findings}</td>
       <td>${escapeHtml(formatDate(item.created_at))}</td>
-      <td><button class="button ghost open-report" data-id="${item.id}">Abrir relatório</button></td>
+      <td>
+        ${item.status === "completed" ? resultTag : '<span class="tag ' + escapeHtml(stageClass) + '">' + escapeHtml(stageLabel) + '</span>'}
+        ${item.status === "completed" ? '<br><small class="muted">' + Number(item.total_findings || 0) + ' achados</small>' : stageMessage}
+      </td>
+      <td><button class="button ghost open-report" data-id="${item.id}" aria-label="Abrir relatório">›</button></td>
     `;
 
     analysesBody.appendChild(row);
@@ -661,9 +691,15 @@ async function loadAnalyses() {
 
   document.querySelectorAll(".open-report").forEach((button) => {
     button.addEventListener("click", async () => {
+      document.querySelectorAll("#analysesBody tr").forEach((row) =>
+        row.classList.remove("active-session")
+      );
+      button.closest("tr")?.classList.add("active-session");
       await openReportSafe(button.dataset.id);
     });
   });
+
+  applySessionFilters();
 }
 
 async function openReport(id) {
@@ -693,6 +729,7 @@ async function openReport(id) {
   // Abre o cartão antes de montar as seções pesadas. Assim um erro em uma
   // seção específica não faz o botão parecer que "não funciona".
   reportCard.classList.remove("hidden");
+  document.getElementById("reportEmptyState")?.classList.add("hidden");
 
   document.getElementById("reportTitle").textContent =
     "#" + analysis.id + " · " + analysis.label;
@@ -836,6 +873,32 @@ async function openReport(id) {
     <div class="metric"><small>MÓDULOS FORENSES</small><strong>${advancedForensicsCount}</strong><span>PE · USN · rede · PowerShell · WER</span></div>
     <div class="metric info-metric"><small>AZUL · INVENTÁRIO</small><strong>${informationalCount}</strong><span>Oculto até você abrir</span></div>
   `;
+
+  const resultFinalLabel = document.getElementById("resultFinalLabel");
+  if (resultFinalLabel) {
+    resultFinalLabel.textContent =
+      criticalFindings.length > 0
+        ? "Indícios de trapaça"
+        : mediumFindings.length > 0
+          ? "Revisão necessária"
+          : "Sem indício crítico";
+    resultFinalLabel.style.color =
+      criticalFindings.length > 0
+        ? "#ff5769"
+        : mediumFindings.length > 0
+          ? "#f4b72c"
+          : "#2bf0c9";
+  }
+
+  const sideStatsMirror = document.getElementById("sideStatsMirror");
+  if (sideStatsMirror) {
+    sideStatsMirror.innerHTML =
+      '<div>◈ <strong>' + findings.length + '</strong> evidências classificadas</div>' +
+      '<div>◈ <strong>' + criticalFindings.length + '</strong> itens críticos / altos</div>' +
+      '<div>◈ <strong>' + mediumFindings.length + '</strong> itens para revisão</div>' +
+      '<div>◈ <strong>' + hardwareCount + '</strong> itens de hardware / USB</div>' +
+      '<div>◈ <strong>' + advancedForensicsCount + '</strong> sinais forenses</div>';
+  }
 
   document.getElementById("criticalCountBadge").textContent = criticalFindings.length;
   document.getElementById("mediumCountBadge").textContent = mediumFindings.length;
@@ -2386,6 +2449,128 @@ async function loadRules() {
 async function refreshAll() {
   await Promise.all([loadAnalyses(), loadRules()]);
 }
+
+
+let activeSessionFilter = "all";
+
+function switchAdminTab(name) {
+  const panels = {
+    sessions: document.getElementById("sessionsPanel"),
+    scanner: document.getElementById("scannerPanel"),
+    settings: document.getElementById("settingsPanel"),
+  };
+
+  for (const [key, panel] of Object.entries(panels)) {
+    panel?.classList.toggle("hidden", key !== name);
+  }
+
+  document.querySelectorAll("[data-admin-tab]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.adminTab === name);
+  });
+}
+
+function applySessionFilters() {
+  const query =
+    String(document.getElementById("sessionSearch")?.value || "")
+      .trim()
+      .toLowerCase();
+
+  document.querySelectorAll("#analysesBody tr").forEach((row) => {
+    if (!row.dataset.sessionKind) return;
+
+    const matchesKind =
+      activeSessionFilter === "all" ||
+      row.dataset.sessionKind === activeSessionFilter;
+
+    const matchesQuery =
+      !query ||
+      String(row.dataset.searchText || row.textContent || "")
+        .toLowerCase()
+        .includes(query);
+
+    row.classList.toggle("hidden", !(matchesKind && matchesQuery));
+  });
+}
+
+function setupVorkenAdminUi() {
+  document.querySelectorAll("[data-admin-tab]").forEach((button) => {
+    button.addEventListener("click", () => {
+      switchAdminTab(button.dataset.adminTab || "sessions");
+    });
+  });
+
+  document.getElementById("sessionSearch")?.addEventListener(
+    "input",
+    applySessionFilters
+  );
+
+  document.querySelectorAll(".session-filter").forEach((button) => {
+    button.addEventListener("click", () => {
+      activeSessionFilter = button.dataset.sessionFilter || "all";
+      document.querySelectorAll(".session-filter").forEach((item) =>
+        item.classList.toggle("active", item === button)
+      );
+      applySessionFilters();
+    });
+  });
+
+  document.querySelectorAll("[data-report-anchor]").forEach((button) => {
+    button.addEventListener("click", () => {
+      document.querySelectorAll("[data-report-anchor]").forEach((item) =>
+        item.classList.toggle("active", item === button)
+      );
+
+      const target =
+        document.getElementById(button.dataset.reportAnchor || "");
+
+      target?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+  });
+
+  document.getElementById("exportReportBtn")?.addEventListener("click", () => {
+    window.print();
+  });
+
+  document.getElementById("hashReportBtn")?.addEventListener("click", async () => {
+    const raw =
+      document.getElementById("rawReport")?.textContent || "";
+
+    if (!raw) {
+      alert("Abra um relatório antes de gerar o hash.");
+      return;
+    }
+
+    if (!window.crypto?.subtle) {
+      alert("O navegador não disponibilizou o gerador SHA-256.");
+      return;
+    }
+
+    const bytes =
+      new TextEncoder().encode(raw);
+
+    const digest =
+      await crypto.subtle.digest("SHA-256", bytes);
+
+    const hash =
+      Array.from(new Uint8Array(digest))
+        .map((value) => value.toString(16).padStart(2, "0"))
+        .join("");
+
+    try {
+      await navigator.clipboard.writeText(hash);
+      alert("SHA-256 copiado para a área de transferência:\n" + hash);
+    } catch {
+      alert("SHA-256 do relatório:\n" + hash);
+    }
+  });
+
+  switchAdminTab("sessions");
+}
+
+setupVorkenAdminUi();
 
 async function boot() {
   try {
