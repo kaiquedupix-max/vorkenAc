@@ -38,6 +38,15 @@ function formatDate(value) {
   return new Date(value).toLocaleString("pt-BR");
 }
 
+function safeExternalUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    return ["http:", "https:"].includes(url.protocol) ? url.href : "";
+  } catch {
+    return "";
+  }
+}
+
 function statusLabel(status) {
   const map = {
     waiting: "Aguardando",
@@ -262,6 +271,7 @@ async function openReport(id) {
     processCreationEvents: payload.processCreationEvents || [],
     defenderDetections: payload.defenderDetections || [],
     recentShortcuts: payload.recentShortcuts || [],
+    browserDownloads: payload.browserDownloads || [],
     extensionMismatches: payload.extensionMismatches || [],
     defenderExclusions: payload.defenderExclusions || [],
     bootIntegrity: payload.bootIntegrity || [],
@@ -344,6 +354,8 @@ async function openReport(id) {
     <div class="kv"><span>Processos históricos (4688)</span><span>${arrays.processCreationEvents.length}</span></div>
     <div class="kv"><span>Defender</span><span>${arrays.defenderDetections.length} detecções · ${arrays.defenderExclusions.length} exclusões</span></div>
     <div class="kv"><span>Atalhos recentes</span><span>${arrays.recentShortcuts.length}</span></div>
+    <div class="kv"><span>Downloads no histórico</span><span>${arrays.browserDownloads.length}</span></div>
+    <div class="kv"><span>Downloads não localizados</span><span>${arrays.browserDownloads.filter((x) => x.fileMissing === true).length}</span></div>
     <div class="kv"><span>Extensões modificadas</span><span>${arrays.extensionMismatches.length}</span></div>
     <div class="kv"><span>Módulos do Rust</span><span>${arrays.rustModules.length}</span></div>
     <div class="kv"><span>Discos virtuais</span><span>${arrays.virtualDisks.length}</span></div>
@@ -387,6 +399,50 @@ async function openReport(id) {
     <div class="kv"><span>Outros seriais</span><span>${Number(hw.otherSerialCount ?? 0)}</span></div>
     <div class="message">A contagem identifica famílias/bridges por VID/PID, descritor e fabricante. CH34x/CP210x/FTDI isoladamente não provam qual placa está atrás do bridge.</div>
   `;
+
+  const missingDownloads = [...arrays.browserDownloads]
+    .filter((item) => item.fileMissing === true)
+    .sort((a, b) =>
+      new Date(b.startTimeUtc || 0) - new Date(a.startTimeUtc || 0))
+    .slice(0, 500);
+
+  document.getElementById("browserDownloadsList").innerHTML = missingDownloads.length
+    ? missingDownloads.map((item) => {
+        const sourceUrl = safeExternalUrl(item.sourceUrl);
+        const finalUrl = safeExternalUrl(item.finalUrl);
+        const pageUrl = safeExternalUrl(item.pageUrl || item.referrerUrl || item.siteUrl);
+
+        const linkRow = (label, url, fallback) => {
+          const safeUrl = safeExternalUrl(url);
+          if (!safeUrl) {
+            return `<div class="kv"><span>${escapeHtml(label)}</span><span>${escapeHtml(fallback || "—")}</span></div>`;
+          }
+
+          return `<div class="kv"><span>${escapeHtml(label)}</span><span><a href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(url)}</a></span></div>`;
+        };
+
+        const executableLike = /\.(exe|com|scr|dll|bat|cmd|ps1|msi)$/i
+          .test(item.fileName || item.targetPath || "");
+
+        return `
+          <div class="finding">
+            <div class="finding-head">
+              <h4>${escapeHtml(item.fileName || "Download")}</h4>
+              <span class="tag ${executableLike ? "medium" : "info"}">APAGADO / MOVIDO</span>
+            </div>
+            <div class="kv"><span>Navegador</span><span>${escapeHtml((item.browser || "—") + " · " + (item.profile || "perfil"))}</span></div>
+            <div class="kv"><span>Baixado em</span><span>${escapeHtml(formatDate(item.startTimeUtc))}</span></div>
+            <div class="kv"><span>Destino original</span><span>${escapeHtml(item.targetPath || "—")}</span></div>
+            <div class="kv"><span>Tamanho</span><span>${Number(item.totalBytes || 0).toLocaleString("pt-BR")} bytes</span></div>
+            <div class="kv"><span>MIME</span><span>${escapeHtml(item.mimeType || "—")}</span></div>
+            ${linkRow("URL original", sourceUrl, item.sourceUrl)}
+            ${linkRow("URL final", finalUrl, item.finalUrl)}
+            ${linkRow("Página / referrer", pageUrl, item.pageUrl || item.referrerUrl || item.siteUrl)}
+            <div class="kv"><span>Fonte forense</span><span>${escapeHtml(item.databaseSource || "Histórico do navegador")}</span></div>
+          </div>
+        `;
+      }).join("")
+    : '<div class="message ok">Nenhum download apagado/movido foi preservado no histórico dos navegadores suportados.</div>';
 
   const reviewFiles = [...arrays.files]
     .sort((a, b) => {
