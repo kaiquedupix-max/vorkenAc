@@ -714,8 +714,6 @@ internal sealed class AnimatedSurface : Panel
 
             g.DrawLine(scanPen, 28, y, Width - 28, y);
         }
-
-        base.OnPaintBackground(e);
     }
 }
 
