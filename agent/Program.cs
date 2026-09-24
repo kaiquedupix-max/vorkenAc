@@ -16,7 +16,7 @@ namespace Vorken.Agent;
 
 internal static class Program
 {
-    private const string AgentVersion = "1.0.8";
+    private const string AgentVersion = "1.0.9";
     private const string DefaultServerUrl = "https://vorkenac.guerrafriarust.com.br";
 
     private static readonly JsonSerializerOptions JsonOptions =
@@ -90,6 +90,11 @@ internal static class Program
             List<UsbDeviceEventRecord> usbTimeline = SafeCollect(
                 "Linha do tempo USB",
                 UsbEventCollector.Collect,
+                errors);
+
+            List<UsbFileRecord> usbFiles = SafeCollect(
+                "Arquivos em pendrives conectados",
+                CollectConnectedUsbFiles,
                 errors);
 
             try
@@ -405,6 +410,7 @@ internal static class Program
                 UsbCurrent = usbCurrent,
                 UsbHistory = usbHistory,
                 UsbTimeline = usbTimeline,
+                UsbFiles = usbFiles,
                 SerialDevices = serialDevices,
                 HardwareSummary = hardwareSummary,
                 Processes = processes,
@@ -920,6 +926,76 @@ internal static class Program
         return result
             .GroupBy(x => x.PnpDeviceId + "|" + x.DeviceId, StringComparer.OrdinalIgnoreCase)
             .Select(x => x.First())
+            .ToList();
+    }
+
+    private static List<UsbFileRecord> CollectConnectedUsbFiles()
+    {
+        var result = new List<UsbFileRecord>();
+
+        foreach (DriveInfo drive in DriveInfo.GetDrives())
+        {
+            if (drive.DriveType != DriveType.Removable ||
+                !drive.IsReady)
+            {
+                continue;
+            }
+
+            string root = drive.RootDirectory.FullName;
+
+            var options = new EnumerationOptions
+            {
+                RecurseSubdirectories = true,
+                IgnoreInaccessible = true,
+                ReturnSpecialDirectories = false,
+                AttributesToSkip = 0,
+                MaxRecursionDepth = 64
+            };
+
+            IEnumerable<string> paths;
+
+            try
+            {
+                paths = Directory.EnumerateFiles(
+                    root,
+                    "*",
+                    options);
+            }
+            catch
+            {
+                continue;
+            }
+
+            foreach (string filePath in paths)
+            {
+                try
+                {
+                    var info = new FileInfo(filePath);
+
+                    result.Add(new UsbFileRecord
+                    {
+                        Drive = root,
+                        VolumeLabel = drive.VolumeLabel ?? "",
+                        Name = info.Name,
+                        Path = info.FullName,
+                        RelativePath = Path.GetRelativePath(root, info.FullName),
+                        Extension = info.Extension ?? "",
+                        Size = info.Length,
+                        CreatedUtc = info.CreationTimeUtc,
+                        LastWriteUtc = info.LastWriteTimeUtc
+                    });
+                }
+                catch
+                {
+                    // Um único arquivo inacessível não deve interromper
+                    // a leitura do restante do pendrive.
+                }
+            }
+        }
+
+        return result
+            .OrderBy(x => x.Drive, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(x => x.RelativePath, StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
 
@@ -1851,6 +1927,7 @@ internal sealed class ScanReport
     public List<UsbDeviceRecord> UsbCurrent { get; set; } = new();
     public List<UsbHistoryRecord> UsbHistory { get; set; } = new();
     public List<UsbDeviceEventRecord> UsbTimeline { get; set; } = new();
+    public List<UsbFileRecord> UsbFiles { get; set; } = new();
     public List<SerialDeviceRecord> SerialDevices { get; set; } = new();
     public HardwareSummaryRecord HardwareSummary { get; set; } = new();
     public List<ProcessRecord> Processes { get; set; } = new();
@@ -1934,6 +2011,19 @@ internal sealed class UsbHistoryRecord
     public DateTime? LastConnectedUtc { get; set; }
     public DateTime? LastDisconnectedUtc { get; set; }
     public string TimelineSource { get; set; } = "";
+}
+
+internal sealed class UsbFileRecord
+{
+    public string Drive { get; set; } = "";
+    public string VolumeLabel { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string Path { get; set; } = "";
+    public string RelativePath { get; set; } = "";
+    public string Extension { get; set; } = "";
+    public long Size { get; set; }
+    public DateTime? CreatedUtc { get; set; }
+    public DateTime? LastWriteUtc { get; set; }
 }
 
 internal sealed class SerialDeviceRecord
