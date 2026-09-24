@@ -87,3 +87,20 @@ pre.raw{max-height:420px;overflow:auto;background:#05080a;border:1px solid #1620
 .info-inventory{margin-top:16px;border:1px solid #1d3a52;border-radius:13px;background:#081018;padding:0}
 .info-inventory>h3,.hardware-group>h3{margin-top:18px}
 .hardware-group{margin-top:16px}
+
+.report-summary-grid{margin-bottom:12px}
+.priority-metric{border-color:#654d18;background:#1a1408}
+.priority-metric strong{color:#ffcf5a}
+.priority-section,.history-section,.report-meta-details{
+  border:1px solid var(--line);border-radius:13px;background:#0a0f13;padding:0
+}
+.priority-section>summary,.history-section>summary,.report-meta-details>summary{
+  list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:space-between;
+  gap:12px;padding:16px 18px;font-weight:900
+}
+.priority-section>summary::-webkit-details-marker,.history-section>summary::-webkit-details-marker,.report-meta-details>summary::-webkit-details-marker{display:none}
+.priority-section[open]>summary,.history-section[open]>summary,.report-meta-details[open]>summary{border-bottom:1px solid var(--line)}
+.priority-section>div,.history-section>div,.report-meta-details>div{margin-left:16px;margin-right:16px}
+.priority-section>div:last-child,.history-section>div:last-child,.report-meta-details>div:last-child{margin-bottom:16px}
+.history-section{border-color:#4b242c}
+.history-section>summary{color:#ffc2c8}
