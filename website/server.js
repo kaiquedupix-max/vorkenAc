@@ -3128,7 +3128,7 @@ async function addBuiltInReviewFindings(analysisId, report) {
         await insertReviewFinding(
           analysisId,
           "Aplicativo conhecido assinado por entidade inesperada",
-          "high",
+          "info",
           "unknown_app",
           item.path || item.name || appInfo.name,
           {
@@ -3155,7 +3155,7 @@ async function addBuiltInReviewFindings(analysisId, report) {
         await insertReviewFinding(
           analysisId,
           "Aplicativo conhecido com assinatura/origem não confirmada",
-          "high",
+          "info",
           "unknown_app",
           item.path || item.name || appInfo.name,
           {
@@ -3312,7 +3312,11 @@ async function addBuiltInReviewFindings(analysisId, report) {
       ext === ".exe" && looksRandomExecutableName(name);
     const danger = chromiumDangerInfo(download.dangerType);
 
-    if (originKind && isRiskyDownloadName(name)) {
+    if (
+      originKind &&
+      isRiskyDownloadName(name) &&
+      !isOfficialDiscordInstallerOrUpdate(download)
+    ) {
       const severity =
         randomExecutable ? "critical" :
         doubleExtension ? "high" :
