@@ -151,8 +151,8 @@
         <div class="page-head">
           <div><div class="eyebrow">RELATÓRIO</div><h2 id="reportTitle">Análise</h2></div>
           <div>
-            <button id="rebuildFindingsBtn" class="button ghost" type="button">Recalcular com IA</button>
-            <button id="toggleAiViewBtn" class="button ghost" type="button">Ver resultado sem IA</button>
+            <button id="rebuildFindingsBtn" class="button ghost" type="button">Recalcular com Gemini</button>
+            <button id="toggleAiViewBtn" class="button ghost" type="button">Ver resultado sem Gemini</button>
             <button id="closeReportBtn" class="button ghost" type="button">Fechar</button>
           </div>
         </div>
@@ -182,11 +182,11 @@
 
         <details class="report-section info-inventory">
           <summary>
-            <span>Filtrados pela IA · provável falso positivo</span>
+            <span>Filtrados pelo Gemini · provável falso positivo</span>
             <span id="aiFilteredCountBadge" class="summary-badge info">0</span>
           </summary>
           <div id="aiReviewStatus" class="message"></div>
-          <div class="message">Estes itens foram encontrados pelo filtro normal, mas a segunda camada de IA os classificou como provável falso positivo acima do limite de confiança. O achado original continua salvo para auditoria.</div>
+          <div class="message">Estes itens foram encontrados pelo filtro normal, mas a segunda camada Gemini os classificou como provável falso positivo acima do limite de confiança. O achado original continua salvo para auditoria.</div>
           <div id="aiFilteredFindingsList"></div>
         </details>
 
@@ -340,6 +340,6 @@
     </section>
   </main>
 
-  <script src="/admin.js?v=20260924-gemini1"></script>
+  <script src="/admin.js?v=20260924-gemini2"></script>
 </body>
 </html>
