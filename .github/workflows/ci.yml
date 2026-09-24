@@ -30,6 +30,39 @@ jobs:
       - name: Publish agent
         run: dotnet publish .\agent\Vorken.Agent.csproj -c Release -r win-x64 --self-contained true --no-restore -o .\publish
 
+      - name: Sign agent when certificate is configured
+        shell: pwsh
+        env:
+          VORKEN_SIGNING_PFX_BASE64: ${{ secrets.VORKEN_SIGNING_PFX_BASE64 }}
+          VORKEN_SIGNING_PFX_PASSWORD: ${{ secrets.VORKEN_SIGNING_PFX_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:VORKEN_SIGNING_PFX_BASE64)) {
+            Write-Host "Signing certificate not configured; publishing unsigned binary."
+            exit 0
+          }
+
+          $pfxPath = Join-Path $env:RUNNER_TEMP "vorken-signing.pfx"
+          [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:VORKEN_SIGNING_PFX_BASE64))
+          $securePassword = ConvertTo-SecureString $env:VORKEN_SIGNING_PFX_PASSWORD -AsPlainText -Force
+          $certificate = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($pfxPath, $securePassword, [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable)
+          $signature = Set-AuthenticodeSignature -FilePath .\publish\Vorken.Agent.exe -Certificate $certificate -TimestampServer "http://timestamp.digicert.com" -HashAlgorithm SHA256
+
+          if ($signature.Status -ne "Valid") {
+            throw "Authenticode signing failed: $($signature.Status) $($signature.StatusMessage)"
+          }
+
+          Remove-Item $pfxPath -Force
+
+      - name: Verify PE metadata
+        shell: pwsh
+        run: |
+          $info = (Get-Item .\publish\Vorken.Agent.exe).VersionInfo
+          Write-Host "Product: $($info.ProductName)"
+          Write-Host "Company: $($info.CompanyName)"
+          Write-Host "Version: $($info.FileVersion)"
+          $signature = Get-AuthenticodeSignature .\publish\Vorken.Agent.exe
+          Write-Host "Signature status: $($signature.Status)"
+
       - name: Generate SHA256
         shell: pwsh
         run: |
