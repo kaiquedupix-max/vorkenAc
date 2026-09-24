@@ -16,7 +16,7 @@ namespace Vorken.Agent;
 
 internal static class Program
 {
-    private const string AgentVersion = "1.0.1";
+    private const string AgentVersion = "1.0.2";
     private const string DefaultServerUrl = "https://vorkenac.guerrafriarust.com.br";
 
     private static readonly JsonSerializerOptions JsonOptions =
@@ -459,8 +459,7 @@ internal static class Program
                 Errors = errors
             };
 
-            ReportStatus("Preparando os dados para envio...");
-            CompactLowValueTelemetry(report, aggressive: false);
+            ReportStatus("Preparando o relatório completo para envio...");
 
             string reportRoute =
                 $"api/agent/{Uri.EscapeDataString(config.Token)}/report";
@@ -475,11 +474,9 @@ internal static class Program
                 IsRetryableUploadStatus(response.StatusCode))
             {
                 ReportStatus(
-                    $"Servidor respondeu {(int)response.StatusCode}. Reduzindo telemetria bruta e tentando novamente...");
+                    $"Servidor respondeu {(int)response.StatusCode}. Tentando reenviar o relatório completo...");
 
                 response.Dispose();
-
-                CompactLowValueTelemetry(report, aggressive: true);
 
                 await Task.Delay(TimeSpan.FromSeconds(2));
 
@@ -682,115 +679,10 @@ internal static class Program
             408 or
             413 or
             429 or
+            500 or
             502 or
             503 or
             504;
-    }
-
-    private static void CompactLowValueTelemetry(
-        ScanReport report,
-        bool aggressive)
-    {
-        int originalUsnCount =
-            report.UsnActivity?.Count ?? 0;
-
-        if (originalUsnCount == 0)
-            return;
-
-        int maxRows =
-            aggressive ? 450 : 1800;
-
-        DateTime recentCutoff =
-            DateTime.UtcNow.AddDays(
-                aggressive ? -3 : -10);
-
-        static bool IsExecutionRelevant(
-            UsnActivityRecord item)
-        {
-            string extension =
-                (item.Extension ?? "").ToLowerInvariant();
-
-            return extension is
-                ".exe" or
-                ".com" or
-                ".scr" or
-                ".dll" or
-                ".sys" or
-                ".msi";
-        }
-
-        List<UsnActivityRecord> important =
-            report.UsnActivity
-                .Where(item =>
-                    item.DriveType.Equals(
-                        "Removable",
-                        StringComparison.OrdinalIgnoreCase) ||
-                    item.UnderPrefetchDirectory ||
-                    item.BrowserDatabase ||
-                    item.WindowsForensicArtifact ||
-                    (
-                        item.Deleted &&
-                        IsExecutionRelevant(item)
-                    ) ||
-                    (
-                        IsExecutionRelevant(item) &&
-                        item.TimestampUtc >= recentCutoff
-                    ))
-                .OrderByDescending(
-                    item => item.TimestampUtc)
-                .ToList();
-
-        HashSet<string> seen =
-            new(StringComparer.OrdinalIgnoreCase);
-
-        var compacted =
-            new List<UsnActivityRecord>(
-                Math.Min(maxRows, originalUsnCount));
-
-        void TryAdd(
-            UsnActivityRecord item)
-        {
-            if (compacted.Count >= maxRows)
-                return;
-
-            string key =
-                $"{item.Volume}|{item.FileName}|{item.TimestampUtc:O}|{item.ReasonMask}";
-
-            if (seen.Add(key))
-                compacted.Add(item);
-        }
-
-        foreach (UsnActivityRecord item in important)
-            TryAdd(item);
-
-        if (compacted.Count < maxRows)
-        {
-            foreach (
-                UsnActivityRecord item
-                in report.UsnActivity
-                    .OrderByDescending(
-                        item => item.TimestampUtc))
-            {
-                TryAdd(item);
-
-                if (compacted.Count >= maxRows)
-                    break;
-            }
-        }
-
-        report.UsnActivity = compacted;
-
-        if (originalUsnCount > compacted.Count)
-        {
-            string note =
-                $"JournalTrace compactado para envio: {originalUsnCount} -> {compacted.Count} registros. " +
-                "Arquivos apagados relevantes continuam preservados no coletor dedicado de USN.";
-
-            if (!report.Errors.Contains(note))
-                report.Errors.Add(note);
-
-            ReportStatus(note);
-        }
     }
 
     private static async Task<HttpResponseMessage> SendCompressedReportAsync(
