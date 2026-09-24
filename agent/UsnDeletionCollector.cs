@@ -271,6 +271,9 @@ internal static class UsnDeletionCollector
 
         string stem = Path.GetFileNameWithoutExtension(value);
 
+        if (IsGenericInstallerStem(stem))
+            return false;
+
         stem = Regex.Replace(
             stem,
             @"\.(zip|rar|7z|pdf|jpg|jpeg|png|txt)$",
@@ -308,8 +311,11 @@ internal static class UsnDeletionCollector
             (
                 allUpperOrDigits &&
                 distinct >= Math.Min(6, stem.Length - 1) &&
-                vowelRatio <= 0.35 &&
-                (digits >= 1 || letters >= 5)
+                (
+                    digits >= 1
+                        ? vowelRatio <= 0.35
+                        : vowelRatio <= 0.12
+                )
             ) ||
             (
                 stem.Length >= 8 &&
@@ -325,6 +331,24 @@ internal static class UsnDeletionCollector
                 digits >= 2 &&
                 distinct >= 8
             );
+    }
+
+    private static bool IsGenericInstallerStem(string value)
+    {
+        string stem = (value ?? "").Trim().ToLowerInvariant();
+
+        return stem is
+            "installer" or
+            "install" or
+            "setup" or
+            "setup64" or
+            "setup32" or
+            "updater" or
+            "update" or
+            "uninstall" or
+            "uninstaller" or
+            "bootstrapper" or
+            "launcherinstaller";
     }
 
     [StructLayout(LayoutKind.Sequential)]
