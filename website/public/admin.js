@@ -58,6 +58,65 @@ function safeArray(value) {
   return Array.isArray(value) ? value.filter(Boolean) : [];
 }
 
+function clientWindowsBaseName(value) {
+  return String(value || "")
+    .replaceAll("/", "\\")
+    .split("\\")
+    .filter(Boolean)
+    .at(-1)
+    ?.toLowerCase() || "";
+}
+
+function isVorkenArtifactClient(...values) {
+  return values
+    .flat(Infinity)
+    .filter(Boolean)
+    .some((value) =>
+      String(value)
+        .toLowerCase()
+        .includes("vorken")
+    );
+}
+
+function commonAppMatchClient(value, commonApps = []) {
+  const name =
+    clientWindowsBaseName(value);
+
+  if (!name)
+    return null;
+
+  for (const app of safeArray(commonApps)) {
+    const exact =
+      safeArray(app?.filenames)
+        .some((item) =>
+          String(item || "")
+            .toLowerCase() === name
+        );
+
+    if (exact)
+      return app;
+
+    const prefix =
+      safeArray(app?.filenamePrefixes)
+        .some((item) => {
+          const needle =
+            String(item || "")
+              .toLowerCase();
+
+          return (
+            needle &&
+            name.startsWith(needle)
+          );
+        });
+
+    if (prefix)
+      return app;
+  }
+
+  return null;
+}
+
+
 function downloadUrlCandidatesClient(item) {
   return [
     item?.sourceUrl,
@@ -885,6 +944,7 @@ async function openReport(id) {
     : finalFindings;
   const reviewState = data.reviewState || {};
   const relatedAnalyses = safeArray(data.relatedAnalyses);
+  const commonApps = safeArray(data.commonApps);
   const payload = report?.payload && typeof report.payload === "object"
     ? report.payload
     : {};
@@ -1922,7 +1982,34 @@ async function openReport(id) {
 
   for (const item of arrays.browserDownloads) {
     if (item.fileMissing !== true) continue;
+
     const name = item.fileName || item.targetPath || "";
+
+    if (
+      isVorkenArtifactClient(
+        name,
+        item.targetPath,
+        item.currentPath,
+        item.sourceUrl,
+        item.finalUrl,
+        item.referrerUrl,
+        item.pageUrl,
+        item.siteUrl,
+        item.urlChain
+      )
+    ) {
+      continue;
+    }
+
+    if (
+      commonAppMatchClient(
+        name,
+        commonApps
+      )
+    ) {
+      continue;
+    }
+
     if (!/\.(exe|com|scr|dll|bat|cmd|ps1|msi)$/i.test(name)) continue;
 
     priorityFiles.push({
@@ -1940,6 +2027,21 @@ async function openReport(id) {
 
   for (const item of arrays.deletedUsnRecords) {
     const lower = String(item.fileName || "").toLowerCase();
+
+    if (
+      isVorkenArtifactClient(
+        item.fileName,
+        item.volume,
+        item.path
+      ) ||
+      commonAppMatchClient(
+        item.fileName,
+        commonApps
+      )
+    ) {
+      continue;
+    }
+
     const highInterest =
       item.randomLikeName === true ||
       item.deceptiveDoubleExtension === true ||
@@ -1964,6 +2066,20 @@ async function openReport(id) {
   }
 
   for (const item of arrays.browserRecoveredArtifacts) {
+    if (
+      isVorkenArtifactClient(
+        item.recoveredFileName,
+        item.recoveredUrl,
+        item.sourceArtifact
+      ) ||
+      commonAppMatchClient(
+        item.recoveredFileName,
+        commonApps
+      )
+    ) {
+      continue;
+    }
+
     const critical =
       item.randomLikeName === true ||
       item.deceptiveDoubleExtension === true ||
