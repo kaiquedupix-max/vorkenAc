@@ -1,10 +1,73 @@
 using System.Management;
+using System.Security.Cryptography;
 using System.Text;
 
 namespace Vorken.Agent;
 
 internal static class EchoEnvironmentCollector
 {
+    public static string ComputeMachineFingerprint()
+    {
+        var parts = new List<string>();
+
+        void AddWmiValue(string query, string property)
+        {
+            try
+            {
+                using var searcher = new ManagementObjectSearcher(query);
+
+                foreach (ManagementObject item in searcher.Get())
+                {
+                    string value = Convert.ToString(item[property]) ?? "";
+                    value = value.Trim();
+
+                    if (!string.IsNullOrWhiteSpace(value) &&
+                        !value.Equals("To Be Filled By O.E.M.", StringComparison.OrdinalIgnoreCase) &&
+                        !value.Equals("Default string", StringComparison.OrdinalIgnoreCase) &&
+                        !value.Equals("None", StringComparison.OrdinalIgnoreCase))
+                    {
+                        parts.Add(property + "=" + value);
+                    }
+
+                    break;
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        AddWmiValue(
+            "SELECT UUID FROM Win32_ComputerSystemProduct",
+            "UUID");
+
+        AddWmiValue(
+            "SELECT SerialNumber FROM Win32_BaseBoard",
+            "SerialNumber");
+
+        AddWmiValue(
+            "SELECT SerialNumber FROM Win32_BIOS",
+            "SerialNumber");
+
+        AddWmiValue(
+            "SELECT ProcessorId FROM Win32_Processor",
+            "ProcessorId");
+
+        if (parts.Count == 0)
+            return "";
+
+        string normalized = string.Join(
+            "|",
+            parts
+                .Select(x => x.Trim().ToUpperInvariant())
+                .OrderBy(x => x, StringComparer.Ordinal));
+
+        return Convert.ToHexString(
+                SHA256.HashData(Encoding.UTF8.GetBytes(normalized)))
+            .ToLowerInvariant();
+    }
+
+
     public static List<RecycleBinRecord> CollectRecycleBin()
     {
         var result = new List<RecycleBinRecord>();
