@@ -11,7 +11,8 @@ namespace Vorken.Agent;
 
 internal static class Program
 {
-    private const string AgentVersion = "0.9.0";
+    private const string AgentVersion = "1.0.0";
+    private const string DefaultServerUrl = "https://vorkenac.guerrafriarust.com.br";
 
     private static readonly JsonSerializerOptions JsonOptions =
         new(JsonSerializerDefaults.Web)
@@ -29,23 +30,20 @@ internal static class Program
         {
             AgentConfig config = LoadConfig(args);
 
-            Console.WriteLine("VORKEN ANTI CHEAT");
-            Console.WriteLine("=================");
+            PrintBanner();
+            WriteInfo("Esta análise coleta metadados técnicos para revisão anti-cheat.");
             Console.WriteLine();
-            Console.WriteLine("Esta análise coleta somente metadados técnicos relacionados à inspeção:");
-            Console.WriteLine("- dispositivos USB atuais e históricos;");
-            Console.WriteLine("- dispositivos seriais como Arduino/CH340/CP210/FTDI;");
-            Console.WriteLine("- processos, serviços, drivers e inicialização;");
-            Console.WriteLine("- metadados de arquivos executáveis em pastas de risco;");
-            Console.WriteLine("- hashes SHA-256, assinatura digital e Prefetch quando disponível.");
-            Console.WriteLine("- histórico de downloads dos navegadores: nome/caminho, horários e URL de origem;");
-            Console.WriteLine("- apenas páginas/pesquisas do navegador que batem em termos de cheat/hack/script relacionados ao jogo;");
-            Console.WriteLine("- vestígios recuperáveis de histórico apagado em páginas SQLite/WAL e nomes recentes apagados do NTFS/USN;");
-            Console.WriteLine("- hash técnico do equipamento para relacionar análises anteriores, sem enviar os seriais brutos;");
+            WriteDim("  • USB / dispositivos seriais / hardware relacionado");
+            WriteDim("  • Prefetch, BAM, Amcache, ShimCache, PCA e USN");
+            WriteDim("  • downloads, Zone.Identifier e vestígios SQLite/WAL");
+            WriteDim("  • assinaturas Authenticode, PE/entropia e módulos carregados");
+            WriteDim("  • PowerShell, autoruns, crashes, integridade do sistema e rede");
             Console.WriteLine();
-            Console.WriteLine("O Vorken não coleta senhas, cookies, mensagens, fotos ou conteúdo de documentos.");
+            WriteWarning("Privacidade: não coletamos senhas, cookies, mensagens, fotos ou documentos.");
             Console.WriteLine();
-            Console.Write("Digite ACEITO para iniciar a análise: ");
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.Write("  Digite ACEITO para iniciar: ");
+            Console.ResetColor();
 
             if (!string.Equals(Console.ReadLine()?.Trim(), "ACEITO", StringComparison.OrdinalIgnoreCase))
             {
@@ -402,16 +400,73 @@ internal static class Program
             }
 
             Console.WriteLine();
-            Console.WriteLine("Análise concluída e enviada com sucesso.");
-            Console.WriteLine("Você já pode fechar esta janela.");
+            WriteSuccess("Análise concluída e enviada com sucesso.");
+            WriteDim("  O relatório já está disponível para o responsável.");
             return 0;
         }
         catch (Exception ex)
         {
             Console.WriteLine();
-            Console.WriteLine("Falha no Vorken: " + ex.Message);
+            WriteError("Falha no Vorken: " + ex.Message);
             return 1;
         }
+    }
+
+    private static void PrintBanner()
+    {
+        Console.Clear();
+        Console.BackgroundColor = ConsoleColor.Black;
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine("╔══════════════════════════════════════════════════════╗");
+        Console.WriteLine("║                                                      ║");
+        Console.WriteLine("║              V O R K E N   A N T I C H E A T         ║");
+        Console.WriteLine("║                                                      ║");
+        Console.WriteLine($"║                    AGENT v{AgentVersion,-8}                 ║");
+        Console.WriteLine("╚══════════════════════════════════════════════════════╝");
+        Console.ResetColor();
+        Console.ForegroundColor = ConsoleColor.DarkGray;
+        Console.WriteLine("  Defensive forensic scanner · consent-based inspection");
+        Console.ResetColor();
+        Console.WriteLine();
+    }
+
+    private static void WriteInfo(string value)
+    {
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.Write("  i ");
+        Console.ResetColor();
+        Console.WriteLine(value);
+    }
+
+    private static void WriteSuccess(string value)
+    {
+        Console.ForegroundColor = ConsoleColor.Green;
+        Console.Write("  ✓ ");
+        Console.ResetColor();
+        Console.WriteLine(value);
+    }
+
+    private static void WriteWarning(string value)
+    {
+        Console.ForegroundColor = ConsoleColor.Yellow;
+        Console.Write("  ! ");
+        Console.ResetColor();
+        Console.WriteLine(value);
+    }
+
+    private static void WriteError(string value)
+    {
+        Console.ForegroundColor = ConsoleColor.Red;
+        Console.Write("  ✕ ");
+        Console.ResetColor();
+        Console.WriteLine(value);
+    }
+
+    private static void WriteDim(string value)
+    {
+        Console.ForegroundColor = ConsoleColor.DarkGray;
+        Console.WriteLine(value);
+        Console.ResetColor();
     }
 
     private static AgentConfig LoadConfig(string[] args)
@@ -444,11 +499,33 @@ internal static class Program
             server ??= fileConfig?.ServerUrl;
         }
 
-        if (string.IsNullOrWhiteSpace(token) || string.IsNullOrWhiteSpace(server))
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            string executableName =
+                Path.GetFileName(
+                    Environment.ProcessPath ??
+                    AppContext.BaseDirectory);
+
+            var match =
+                System.Text.RegularExpressions.Regex.Match(
+                    executableName,
+                    @"--(?<token>[A-Za-z0-9_-]{20,80})\.exe$",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+            if (match.Success)
+            {
+                token = match.Groups["token"].Value;
+                server ??= DefaultServerUrl;
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(token))
         {
             throw new InvalidOperationException(
-                "Configuração da análise ausente. Baixe o pacote gerado pelo link da análise.");
+                "Token da análise ausente. Baixe novamente o Vorken pelo link da análise.");
         }
+
+        server ??= DefaultServerUrl;
 
         return new AgentConfig
         {
@@ -486,13 +563,19 @@ internal static class Program
         try
         {
             List<T> result = collector();
-            Console.WriteLine($"  ✓ {moduleName}: {result.Count}");
+            Console.ForegroundColor = ConsoleColor.DarkGreen;
+            Console.Write("  ✓ ");
+            Console.ResetColor();
+            Console.WriteLine($"{moduleName}: {result.Count}");
             return result;
         }
         catch (Exception ex)
         {
             errors.Add($"{moduleName}: {ex.Message}");
-            Console.WriteLine($"  ! {moduleName}: indisponível");
+            Console.ForegroundColor = ConsoleColor.DarkYellow;
+            Console.Write("  ! ");
+            Console.ResetColor();
+            Console.WriteLine($"{moduleName}: indisponível");
             return new List<T>();
         }
     }
