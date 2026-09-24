@@ -1490,9 +1490,43 @@ async function addBuiltInReviewFindings(analysisId, report) {
     ...(report.browserHistorySignals || [])
   ]).toLowerCase();
 
+  const recoveryFindingKeys = new Set();
+
+  const recoveryKey = (urlValue, fileValue) => {
+    const url = String(urlValue || "");
+    const file = String(fileValue || "").toLowerCase();
+
+    if (url && isSearchEngineUrl(url)) {
+      try {
+        const parsed = new URL(url);
+        const query =
+          parsed.searchParams.get("q") ||
+          parsed.searchParams.get("query") ||
+          parsed.searchParams.get("p") ||
+          parsed.searchParams.get("text") ||
+          "";
+        return "search|" + parsed.hostname.toLowerCase() + "|" + query.toLowerCase().trim();
+      } catch {
+      }
+    }
+
+    if (url) {
+      try {
+        const parsed = new URL(url);
+        return "url|" + parsed.hostname.toLowerCase() + "|" + parsed.pathname.toLowerCase();
+      } catch {
+      }
+    }
+
+    return "file|" + file;
+  };
+
   for (const item of report.browserRecoveredArtifacts || []) {
     const recoveredUrl = String(item.recoveredUrl || "");
     const recoveredFileName = String(item.recoveredFileName || "");
+
+    if (recoveredUrl && isKnownBenignWebHost(recoveredUrl))
+      continue;
 
     const alreadyLive =
       (recoveredUrl && liveBrowserText.includes(recoveredUrl.toLowerCase())) ||
@@ -1501,25 +1535,60 @@ async function addBuiltInReviewFindings(analysisId, report) {
     if (alreadyLive)
       continue;
 
-    const catalogHit =
-      Array.isArray(item.catalogMatches) &&
-      item.catalogMatches.length > 0;
+    const key = recoveryKey(recoveredUrl, recoveredFileName);
+    if (key && recoveryFindingKeys.has(key))
+      continue;
+    if (key) recoveryFindingKeys.add(key);
 
+    // Recompute from the recovered candidate itself. Do not trust older
+    // catalogMatches produced from large raw SQLite chunks.
+    const recoveredCatalogMatches =
+      findRustCatalogMatches(recoveredUrl, recoveredFileName);
+
+    const directCatalog =
+      recoveredCatalogMatches.some((match) =>
+        isDirectCatalogWebMatch(match, {
+          recoveredUrl,
+          recoveredFileName
+        }));
+
+    const searchEngine = recoveredUrl && isSearchEngineUrl(recoveredUrl);
     const strongTerms =
       Array.isArray(item.matchedTerms) &&
       item.matchedTerms.length >= 2;
 
-    let severity = "medium";
-    let title = "Vestígio recuperado de histórico apagado";
+    const socialFile =
+      item.socialOrigin === true &&
+      Boolean(recoveredFileName);
 
-    if (item.randomLikeName === true ||
-        item.deceptiveDoubleExtension === true ||
-        catalogHit) {
+    let severity = "";
+    let title = "";
+
+    if (
+      item.randomLikeName === true ||
+      item.deceptiveDoubleExtension === true
+    ) {
       severity = "critical";
       title = "Vestígio crítico recuperado de histórico apagado";
-    } else if (strongTerms) {
+    } else if (directCatalog) {
+      severity = "critical";
+      title = "Acesso direto recuperado de site do catálogo Rust";
+    } else if (searchEngine && recoveredCatalogMatches.length > 0) {
+      severity = "medium";
+      title = "Pesquisa recuperada relacionada ao catálogo Rust";
+    } else if (socialFile) {
+      severity = "medium";
+      title = "Download/arquivo social recuperado do histórico";
+    } else if (strongTerms && searchEngine) {
+      severity = "medium";
+      title = "Pesquisa suspeita recuperada do histórico";
+    } else if (recoveredCatalogMatches.length > 0 && recoveredFileName) {
       severity = "high";
+      title = "Arquivo recuperado relacionado ao catálogo Rust";
     }
+
+    if (!severity)
+      continue;
 
     await insertReviewFinding(
       analysisId,
@@ -1529,24 +1598,15 @@ async function addBuiltInReviewFindings(analysisId, report) {
       recoveredUrl || recoveredFileName || item.sourceArtifact || "SQLite",
       {
         ...item,
+        catalogMatches: recoveredCatalogMatches,
         confidence: severity === "critical" ? "high" : "medium",
-        note: "O dado não estava presente nas tabelas ativas do histórico, mas foi recuperado de páginas SQLite/WAL/journal ainda não sobrescritas. Isso é vestígio forense e pode sobreviver após a limpeza do histórico.",
+        note:
+          searchEngine
+            ? "Vestígio recuperado de mecanismo de busca. Mantido como amarelo/médio; pesquisa não equivale a acesso direto ao site."
+            : "Vestígio recuperado de páginas SQLite/WAL/journal ainda não sobrescritas. A classificação usa apenas o candidato recuperado, sem misturar strings vizinhas."
       }
     );
   }
-
-  const deletedRiskTerms = [
-    "loader",
-    "injector",
-    "cheat",
-    "hack",
-    "script",
-    "aimbot",
-    "recoil",
-    "spoofer",
-    "bypass",
-    "eac"
-  ];
 
   for (const item of report.deletedUsnRecords || []) {
     if (String(item.reason || "") !== "FILE_DELETE")
@@ -1556,29 +1616,17 @@ async function addBuiltInReviewFindings(analysisId, report) {
       continue;
 
     const name = String(item.fileName || "");
-    const lower = name.toLowerCase();
-    const catalogMatches = findRustCatalogMatches(name);
-    const matchedRiskTerms = deletedRiskTerms.filter((term) =>
-      lower.includes(term));
+    const extension = String(item.extension || path.extname(name)).toLowerCase();
 
-    if (
-      String(item.driveType || "").toLowerCase() === "removable"
-    ) {
-      await insertReviewFinding(
-        analysisId,
-        "Arquivo apagado de dispositivo externo",
-        "high",
-        "usn_delete",
-        name || item.volume || "arquivo apagado",
-        {
-          ...item,
-          catalogMatches,
-          matchedRiskTerms,
-          confidence: "high",
-          note: "O USN Journal de uma unidade removível registrou a exclusão de um executável/script/arquivo compactado."
-        }
-      );
-    }
+    // PS1s de política/teste do Windows geravam muito ruído; comandos
+    // PowerShell realmente suspeitos continuam sendo avaliados pelo módulo
+    // próprio de histórico/eventos.
+    if (extension === ".ps1")
+      continue;
+
+    const catalogMatches = findRustCatalogMatches(name);
+    const removable =
+      String(item.driveType || "").toLowerCase() === "removable";
 
     const critical =
       item.randomLikeName === true ||
@@ -1595,27 +1643,24 @@ async function addBuiltInReviewFindings(analysisId, report) {
         {
           ...item,
           catalogMatches,
-          matchedRiskTerms,
           confidence: "high",
-          note: "O NTFS registrou a exclusão do arquivo no USN Journal. Essa evidência não depende de o arquivo ter sido executado.",
+          note: "O NTFS registrou a exclusão. A ocorrência é crítica por nome aleatório, dupla extensão ou correspondência direta com o catálogo."
         }
       );
-
       continue;
     }
 
-    if (matchedRiskTerms.length > 0) {
+    if (removable && [".exe", ".com", ".scr", ".dll", ".msi", ".zip", ".rar", ".7z"].includes(extension)) {
       await insertReviewFinding(
         analysisId,
-        "Arquivo apagado com nome de alto interesse",
+        "Arquivo apagado de dispositivo externo",
         "high",
         "usn_delete",
-        name,
+        name || item.volume || "arquivo apagado",
         {
           ...item,
-          matchedRiskTerms,
-          confidence: "medium",
-          note: "O arquivo foi apagado e o nome contém termo frequentemente associado a loaders/scripts/cheats. Não é necessário haver Prefetch para esta ocorrência.",
+          confidence: "high",
+          note: "O USN Journal de unidade removível registrou a exclusão de executável ou arquivo compactado."
         }
       );
     }
@@ -1692,8 +1737,14 @@ async function addBuiltInReviewFindings(analysisId, report) {
   }
 
   // PE / StringExplorer-style metadata checks.
+  // PE strings/entropy alone are inventory, not detections. Promote only
+  // high-signal combinations so tools such as OpenHardwareMonitor and the
+  // Vorken agent itself do not flood the report.
   for (const item of report.peInspections || []) {
     const pathValue = item.path || item.name || "PE";
+
+    if (isKnownBenignPeNoise(pathValue))
+      continue;
 
     if (item.randomLikeName === true && item.signed !== true) {
       await insertReviewFinding(
@@ -1705,42 +1756,41 @@ async function addBuiltInReviewFindings(analysisId, report) {
         {
           ...item,
           confidence: "high",
-          note: "Executável com nome aleatório e sem assinatura confiável também apresentou metadados PE relevantes."
+          note: "Executável com nome aleatório, sem assinatura confiável e com metadados PE relevantes."
         }
       );
       continue;
     }
 
-    if (item.packedLike === true && item.signed !== true) {
-      await insertReviewFinding(
-        analysisId,
-        "Executável não assinado com packer/protector",
-        (item.packerIndicators || []).length > 0 ? "high" : "medium",
-        "pe_inspection",
-        pathValue,
-        {
-          ...item,
-          confidence: (item.packerIndicators || []).length > 0 ? "high" : "medium",
-          note: "Packer/protector ou entropia alta detectada. Isso pode ocorrer em software legítimo, portanto requer revisão."
-        }
-      );
-    }
+    const explicitPacker =
+      Array.isArray(item.packerIndicators) &&
+      item.packerIndicators.length > 0;
+
+    const manyInjectionApis =
+      Array.isArray(item.suspiciousApis) &&
+      item.suspiciousApis.length >= 5;
+
+    const antiAnalysis =
+      Array.isArray(item.environmentProbeIndicators) &&
+      item.environmentProbeIndicators.length > 0;
 
     if (
       item.signed !== true &&
-      (item.suspiciousApis || []).length >= 3 &&
-      isSuspiciousUserPath(pathValue)
+      isSuspiciousUserPath(pathValue) &&
+      explicitPacker &&
+      manyInjectionApis &&
+      antiAnalysis
     ) {
       await insertReviewFinding(
         analysisId,
-        "Executável não assinado com APIs de injeção/memória",
-        "high",
+        "Executável não assinado com múltiplos indicadores PE",
+        "medium",
         "pe_inspection",
         pathValue,
         {
           ...item,
           confidence: "medium",
-          note: "O arquivo contém várias referências a APIs usadas para manipulação/injeção de processos. As APIs também podem existir em ferramentas legítimas."
+          note: "Packer explícito + várias APIs de manipulação de processos + indicador de anti-análise. Isoladamente, packer/entropia/APIs não geram mais detecção."
         }
       );
     }
@@ -2971,20 +3021,32 @@ async function addBuiltInReviewFindings(analysisId, report) {
 
     const isSearch = Boolean(String(item.searchQuery || "").trim());
 
+    const directKnownSite =
+      !isSearch &&
+      !isSearchEngineUrl(item.url) &&
+      findRustCatalogMatches(item.url, item.host)
+        .some((match) => isDirectCatalogWebMatch(match, item));
+
     await insertReviewFinding(
       analysisId,
       isSearch
         ? "Pesquisa no navegador relacionada a cheat/script/hack"
         : "Site relacionado a cheat/script/hack",
-      risk === "high" ? "high" : "medium",
+      isSearch
+        ? "medium"
+        : directKnownSite
+          ? "critical"
+          : "medium",
       "browser_history",
       item.searchQuery || item.url || item.host || "Histórico do navegador",
       {
         ...item,
-        confidence: risk,
+        confidence: isSearch ? "medium" : directKnownSite ? "high" : "medium",
         note: isSearch
-          ? "A consulta foi preservada no histórico do navegador e bateu em termos relacionados a cheat/hack/script com contexto do jogo."
-          : "A URL/título preservado no histórico bateu em termos relacionados a cheat/hack/script. Revise o domínio e o contexto antes de qualquer decisão.",
+          ? "Pesquisa em mecanismo de busca: ocorrência amarela/média. Pesquisa não equivale a acesso direto ao site."
+          : directKnownSite
+            ? "A URL visitada corresponde diretamente a domínio/convite do catálogo Rust."
+            : "A página contém termos relevantes, mas não corresponde diretamente a um domínio conhecido; mantida como média para revisão.",
       }
     );
   }
