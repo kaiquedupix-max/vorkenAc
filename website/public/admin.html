@@ -190,6 +190,24 @@
           <div id="priorityFilesList"></div>
         </details>
 
+        <details class="report-section severity-group severity-medium">
+          <summary>
+            <span>Arquivos baixados do Discord / Telegram</span>
+            <span id="socialDownloadsCountBadge" class="summary-badge warning">0</span>
+          </summary>
+          <div class="message">Executáveis, scripts e arquivos compactados cuja origem no histórico do navegador aponta para Discord ou Telegram.</div>
+          <div id="socialDownloadsList"></div>
+        </details>
+
+        <details class="report-section severity-group severity-medium">
+          <summary>
+            <span>Downloads sinalizados pelo navegador</span>
+            <span id="browserDangerCountBadge" class="summary-badge warning">0</span>
+          </summary>
+          <div class="message">Downloads em que o Chromium registrou indicador de risco, conteúdo perigoso/incomum ou alerta ignorado pelo usuário.</div>
+          <div id="browserDangerDownloadsList"></div>
+        </details>
+
         <details class="report-section history-section">
           <summary>
             <span>Pesquisas / sites suspeitos</span>
@@ -260,6 +278,6 @@
     </section>
   </main>
 
-  <script src="/admin.js?v=20260924-5"></script>
+  <script src="/admin.js?v=20260924-6"></script>
 </body>
 </html>
