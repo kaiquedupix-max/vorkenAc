@@ -34,7 +34,7 @@ internal static class WindowProtectionCollector
                         return true;
                     }
 
-                    _ = GetWindowThreadProcessId(
+                    GetWindowThreadProcessId(
                         hwnd,
                         out uint pid);
 
