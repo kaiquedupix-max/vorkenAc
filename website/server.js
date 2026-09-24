@@ -46,6 +46,29 @@ function loadRustThreatCatalog() {
 }
 
 const rustThreatCatalog = loadRustThreatCatalog();
+const commonAppCatalogPath = path.join(
+  __dirname,
+  "data",
+  "common-app-catalog.json"
+);
+
+function loadCommonAppCatalog() {
+  try {
+    const payload = JSON.parse(
+      fs.readFileSync(commonAppCatalogPath, "utf8")
+    );
+
+    return Array.isArray(payload?.apps)
+      ? payload.apps
+      : [];
+  } catch (error) {
+    console.error("Falha ao carregar catálogo de apps comuns:", error.message);
+    return [];
+  }
+}
+
+const commonAppCatalog = loadCommonAppCatalog();
+
 
 app.disable("x-powered-by");
 app.use(express.json({ limit: "24mb" }));
@@ -122,14 +145,88 @@ function cleanText(value, max = 250) {
   return String(value || "").trim().slice(0, max);
 }
 
+function findCommonAppByFileName(value) {
+  const name = path.basename(String(value || "")).toLowerCase();
+  if (!name) return null;
+
+  for (const appInfo of commonAppCatalog) {
+    const exact = (appInfo.filenames || [])
+      .some((item) => String(item || "").toLowerCase() === name);
+
+    if (exact) return appInfo;
+
+    const prefix = (appInfo.filenamePrefixes || [])
+      .some((item) => {
+        const needle = String(item || "").toLowerCase();
+        return needle && name.startsWith(needle);
+      });
+
+    if (prefix) return appInfo;
+  }
+
+  return null;
+}
+
+function signerMatchesCommonApp(appInfo, signerSubject) {
+  if (!appInfo) return false;
+
+  const signer = String(signerSubject || "").toLowerCase();
+  if (!signer) return false;
+
+  return (appInfo.signerContains || [])
+    .some((needle) =>
+      signer.includes(String(needle || "").toLowerCase()));
+}
+
+function downloadMatchesOfficialSource(appInfo, download) {
+  if (!appInfo) return false;
+
+  const urls = [
+    download?.sourceUrl,
+    download?.finalUrl,
+    download?.referrerUrl,
+    download?.siteUrl,
+    download?.pageUrl,
+    ...(Array.isArray(download?.urlChain) ? download.urlChain : [])
+  ]
+    .filter(Boolean)
+    .map((value) => String(value).toLowerCase());
+
+  if (!urls.length) return false;
+
+  for (const needleRaw of appInfo.officialUrlIncludes || []) {
+    const needle = String(needleRaw || "").toLowerCase();
+    if (!needle) continue;
+
+    if (urls.some((url) => url.includes(needle)))
+      return true;
+  }
+
+  return false;
+}
+
+function isTrustedInstalledPathForCommonApp(value) {
+  const p = String(value || "")
+    .replaceAll("/", "\\")
+    .toLowerCase();
+
+  return (
+    p.includes("\\program files\\") ||
+    p.includes("\\program files (x86)\\") ||
+    p.includes("\\windowsapps\\") ||
+    p.includes("\\appdata\\local\\discord\\") ||
+    p.includes("\\appdata\\local\\programs\\") ||
+    p.includes("\\appdata\\local\\spotify\\")
+  );
+}
+
 function looksRandomExecutableName(value) {
   const name = path.basename(String(value || ""));
   let stem = path.basename(name, path.extname(name));
 
-  // abc123.zip.exe / xyz789.rar.exe -> evaluate the real-looking stem too.
   stem = stem.replace(/\.(zip|rar|7z|pdf|jpg|jpeg|png|txt)$/i, "");
 
-  if (stem.length < 6 || stem.length > 28) return false;
+  if (stem.length < 4 || stem.length > 28) return false;
   if (!/^[a-z0-9]+$/i.test(stem)) return false;
 
   const letters = [...stem].filter((ch) => /[a-z]/i.test(ch));
@@ -139,11 +236,28 @@ function looksRandomExecutableName(value) {
   const allUpperOrDigits = /^[A-Z0-9]+$/.test(stem);
   const vowelRatio = letters.length ? vowels.length / letters.length : 0;
 
+  // 4-5 chars: only flag very "machine-like" tokens. This protects short
+  // legitimate names such as java/node/code while still catching X7Q2.exe.
+  if (stem.length <= 5) {
+    return (
+      allUpperOrDigits &&
+      distinct >= Math.max(4, stem.length - 1) &&
+      (
+        digits.length >= 1 ||
+        vowels.length === 0
+      ) &&
+      vowelRatio <= 0.25
+    );
+  }
+
   if (
     allUpperOrDigits &&
-    letters.length >= 6 &&
     distinct >= Math.min(6, stem.length - 1) &&
-    vowelRatio <= 0.35
+    vowelRatio <= 0.35 &&
+    (
+      digits.length >= 1 ||
+      letters.length >= 5
+    )
   ) {
     return true;
   }
@@ -934,6 +1048,106 @@ async function addBuiltInReviewFindings(analysisId, report) {
       item.path,
       item,
       [item.path]
+    );
+  }
+
+  // Known applications are trusted only when their signature and/or
+  // download source matches the official vendor catalog. A familiar filename
+  // by itself is never enough to suppress a finding.
+  for (const item of report.files || []) {
+    const ext = String(item.extension || path.extname(item.name || "")).toLowerCase();
+    if (ext !== ".exe" && ext !== ".msi")
+      continue;
+
+    const appInfo = findCommonAppByFileName(item.name || item.path);
+    const signerOk = appInfo
+      ? signerMatchesCommonApp(appInfo, item.signerSubject)
+      : false;
+
+    if (appInfo) {
+      if (signerOk)
+        continue;
+
+      if (
+        item.signed !== true ||
+        !isTrustedInstalledPathForCommonApp(item.path)
+      ) {
+        await insertReviewFinding(
+          analysisId,
+          "Aplicativo conhecido com assinatura/origem não confirmada",
+          "high",
+          "unknown_app",
+          item.path || item.name || appInfo.name,
+          {
+            ...item,
+            expectedApplication: appInfo.name,
+            expectedSigners: appInfo.signerContains || [],
+            signatureMatched: signerOk,
+            confidence: "high",
+            note: "O nome imita um aplicativo comum, mas a assinatura digital esperada não foi confirmada. Nome conhecido não é tratado como legítimo sem validação.",
+          }
+        );
+      }
+
+      continue;
+    }
+
+    if (
+      item.signed !== true &&
+      isSuspiciousUserPath(item.path) &&
+      ageDays(item.lastWriteUtc) <= 120
+    ) {
+      await insertReviewFinding(
+        analysisId,
+        "Aplicativo desconhecido / não assinado",
+        looksRandomExecutableName(item.name || item.path) ? "critical" : "medium",
+        "unknown_app",
+        item.path || item.name || "executável",
+        {
+          ...item,
+          confidence: looksRandomExecutableName(item.name || item.path) ? "high" : "medium",
+          note: "Executável recente em Downloads/Desktop/Temp que não corresponde ao catálogo de aplicativos comuns e não possui assinatura digital confirmada.",
+        }
+      );
+    }
+  }
+
+  for (const download of report.browserDownloads || []) {
+    const appInfo = findCommonAppByFileName(
+      download.fileName || download.targetPath
+    );
+
+    if (!appInfo)
+      continue;
+
+    const hasSource = [
+      download.sourceUrl,
+      download.finalUrl,
+      download.referrerUrl,
+      download.siteUrl,
+      download.pageUrl,
+      ...(Array.isArray(download.urlChain) ? download.urlChain : [])
+    ].some(Boolean);
+
+    if (!hasSource)
+      continue;
+
+    if (downloadMatchesOfficialSource(appInfo, download))
+      continue;
+
+    await insertReviewFinding(
+      analysisId,
+      "Aplicativo conhecido baixado de fonte não oficial",
+      "high",
+      "browser_download",
+      download.targetPath || download.fileName || appInfo.name,
+      {
+        ...download,
+        expectedApplication: appInfo.name,
+        officialSourcePatterns: appInfo.officialUrlIncludes || [],
+        confidence: "high",
+        note: "O arquivo usa o nome de um aplicativo comum, porém o histórico de download não aponta para uma fonte oficial cadastrada.",
+      }
     );
   }
 
