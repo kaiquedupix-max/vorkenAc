@@ -74,8 +74,7 @@ internal static class AuthenticodeVerifier
                 ref action,
                 trustDataPtr);
 
-            if (status != 0)
-                return (false, "");
+            string subject = "";
 
             try
             {
@@ -85,12 +84,16 @@ internal static class AuthenticodeVerifier
                 using var certificate2 =
                     new X509Certificate2(certificate);
 
-                return (true, certificate2.Subject ?? "");
+                subject = certificate2.Subject ?? "";
             }
             catch
             {
-                return (true, "");
             }
+
+            return (
+                status == 0,
+                subject
+            );
         }
         catch
         {
