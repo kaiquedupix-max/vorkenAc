@@ -1226,21 +1226,26 @@ async function openReport(id) {
             '</span></div>'
           : '<div class="kv"><span>Revisão</span><span>Revisão necessária</span></div>';
 
+      const selectable = currentGuerraFriaLinked && Number.isInteger(Number(finding.id));
+      const selectionBlock = selectable
+        ? `<label class="ban-evidence-select"><input type="checkbox" class="ban-evidence-checkbox" data-finding-id="${escapeHtml(finding.id)}" ${selectedBanEvidenceIds.has(Number(finding.id)) ? "checked" : ""}><span>Usar como prova do banimento</span></label>`
+        : "";
       element.innerHTML = `
-        <div class="finding-head">
-          <h4>${escapeHtml(finding.title)}</h4>
-          <span class="tag ${escapeHtml(displaySeverity)}">${escapeHtml(filteredByReview ? "FILTRADO" : severityLabel(finding.severity))}</span>
-        </div>
+        <div class="finding-head"><h4>${escapeHtml(finding.title)}</h4><span class="tag ${escapeHtml(displaySeverity)}">${escapeHtml(filteredByReview ? "FILTRADO" : severityLabel(finding.severity))}</span></div>
         <code>${escapeHtml(finding.artifact_value)}</code>
+        ${selectionBlock}
         ${catalogName}
         ${reviewBlock}
         ${evidence.note ? '<div class="kv"><span>Motivo</span><span>' + escapeHtml(evidence.note) + '</span></div>' : ""}
-        <details class="evidence-details">
-          <summary>Ver evidência completa</summary>
-          <pre>${escapeHtml(JSON.stringify(evidence, null, 2))}</pre>
-        </details>
+        <details class="evidence-details"><summary>Ver evidência completa</summary><pre>${escapeHtml(JSON.stringify(evidence, null, 2))}</pre></details>
       `;
-
+      const checkbox = element.querySelector(".ban-evidence-checkbox");
+      checkbox?.addEventListener("change", () => {
+        const findingId = Number(checkbox.dataset.findingId);
+        if (!Number.isInteger(findingId)) return;
+        if (checkbox.checked) selectedBanEvidenceIds.add(findingId); else selectedBanEvidenceIds.delete(findingId);
+        document.querySelectorAll('.ban-evidence-checkbox[data-finding-id="' + findingId + '"]').forEach((item) => { item.checked = selectedBanEvidenceIds.has(findingId); });
+      });
       target.appendChild(element);
     }
   };
