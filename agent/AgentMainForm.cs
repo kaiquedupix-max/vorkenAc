@@ -595,7 +595,7 @@ internal sealed class AgentMainForm : Form
 
         var streamCard = MakeCard(new Rectangle(456, 380, 378, 360));
         streamCard.Controls.Add(MakeSectionTitle("▤   FLUXO DE EVIDÊNCIAS (TEMPO REAL)", 16, 15));
-        streamCard.Controls.Add(new Label
+        var liveBadge = new Label
         {
             Text = "● AO VIVO",
             Bounds = new Rectangle(286, 12, 76, 24),
@@ -603,7 +603,9 @@ internal sealed class AgentMainForm : Form
             BackColor = Color.FromArgb(4, 45, 48),
             ForeColor = Accent,
             Font = new Font("Consolas", 7.3F, FontStyle.Bold)
-        });
+        };
+        AttachRoundedRegion(liveBadge, 7);
+        streamCard.Controls.Add(liveBadge);
 
         _activityBox.Bounds = new Rectangle(14, 48, 350, 296);
         _activityBox.Multiline = true;
@@ -613,6 +615,7 @@ internal sealed class AgentMainForm : Form
         _activityBox.ForeColor = Color.FromArgb(159, 183, 189);
         _activityBox.BorderStyle = BorderStyle.None;
         _activityBox.Font = new Font("Consolas", 8.1F);
+        AttachRoundedRegion(_activityBox, 8);
         _activityBox.Clear();
         streamCard.Controls.Add(_activityBox);
 
@@ -1061,7 +1064,7 @@ internal sealed class AgentMainForm : Form
 
         card.Controls.Add(MakeLabel(icon, new Rectangle(18, 18, 42, 42), 21F, color, FontStyle.Bold));
         card.Controls.Add(MakeLabel(title, new Rectangle(67, 17, 160, 26), 13.5F, color, FontStyle.Bold));
-        card.Controls.Add(new Label
+        var countBadge = new Label
         {
             Text = count.ToString(),
             Bounds = new Rectangle(230, 17, 36, 24),
@@ -1069,7 +1072,9 @@ internal sealed class AgentMainForm : Form
             ForeColor = color,
             Font = new Font("Segoe UI", 8.5F, FontStyle.Bold),
             TextAlign = ContentAlignment.MiddleCenter
-        });
+        };
+        AttachRoundedRegion(countBadge, 7);
+        card.Controls.Add(countBadge);
         card.Controls.Add(MakeLabel(subtitle, new Rectangle(67, 44, 260, 20), 8.5F, TextSecondary));
 
         int y = 78;
@@ -1096,8 +1101,9 @@ internal sealed class AgentMainForm : Form
                 Font = new Font("Segoe UI", 8.6F),
                 Cursor = Cursors.Hand
             };
-            row.FlatAppearance.BorderColor = Color.FromArgb(60, color);
+            row.FlatAppearance.BorderColor = color;
             row.FlatAppearance.BorderSize = 1;
+            AttachRoundedRegion(row, 8);
             row.Click += (_, _) => ShowEvidenceDetail(finding);
             card.Controls.Add(row);
             y += 54;
@@ -1112,7 +1118,7 @@ internal sealed class AgentMainForm : Form
         card.BorderColor = Blue;
         card.Controls.Add(MakeLabel("▤", new Rectangle(18, 18, 42, 42), 20F, Blue, FontStyle.Bold));
         card.Controls.Add(MakeLabel("INVENTÁRIO", new Rectangle(67, 17, 180, 26), 13.5F, Blue, FontStyle.Bold));
-        card.Controls.Add(new Label
+        var inventoryBadge = new Label
         {
             Text = count.ToString(),
             Bounds = new Rectangle(246, 17, 42, 24),
@@ -1120,7 +1126,9 @@ internal sealed class AgentMainForm : Form
             ForeColor = Blue,
             Font = new Font("Segoe UI", 8.5F, FontStyle.Bold),
             TextAlign = ContentAlignment.MiddleCenter
-        });
+        };
+        AttachRoundedRegion(inventoryBadge, 7);
+        card.Controls.Add(inventoryBadge);
         card.Controls.Add(MakeLabel(
             "Artefatos catalogados (baixo risco)",
             new Rectangle(67, 44, 290, 20),
@@ -1202,6 +1210,7 @@ internal sealed class AgentMainForm : Form
             TextAlign = ContentAlignment.MiddleCenter,
             Tag = "dynamic"
         };
+        AttachRoundedRegion(severity, 7);
 
         var title = MakeLabel(
             finding.Title,
@@ -1221,6 +1230,7 @@ internal sealed class AgentMainForm : Form
             TextAlign = ContentAlignment.MiddleCenter,
             Tag = "dynamic"
         };
+        AttachRoundedRegion(icon, 9);
 
         string artifact = finding.ArtifactValue ?? "—";
         string evidenceText = FriendlyEvidence(finding.Evidence);
