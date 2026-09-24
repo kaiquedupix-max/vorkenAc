@@ -5883,6 +5883,131 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
   });
 });
 
+
+app.post(
+  "/api/admin/analyses/:id/guerra-fria-decision",
+  requireAdmin,
+  async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0)
+      return res.status(400).json({ error: "invalid_id" });
+
+    const decision =
+      String(req.body?.decision || "")
+        .trim()
+        .toLowerCase();
+
+    if (!["approve", "deny"].includes(decision))
+      return res.status(400).json({ error: "invalid_decision" });
+
+    const reason =
+      cleanText(req.body?.reason, 500) ||
+      (decision === "deny"
+        ? "Resultado da verificação reprovado."
+        : "Resultado da verificação aprovado.");
+
+    const analysisResult = await pool.query(
+      `SELECT
+         id,
+         external_source,
+         external_player_id,
+         external_discord_user_id,
+         external_ticket_channel_id,
+         external_decision
+       FROM analyses
+       WHERE id=$1
+       LIMIT 1`,
+      [id]
+    );
+
+    const analysis = analysisResult.rows[0];
+
+    if (!analysis)
+      return res.status(404).json({ error: "analysis_not_found" });
+
+    if (analysis.external_source !== "guerra_fria" ||
+        !/^7656119\d{10}$/.test(String(analysis.external_player_id || ""))) {
+      return res.status(409).json({
+        error: "analysis_not_linked",
+        message: "Esta análise não está vinculada ao Guerra Fria."
+      });
+    }
+
+    if (analysis.external_decision) {
+      return res.status(409).json({
+        error: "decision_already_applied",
+        message: "Esta análise já possui uma decisão registrada."
+      });
+    }
+
+    const baseUrl =
+      String(process.env.GUERRA_FRIA_INTEGRATION_URL || "")
+        .trim()
+        .replace(/\/$/, "");
+
+    const key =
+      String(process.env.VORKEN_GF_INTEGRATION_KEY || "").trim();
+
+    if (!baseUrl || !key) {
+      return res.status(503).json({
+        error: "guerra_fria_integration_not_configured",
+        message: "Integração com o Guerra Fria não configurada."
+      });
+    }
+
+    const response = await fetch(
+      baseUrl + "/api/integrations/vorken/decision",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-vorken-integration-key": key
+        },
+        body: JSON.stringify({
+          analysisId: id,
+          decision,
+          reason,
+          steamId: analysis.external_player_id,
+          discordUserId: analysis.external_discord_user_id,
+          ticketChannelId: analysis.external_ticket_channel_id
+        })
+      }
+    );
+
+    const body =
+      await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      return res.status(502).json({
+        error: "guerra_fria_decision_failed",
+        message:
+          body?.message ||
+          body?.error ||
+          "O Guerra Fria não confirmou a decisão."
+      });
+    }
+
+    await pool.query(
+      `UPDATE analyses
+       SET external_decision=$2,
+           external_decision_at=NOW(),
+           external_decision_result=$3
+       WHERE id=$1`,
+      [
+        id,
+        decision,
+        cleanText(body?.result, 900) || "Decisão confirmada."
+      ]
+    );
+
+    res.json({
+      ok: true,
+      decision,
+      result: body?.result || "Decisão confirmada."
+    });
+  }
+);
+
 app.post("/api/admin/analyses/:id/client-report", requireAdmin, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) {
