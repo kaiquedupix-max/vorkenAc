@@ -145,6 +145,17 @@ function looksRandomExecutableName(value) {
     return true;
   }
 
+  if (
+    stem.length >= 8 &&
+    stem.length <= 18 &&
+    digits.length === 0 &&
+    letters.length === stem.length &&
+    distinct >= 7 &&
+    vowelRatio <= 0.22
+  ) {
+    return true;
+  }
+
   return (
     stem.length >= 10 &&
     letters.length >= 6 &&
