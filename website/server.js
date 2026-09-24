@@ -114,6 +114,8 @@ function loadCommonAppCatalog() {
 
 const commonAppCatalog = loadCommonAppCatalog();
 
+const AI_REVIEW_POLICY_VERSION = "v1";
+
 const aiReviewConfig = {
   enabled:
     String(process.env.AI_REVIEW_ENABLED || "false").toLowerCase() === "true",
@@ -283,7 +285,11 @@ function buildAiReviewCase(finding) {
   const fingerprint =
     crypto
       .createHash("sha256")
-      .update(JSON.stringify(caseData))
+      .update(
+        AI_REVIEW_POLICY_VERSION +
+        "|" +
+        JSON.stringify(caseData)
+      )
       .digest("hex");
 
   return {
