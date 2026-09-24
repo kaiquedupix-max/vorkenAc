@@ -46,8 +46,7 @@ internal static class WindowProtectionCollector
                     try
                     {
                         using Process process =
-                            Process.GetProcessById(
-                                checked((int)pid));
+                            Process.GetProcessById(checked((int)pid));
 
                         processName = process.ProcessName;
 
