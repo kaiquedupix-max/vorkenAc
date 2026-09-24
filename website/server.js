@@ -70,7 +70,7 @@ const commonAppCatalog = loadCommonAppCatalog();
 
 
 app.disable("x-powered-by");
-app.use(express.json({ limit: "24mb" }));
+app.use(express.json({ limit: "64mb" }));
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, "public"), {
@@ -132,6 +132,55 @@ function analysisToken() {
 
 function validToken(value) {
   return /^[A-Za-z0-9_-]{20,80}$/.test(String(value || ""));
+}
+
+async function queryVirusTotalHash(sha256) {
+  const apiKey = String(process.env.VIRUSTOTAL_API_KEY || "").trim();
+  const hash = String(sha256 || "").trim().toLowerCase();
+
+  if (!apiKey || !/^[a-f0-9]{64}$/.test(hash))
+    return null;
+
+  try {
+    const response = await fetch(
+      "https://www.virustotal.com/api/v3/files/" + encodeURIComponent(hash),
+      {
+        headers: {
+          "x-apikey": apiKey,
+          "accept": "application/json"
+        },
+        signal: AbortSignal.timeout(8000)
+      }
+    );
+
+    if (response.status === 404)
+      return { found: false, sha256: hash };
+
+    if (!response.ok)
+      return null;
+
+    const payload = await response.json();
+    const attributes = payload?.data?.attributes || {};
+    const stats = attributes.last_analysis_stats || {};
+
+    return {
+      found: true,
+      sha256: hash,
+      meaningfulName: attributes.meaningful_name || "",
+      reputation: Number(attributes.reputation || 0),
+      stats: {
+        malicious: Number(stats.malicious || 0),
+        suspicious: Number(stats.suspicious || 0),
+        harmless: Number(stats.harmless || 0),
+        undetected: Number(stats.undetected || 0)
+      },
+      lastAnalysisDate: attributes.last_analysis_date
+        ? new Date(Number(attributes.last_analysis_date) * 1000).toISOString()
+        : null
+    };
+  } catch {
+    return null;
+  }
 }
 
 function normalizeSeverity(value) {
@@ -1289,6 +1338,47 @@ async function addBuiltInReviewFindings(analysisId, report) {
           matchedRiskTerms,
           confidence: "medium",
           note: "O arquivo foi apagado e o nome contém termo frequentemente associado a loaders/scripts/cheats. Não é necessário haver Prefetch para esta ocorrência.",
+        }
+      );
+    }
+  }
+
+  // Optional multi-engine hash reputation. Only SHA-256 values are sent;
+  // files themselves are never uploaded by Vorken.
+  if (String(process.env.VIRUSTOTAL_API_KEY || "").trim()) {
+    const vtCandidates = (report.files || [])
+      .filter((item) =>
+        item.signed !== true &&
+        /^[a-f0-9]{64}$/i.test(String(item.sha256 || "")) &&
+        (
+          isSuspiciousUserPath(item.path) ||
+          item.randomLikeName === true
+        )
+      )
+      .slice(0, 20);
+
+    for (const item of vtCandidates) {
+      const reputation = await queryVirusTotalHash(item.sha256);
+      if (!reputation?.found)
+        continue;
+
+      const malicious = Number(reputation.stats?.malicious || 0);
+      const suspicious = Number(reputation.stats?.suspicious || 0);
+
+      if (malicious <= 0 && suspicious <= 0)
+        continue;
+
+      await insertReviewFinding(
+        analysisId,
+        "Reputação multi-engine do hash",
+        malicious >= 5 ? "critical" : malicious >= 2 ? "high" : "medium",
+        "hash_reputation",
+        item.path || item.name || item.sha256,
+        {
+          ...item,
+          virusTotal: reputation,
+          confidence: malicious >= 5 ? "high" : "medium",
+          note: "Consulta opcional por SHA-256 em serviço de reputação. O Vorken enviou apenas o hash e não fez upload do arquivo."
         }
       );
     }
