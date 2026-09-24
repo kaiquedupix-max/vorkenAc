@@ -336,6 +336,14 @@ function updateAnalysisProcessingBanner(status) {
     return;
   }
 
+  if (stage === "needs_ai") {
+    banner.className = "message";
+    banner.textContent =
+      message ||
+      "Esta análise ainda não passou pela segunda camada de IA. Use Recalcular com IA.";
+    return;
+  }
+
   if (stage === "ai_error") {
     banner.className = "message error";
     banner.textContent =
