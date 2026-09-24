@@ -1253,6 +1253,45 @@ async function openReport(id) {
       }).join("")
     : '<div class="message ok">Nenhum download sinalizado como perigoso/incomum pelo navegador foi preservado no histórico.</div>';
 
+  const aiFilteredNames = new Set();
+
+  for (const finding of aiFilteredFindings) {
+    const candidates = [
+      finding.artifact_value,
+      finding.evidence?.fileName,
+      finding.evidence?.name,
+      finding.evidence?.path,
+      finding.evidence?.targetPath,
+      finding.evidence?.currentPath,
+      finding.evidence?.originalPath,
+      finding.evidence?.recoveredFileName
+    ].filter(Boolean);
+
+    for (const value of candidates) {
+      const normalized = String(value || "")
+        .replaceAll("/", "\\")
+        .toLowerCase()
+        .trim();
+
+      const name = normalized.split("\\").filter(Boolean).at(-1);
+      if (name) aiFilteredNames.add(name);
+    }
+  }
+
+  const wasFilteredByAi = (...values) =>
+    values
+      .flat(Infinity)
+      .filter(Boolean)
+      .some((value) => {
+        const normalized = String(value || "")
+          .replaceAll("/", "\\")
+          .toLowerCase()
+          .trim();
+
+        const name = normalized.split("\\").filter(Boolean).at(-1);
+        return Boolean(name && aiFilteredNames.has(name));
+      });
+
   const priorityFiles = [];
 
   for (const item of arrays.browserDownloads) {
@@ -1467,6 +1506,11 @@ async function openReport(id) {
 
   const prioritySeen = new Set();
   const priorityUnique = priorityFiles
+    .filter((item) =>
+      !wasFilteredByAi(
+        item.name,
+        item.path
+      ))
     .sort((a, b) => b.priority - a.priority || new Date(b.time || 0) - new Date(a.time || 0))
     .filter((item) => {
       const key = String(item.name || item.path || "").toLowerCase();
