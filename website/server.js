@@ -2021,6 +2021,21 @@ async function initDb() {
     ALTER TABLE analyses
       ADD COLUMN IF NOT EXISTS external_decision_result TEXT NULL;
 
+    ALTER TABLE analyses
+      ADD COLUMN IF NOT EXISTS external_evidence_url TEXT NULL;
+
+    CREATE TABLE IF NOT EXISTS evidence_packages (
+      id BIGSERIAL PRIMARY KEY,
+      analysis_id BIGINT NOT NULL REFERENCES analyses(id) ON DELETE CASCADE,
+      public_token TEXT NOT NULL UNIQUE,
+      reason TEXT NOT NULL DEFAULT '',
+      findings JSONB NOT NULL DEFAULT '[]'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_evidence_packages_analysis
+      ON evidence_packages(analysis_id, id DESC);
+
     CREATE TABLE IF NOT EXISTS guerra_fria_verifications (
       id BIGSERIAL PRIMARY KEY,
       verification_code TEXT NOT NULL UNIQUE,
@@ -2126,6 +2141,134 @@ async function initDb() {
       SELECT 1 FROM detection_rules WHERE type='device_keyword' AND pattern='dma'
     );
   `);
+}
+
+
+function safePublicEvidence(evidence = {}) {
+  const source =
+    evidence && typeof evidence === "object"
+      ? evidence
+      : {};
+
+  const keys = [
+    "name",
+    "fileName",
+    "path",
+    "fullPath",
+    "originalPath",
+    "targetPath",
+    "currentPath",
+    "relativePath",
+    "drive",
+    "volumeLabel",
+    "extension",
+    "size",
+    "sha256",
+    "signed",
+    "signerSubject",
+    "companyName",
+    "publisher",
+    "sourceUrl",
+    "finalUrl",
+    "hostUrl",
+    "siteUrl",
+    "pageUrl",
+    "referrerUrl",
+    "lastRunUtc",
+    "lastExecutionUtc",
+    "timeCreatedUtc",
+    "lastConnectedUtc",
+    "lastDisconnectedUtc",
+    "driveType",
+    "volumeNotMounted",
+    "executablePresent",
+    "priorityMaximum",
+    "executionConfirmed",
+    "technicalVerdict",
+    "confidence",
+    "note",
+    "catalogMatch",
+    "correlatedUsb"
+  ];
+
+  const output = {};
+
+  for (const key of keys) {
+    if (source[key] !== undefined && source[key] !== null)
+      output[key] = source[key];
+  }
+
+  return output;
+}
+
+function htmlEscape(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+async function notifyGuerraFriaProgress(analysisId, stage, message) {
+  try {
+    const baseUrl =
+      String(process.env.GUERRA_FRIA_INTEGRATION_URL || "")
+        .trim()
+        .replace(/\/$/, "");
+
+    const key =
+      String(process.env.VORKEN_GF_INTEGRATION_KEY || "").trim();
+
+    if (!baseUrl || !key)
+      return;
+
+    const result = await pool.query(
+      `SELECT
+         external_source,
+         external_player_id,
+         external_discord_user_id,
+         external_ticket_channel_id
+       FROM analyses
+       WHERE id=$1
+       LIMIT 1`,
+      [analysisId]
+    );
+
+    const analysis = result.rows[0];
+
+    if (
+      !analysis ||
+      analysis.external_source !== "guerra_fria" ||
+      !analysis.external_ticket_channel_id
+    ) {
+      return;
+    }
+
+    await fetch(
+      baseUrl + "/api/integrations/vorken/progress",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-vorken-integration-key": key
+        },
+        body: JSON.stringify({
+          analysisId,
+          steamId: analysis.external_player_id,
+          discordUserId: analysis.external_discord_user_id,
+          ticketChannelId: analysis.external_ticket_channel_id,
+          stage,
+          message
+        })
+      }
+    ).catch(() => {});
+  } catch (error) {
+    console.warn(
+      "Falha ao atualizar progresso da verificação no Guerra Fria:",
+      error?.message || error
+    );
+  }
 }
 
 async function getAnalysisByToken(token) {
@@ -5749,6 +5892,7 @@ app.get("/api/admin/analyses", requireAdmin, async (_req, res) => {
       a.external_decision,
       a.external_decision_at,
       a.external_decision_result,
+      a.external_evidence_url,
       COALESCE(f.total_findings, 0)::int AS total_findings,
       COALESCE(f.high_findings, 0)::int AS high_findings
     FROM analyses a
@@ -5840,7 +5984,8 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
        external_verification_code,
        external_decision,
        external_decision_at,
-       external_decision_result
+       external_decision_result,
+       external_evidence_url
      FROM analyses
      WHERE id = $1
      LIMIT 1`,
@@ -6532,6 +6677,14 @@ app.post("/api/agent/:token/start", async (req, res) => {
   );
 
   res.json({ ok: true });
+
+  setImmediate(() =>
+    notifyGuerraFriaProgress(
+      analysis.id,
+      "started",
+      "O Vorken foi iniciado no computador do jogador e a coleta técnica começou."
+    )
+  );
 });
 
 app.post("/api/agent/:token/report", async (req, res) => {
@@ -6638,6 +6791,14 @@ app.post("/api/agent/:token/report", async (req, res) => {
       processing: true,
     });
 
+    setImmediate(() =>
+      notifyGuerraFriaProgress(
+        analysis.id,
+        "processing",
+        "A coleta do computador terminou. O relatório foi recebido e está sendo processado."
+      )
+    );
+
     setImmediate(async () => {
       try {
         await rebuildFindings(
@@ -6670,6 +6831,12 @@ app.post("/api/agent/:token/report", async (req, res) => {
               : "Análise técnica concluída; a revisão final não foi finalizada.",
           ]
         );
+
+        await notifyGuerraFriaProgress(
+          analysis.id,
+          "completed",
+          "A verificação foi finalizada. Aguarde a decisão da administração."
+        );
       } catch (error) {
         console.error(
           "Falha ao processar findings do relatório:",
@@ -6692,6 +6859,12 @@ app.post("/api/agent/:token/report", async (req, res) => {
                  finished_at=COALESCE(finished_at, NOW())
              WHERE id=$1`,
             [analysis.id]
+          );
+
+          await notifyGuerraFriaProgress(
+            analysis.id,
+            "completed",
+            "A verificação foi finalizada com relatório técnico preservado. Aguarde a decisão da administração."
           );
         } catch (statusError) {
           console.error(
