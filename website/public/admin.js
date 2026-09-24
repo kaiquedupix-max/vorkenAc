@@ -273,6 +273,7 @@ async function openReport(id) {
     recentShortcuts: payload.recentShortcuts || [],
     recycleBin: payload.recycleBin || [],
     browserDownloads: payload.browserDownloads || [],
+    browserHistorySignals: payload.browserHistorySignals || [],
     extensionMismatches: payload.extensionMismatches || [],
     defenderExclusions: payload.defenderExclusions || [],
     bootIntegrity: payload.bootIntegrity || [],
@@ -357,6 +358,7 @@ async function openReport(id) {
     <div class="kv"><span>Atalhos recentes</span><span>${arrays.recentShortcuts.length}</span></div>
     <div class="kv"><span>Downloads no histórico</span><span>${arrays.browserDownloads.length}</span></div>
     <div class="kv"><span>Downloads não localizados</span><span>${arrays.browserDownloads.filter((x) => x.fileMissing === true).length}</span></div>
+    <div class="kv"><span>Histórico suspeito do navegador</span><span>${arrays.browserHistorySignals.length}</span></div>
     <div class="kv"><span>Lixeira</span><span>${arrays.recycleBin.length}</span></div>
     <div class="kv"><span>Ambiente virtual</span><span>${payload.vmEnvironment?.isVirtualMachine ? escapeHtml(payload.vmEnvironment?.detectedPlatform || "Sim") : "Não detectado"}</span></div>
     <div class="kv"><span>Extensões modificadas</span><span>${arrays.extensionMismatches.length}</span></div>
@@ -367,6 +369,29 @@ async function openReport(id) {
     <div class="kv"><span>Erros parciais</span><span>${(payload.errors || []).length}</span></div>
   `;
 
+  const hw = payload.hardwareSummary || {};
+  const connectedStorage = arrays.usbCurrent.filter((item) => {
+    const haystack = [item.name, item.deviceId, item.pnpDeviceId, item.manufacturer]
+      .join(" ").toLowerCase();
+    return haystack.includes("disk") ||
+      haystack.includes("mass storage") ||
+      haystack.includes("usbstor") ||
+      haystack.includes("storage");
+  }).length;
+
+  document.getElementById("deviceOverviewList").innerHTML = `
+    <div class="metric-grid">
+      <div class="metric"><small>PENDRIVES CONECTADOS</small><strong>${connectedStorage}</strong></div>
+      <div class="metric"><small>USB DESCONECTADOS</small><strong>${disconnectedUsb}</strong></div>
+      <div class="metric"><small>ARDUINO</small><strong>${Number(hw.arduinoCount ?? 0)}</strong></div>
+      <div class="metric"><small>MAKCU / MOKU</small><strong>${Number(hw.makcuCount ?? 0)}</strong></div>
+      <div class="metric"><small>CH34X</small><strong>${Number(hw.ch34xCount ?? 0)}</strong></div>
+      <div class="metric"><small>CP210X</small><strong>${Number(hw.cp210xCount ?? 0)}</strong></div>
+      <div class="metric"><small>FTDI</small><strong>${Number(hw.ftdiCount ?? 0)}</strong></div>
+      <div class="metric"><small>OUTROS SERIAIS</small><strong>${Number(hw.otherSerialCount ?? 0)}</strong></div>
+    </div>
+    <div class="message">CH34x/CP210x/FTDI são bridges USB-Serial. Eles aparecem separados de Arduino/MAKCU para evitar afirmar um modelo de placa sem evidência suficiente.</div>
+  `;
   document.getElementById("relatedAnalysesList").innerHTML = relatedAnalyses.length
     ? relatedAnalyses.map((item) => `
         <div class="finding">
@@ -408,7 +433,6 @@ async function openReport(id) {
       `).join("")
     : '<div class="message ok">Nenhum dispositivo USB histórico marcado como desconectado.</div>';
 
-  const hw = payload.hardwareSummary || {};
   document.getElementById("serialDeviceList").innerHTML = `
     <div class="metric-grid">
       <div class="metric"><small>DISPOSITIVOS</small><strong>${Number(hw.totalRelevantDevices ?? arrays.serialDevices.length)}</strong></div>
