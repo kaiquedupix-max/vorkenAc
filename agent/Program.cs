@@ -11,7 +11,7 @@ namespace Vorken.Agent;
 
 internal static class Program
 {
-    private const string AgentVersion = "0.8.0";
+    private const string AgentVersion = "0.9.0";
 
     private static readonly JsonSerializerOptions JsonOptions =
         new(JsonSerializerDefaults.Web)
@@ -40,6 +40,7 @@ internal static class Program
             Console.WriteLine("- hashes SHA-256, assinatura digital e Prefetch quando disponível.");
             Console.WriteLine("- histórico de downloads dos navegadores: nome/caminho, horários e URL de origem;");
             Console.WriteLine("- apenas páginas/pesquisas do navegador que batem em termos de cheat/hack/script relacionados ao jogo;");
+            Console.WriteLine("- vestígios recuperáveis de histórico apagado em páginas SQLite/WAL e nomes recentes apagados do NTFS/USN;");
             Console.WriteLine("- hash técnico do equipamento para relacionar análises anteriores, sem enviar os seriais brutos;");
             Console.WriteLine();
             Console.WriteLine("O Vorken não coleta senhas, cookies, mensagens, fotos ou conteúdo de documentos.");
@@ -258,6 +259,17 @@ internal static class Program
                     rulesPayload.ThreatCatalog),
                 errors);
 
+            List<RecoveredBrowserArtifact> browserRecoveredArtifacts = SafeCollect(
+                "Vestígios de histórico apagado",
+                () => BrowserArtifactRecoveryCollector.Collect(
+                    rulesPayload.ThreatCatalog),
+                errors);
+
+            List<DeletedUsnRecord> deletedUsnRecords = SafeCollect(
+                "Arquivos apagados no USN Journal",
+                UsnDeletionCollector.Collect,
+                errors);
+
             List<ExtensionMismatchRecord> extensionMismatches = SafeCollect(
                 "Extensões modificadas",
                 DeepForensicCollector.CollectModifiedExtensions,
@@ -360,6 +372,8 @@ internal static class Program
                 VmEnvironment = vmEnvironment,
                 BrowserDownloads = browserDownloads,
                 BrowserHistorySignals = browserHistorySignals,
+                BrowserRecoveredArtifacts = browserRecoveredArtifacts,
+                DeletedUsnRecords = deletedUsnRecords,
                 ExtensionMismatches = extensionMismatches,
                 DefenderExclusions = defenderExclusions,
                 BootIntegrity = bootIntegrity,
@@ -1314,6 +1328,8 @@ internal sealed class ScanReport
     public VmEnvironmentRecord VmEnvironment { get; set; } = new();
     public List<BrowserDownloadRecord> BrowserDownloads { get; set; } = new();
     public List<BrowserHistoryRecord> BrowserHistorySignals { get; set; } = new();
+    public List<RecoveredBrowserArtifact> BrowserRecoveredArtifacts { get; set; } = new();
+    public List<DeletedUsnRecord> DeletedUsnRecords { get; set; } = new();
     public List<ExtensionMismatchRecord> ExtensionMismatches { get; set; } = new();
     public List<DefenderExclusionRecord> DefenderExclusions { get; set; } = new();
     public List<BootIntegrityRecord> BootIntegrity { get; set; } = new();
