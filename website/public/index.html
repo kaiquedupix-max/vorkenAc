@@ -3,38 +3,296 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#070a0d">
+  <meta name="theme-color" content="#05090c">
   <title>Vorken Anti Cheat</title>
-  <meta name="description" content="Vorken Anti Cheat — análise técnica baseada em evidências para investigações de integridade.">
+  <meta name="description" content="Vorken Anti Cheat — scanner técnico sob demanda com evidências claras para revisão humana.">
   <link rel="stylesheet" href="/styles.css">
 </head>
-<body>
-  <header class="topbar">
-    <div class="shell nav">
-      <a class="brand" href="/"><span class="brand-mark">V</span><span>Vorken<small>ANTI CHEAT</small></span></a>
-      <a class="button ghost" href="/admin">Painel administrativo</a>
+<body class="landing-page">
+  <div class="landing-grid" aria-hidden="true"></div>
+  <div class="landing-orb orb-a" aria-hidden="true"></div>
+  <div class="landing-orb orb-b" aria-hidden="true"></div>
+
+  <header class="topbar landing-topbar">
+    <div class="shell nav landing-nav">
+      <a class="brand landing-brand" href="/" aria-label="Vorken Anti Cheat">
+        <span class="brand-mark landing-brand-mark">V</span>
+        <span>Vorken<small>ANTI CHEAT</small></span>
+      </a>
+
+      <nav class="landing-links" aria-label="Navegação principal">
+        <a href="#recursos">Recursos</a>
+        <a href="#fluxo">Como funciona</a>
+        <a href="#privacidade">Privacidade</a>
+      </nav>
+
+      <a class="button ghost landing-admin" href="/admin">
+        Painel administrativo
+        <span aria-hidden="true">↗</span>
+      </a>
     </div>
   </header>
 
   <main>
-    <section class="hero shell">
-      <div class="eyebrow">PLAYER INTEGRITY · EVIDENCE FIRST</div>
-      <h1>Inspeção técnica.<br>Relatório claro.</h1>
-      <p>
-        O Vorken cria análises individuais, entrega um agente vinculado à sessão e centraliza evidências
-        técnicas para revisão humana. Nenhuma detecção isolada é tratada automaticamente como prova.
-      </p>
-      <div class="hero-actions">
-        <a class="button primary" href="/admin">Abrir painel</a>
+    <section class="landing-hero shell">
+      <div class="landing-hero-copy reveal">
+        <div class="landing-live-pill">
+          <span class="live-dot"></span>
+          Scanner sob demanda · revisão baseada em evidências
+        </div>
+
+        <div class="eyebrow landing-kicker">PLAYER INTEGRITY · EVIDENCE FIRST</div>
+        <h1>Menos ruído.<br><span>Mais evidência real.</span></h1>
+        <p class="landing-lead">
+          O Vorken coleta sinais técnicos relevantes, organiza o contexto forense e entrega um relatório
+          claro para revisão humana — sem transformar qualquer aplicativo comum em “cheat”.
+        </p>
+
+        <div class="landing-actions">
+          <a class="button primary landing-cta" href="/admin">
+            Criar uma análise
+            <span aria-hidden="true">→</span>
+          </a>
+          <a class="landing-text-link" href="#fluxo">Ver como funciona</a>
+        </div>
+
+        <div class="landing-trust-row">
+          <span><i></i> Execução somente com consentimento</span>
+          <span><i></i> Sem driver kernel</span>
+          <span><i></i> Relatório auditável</span>
+        </div>
       </div>
 
-      <div class="hero-grid">
-        <article><div class="eyebrow">01</div><strong>Análise única</strong><span>Gere um link exclusivo e com validade configurável.</span></article>
-        <article><div class="eyebrow">02</div><strong>Agente vinculado</strong><span>O pacote baixado já contém o token da análise.</span></article>
-        <article><div class="eyebrow">03</div><strong>Evidências</strong><span>USB, processos, Prefetch, serviços, drivers e hashes.</span></article>
-        <article><div class="eyebrow">04</div><strong>Regras próprias</strong><span>Cadastre hashes e padrões para novas detecções sem recompilar.</span></article>
+      <div class="landing-visual reveal delay-1" aria-label="Prévia visual do scanner Vorken">
+        <div class="visual-shell">
+          <div class="visual-topline">
+            <span class="visual-brand">
+              <b>V</b>
+              VORKEN
+            </span>
+            <span class="visual-online"><i></i> ONLINE</span>
+          </div>
+
+          <div class="visual-grid">
+            <div class="visual-main">
+              <span class="visual-label">ANÁLISE TÉCNICA</span>
+              <h2>Evidence stream</h2>
+              <p>Coleta controlada e organizada por relevância.</p>
+
+              <div class="scan-track">
+                <div class="scan-glow"></div>
+              </div>
+
+              <div class="terminal" id="landingTerminal" aria-live="polite">
+                <div><span class="term-info">[INIT]</span> sessão validada</div>
+                <div><span class="term-ok">[OK]</span> integridade do ambiente</div>
+                <div><span class="term-ok">[OK]</span> histórico de execução</div>
+                <div><span class="term-info">[INFO]</span> artefatos catalogados</div>
+                <div class="terminal-current"><span class="term-pulse">●</span> correlacionando evidências<span class="typing-dots">...</span></div>
+              </div>
+            </div>
+
+            <aside class="visual-side">
+              <div class="visual-stat">
+                <span>Modo</span>
+                <strong>Sob demanda</strong>
+              </div>
+              <div class="visual-stat">
+                <span>Foco</span>
+                <strong>Execução + origem</strong>
+              </div>
+              <div class="visual-stat">
+                <span>Decisão</span>
+                <strong>Revisão humana</strong>
+              </div>
+            </aside>
+          </div>
+
+          <div class="visual-footer">
+            <span>Vorken scanner session</span>
+            <span class="visual-hash">SHA256 · REPORT · FORENSICS</span>
+          </div>
+        </div>
       </div>
     </section>
+
+    <section class="landing-strip">
+      <div class="shell landing-strip-inner reveal">
+        <div><strong>01</strong><span>Link individual</span></div>
+        <div><strong>02</strong><span>Scanner vinculado</span></div>
+        <div><strong>03</strong><span>Coleta técnica</span></div>
+        <div><strong>04</strong><span>Relatório priorizado</span></div>
+      </div>
+    </section>
+
+    <section id="recursos" class="landing-section shell">
+      <div class="section-heading reveal">
+        <div class="eyebrow">RECURSOS</div>
+        <h2>Projetado para encontrar sinal,<br>não para fabricar suspeita.</h2>
+        <p>
+          O Vorken separa inventário técnico, itens para revisão e evidências de alta prioridade
+          para deixar a análise mais rápida e explicável.
+        </p>
+      </div>
+
+      <div class="feature-grid">
+        <article class="feature-card feature-card-large reveal">
+          <span class="feature-index">01</span>
+          <div class="feature-icon">⌁</div>
+          <h3>Execução correlacionada</h3>
+          <p>
+            Prefetch, BAM, eventos de processo e outros vestígios são correlacionados para diferenciar
+            arquivo simplesmente presente de executável realmente utilizado.
+          </p>
+          <div class="feature-wave" aria-hidden="true">
+            <span></span><span></span><span></span><span></span><span></span>
+          </div>
+        </article>
+
+        <article class="feature-card reveal delay-1">
+          <span class="feature-index">02</span>
+          <div class="feature-icon">◎</div>
+          <h3>Origem de download</h3>
+          <p>Histórico e metadados ajudam a separar fontes conhecidas, anexos externos e domínios do catálogo.</p>
+        </article>
+
+        <article class="feature-card reveal delay-2">
+          <span class="feature-index">03</span>
+          <div class="feature-icon">⌘</div>
+          <h3>USB e mídia removível</h3>
+          <p>Atividade recente de dispositivos e execução em mídia removível ficam visíveis para revisão.</p>
+        </article>
+
+        <article class="feature-card reveal">
+          <span class="feature-index">04</span>
+          <div class="feature-icon">◈</div>
+          <h3>Relatório por severidade</h3>
+          <p>Crítico, revisar e inventário aparecem separados para evitar uma parede de falsos positivos.</p>
+        </article>
+
+        <article class="feature-card feature-card-wide reveal delay-1">
+          <span class="feature-index">05</span>
+          <div class="feature-icon">◇</div>
+          <h3>Catálogo atualizado sem recompilar</h3>
+          <p>
+            Regras e indicadores podem ser atualizados no painel para acompanhar novas evidências
+            sem trocar toda a lógica do agente.
+          </p>
+          <div class="mini-pills">
+            <span>domínios</span><span>arquivos</span><span>hashes</span><span>execução</span>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section id="fluxo" class="landing-section landing-flow-section">
+      <div class="shell">
+        <div class="section-heading reveal">
+          <div class="eyebrow">FLUXO</div>
+          <h2>Uma análise do começo ao fim.</h2>
+          <p>O jogador vê exatamente quando a coleta começa e quando os dados foram enviados.</p>
+        </div>
+
+        <div class="flow-line">
+          <article class="flow-step reveal">
+            <span class="flow-number">01</span>
+            <h3>Link exclusivo</h3>
+            <p>O administrador cria uma sessão com validade própria.</p>
+          </article>
+          <article class="flow-step reveal delay-1">
+            <span class="flow-number">02</span>
+            <h3>Consentimento</h3>
+            <p>O scanner abre em interface gráfica e só inicia após o aceite.</p>
+          </article>
+          <article class="flow-step reveal delay-2">
+            <span class="flow-number">03</span>
+            <h3>Coleta e envio</h3>
+            <p>O progresso fica visível enquanto os módulos técnicos são executados.</p>
+          </article>
+          <article class="flow-step reveal delay-3">
+            <span class="flow-number">04</span>
+            <h3>Revisão</h3>
+            <p>O painel organiza as evidências para o responsável analisar.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="privacidade" class="landing-section shell">
+      <div class="privacy-panel reveal">
+        <div>
+          <div class="eyebrow">TRANSPARÊNCIA</div>
+          <h2>O jogador sabe o que está acontecendo.</h2>
+          <p>
+            O cliente mostra os termos antes da coleta, exibe o andamento da análise e permanece aberto
+            ao terminar, confirmando que os dados foram enviados.
+          </p>
+        </div>
+
+        <div class="privacy-checks">
+          <span><b>✓</b> Coleta iniciada pelo usuário</span>
+          <span><b>✓</b> Status visível durante o processo</span>
+          <span><b>✓</b> Inventário separado de detecção</span>
+          <span><b>✓</b> Decisão final feita por revisão humana</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="landing-final shell reveal">
+      <div class="final-glow" aria-hidden="true"></div>
+      <div class="eyebrow">VORKEN ANTI CHEAT</div>
+      <h2>Investigue com contexto.<br>Decida com evidência.</h2>
+      <p>Crie uma análise individual e acompanhe o resultado pelo painel administrativo.</p>
+      <a class="button primary landing-cta" href="/admin">Abrir painel <span aria-hidden="true">→</span></a>
+    </section>
   </main>
+
+  <footer class="landing-footer">
+    <div class="shell">
+      <div class="brand landing-brand">
+        <span class="brand-mark landing-brand-mark">V</span>
+        <span>Vorken<small>ANTI CHEAT</small></span>
+      </div>
+      <p>Scanner técnico sob demanda para revisão de integridade.</p>
+      <span>© 2026 Vorken</span>
+    </div>
+  </footer>
+
+  <script>
+    const revealObserver = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) {
+          entry.target.classList.add("is-visible");
+          revealObserver.unobserve(entry.target);
+        }
+      }
+    }, { threshold: 0.12 });
+
+    document.querySelectorAll(".reveal").forEach((node) => revealObserver.observe(node));
+
+    const terminal = document.getElementById("landingTerminal");
+    const terminalLines = [
+      ["[OK]", "assinaturas verificadas"],
+      ["[INFO]", "origens de download correlacionadas"],
+      ["[OK]", "artefatos de execução organizados"],
+      ["[INFO]", "inventário separado dos achados"],
+      ["[DONE]", "relatório pronto para revisão"]
+    ];
+
+    let terminalIndex = 0;
+    setInterval(() => {
+      if (!terminal) return;
+      const previous = terminal.querySelector(".terminal-feed");
+      if (previous) previous.remove();
+
+      const [tag, message] = terminalLines[terminalIndex % terminalLines.length];
+      const row = document.createElement("div");
+      row.className = "terminal-feed";
+      row.innerHTML = '<span class="' + (tag === "[OK]" || tag === "[DONE]" ? "term-ok" : "term-info") + '">' +
+        tag + '</span> ' + message;
+      terminal.insertBefore(row, terminal.lastElementChild);
+      terminalIndex++;
+    }, 2200);
+  </script>
 </body>
 </html>
