@@ -1,5 +1,5 @@
 {
-  "version": "2026-09-24.7",
+  "version": "2026-09-24.8",
   "notes": "Catálogo defensivo de nomes, domínios e convites publicamente associados a cheats/scripts/spoofers de Rust. Indicadores exatos/fortes recebem prioridade; nomes genéricos exigem contexto para reduzir falsos positivos.",
   "brands": [
     {
@@ -1337,6 +1337,19 @@
       ],
       "severity": "critical",
       "source": "public_web_2026",
+      "discordInvites": []
+    },
+    {
+      "name": "LegitBaratinho",
+      "aliases": [
+        "legitbaratinho",
+        "legit baratinho",
+        "legitbaratinho cheat",
+        "legit baratinho cheat"
+      ],
+      "domains": [],
+      "severity": "critical",
+      "source": "user_confirmed_2026",
       "discordInvites": []
     }
   ]
