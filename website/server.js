@@ -531,6 +531,93 @@ function isRiskyDownloadName(value) {
     isDeceptiveDoubleExtensionExecutable(name);
 }
 
+function parsedHost(value) {
+  try {
+    return new URL(String(value || "")).hostname.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function isSearchEngineUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    const host = url.hostname.toLowerCase();
+
+    const searchHosts = [
+      "google.com",
+      "www.google.com",
+      "bing.com",
+      "www.bing.com",
+      "duckduckgo.com",
+      "search.brave.com",
+      "yahoo.com",
+      "search.yahoo.com",
+      "yandex.com",
+      "www.ecosia.org"
+    ];
+
+    return searchHosts.some((item) =>
+      host === item || host.endsWith("." + item));
+  } catch {
+    return false;
+  }
+}
+
+function isKnownBenignWebHost(value) {
+  const host = parsedHost(value);
+  if (!host) return false;
+
+  return [
+    "vorkenac.guerrafriarust.com.br",
+    "iceotimizacoes.store"
+  ].some((item) => host === item || host.endsWith("." + item));
+}
+
+function isDirectCatalogWebMatch(match, evidence = {}) {
+  const candidates = [
+    evidence.url,
+    evidence.sourceUrl,
+    evidence.finalUrl,
+    evidence.pageUrl,
+    evidence.siteUrl,
+    evidence.referrerUrl,
+    evidence.recoveredUrl,
+    ...(Array.isArray(evidence.urlChain) ? evidence.urlChain : [])
+  ].filter(Boolean);
+
+  if (!String(match?.matchedBy || "").startsWith("domain:") &&
+      !String(match?.matchedBy || "").startsWith("discord:")) {
+    return false;
+  }
+
+  return candidates.some((value) => {
+    if (isSearchEngineUrl(value) || isKnownBenignWebHost(value))
+      return false;
+
+    const lower = String(value || "").toLowerCase();
+    const matchedBy = String(match?.matchedBy || "").toLowerCase();
+    const needle = matchedBy.includes(":")
+      ? matchedBy.slice(matchedBy.indexOf(":") + 1)
+      : "";
+
+    return needle && lower.includes(needle);
+  });
+}
+
+function isKnownBenignPeNoise(value) {
+  const name = path.basename(String(value || "")).toLowerCase();
+
+  return (
+    name === "openhardwaremonitor.exe" ||
+    name === "openhardwaremonitorlib.dll" ||
+    name === "librehardwaremonitor.exe" ||
+    name === "librehardwaremonitorlib.dll" ||
+    name === "vorken.agent.exe" ||
+    /^vorken[-_.].*\.exe$/i.test(name)
+  );
+}
+
 function findRustCatalogMatches(...values) {
   const haystack = values
     .flat(Infinity)
@@ -1243,12 +1330,37 @@ async function addBuiltInReviewFindings(analysisId, report) {
 
       catalogFindingKeys.add(key);
 
-      const catalogSeverity =
-        ["browser_download", "browser_history"].includes(artifactType)
+      let catalogSeverity =
+        match.severity === "critical"
           ? "critical"
-          : match.severity === "critical"
-            ? "critical"
-            : "high";
+          : "high";
+
+      if (artifactType === "browser_history") {
+        const searched =
+          Boolean(String(evidence?.searchQuery || "").trim()) ||
+          isSearchEngineUrl(evidence?.url);
+
+        if (searched) {
+          catalogSeverity = "medium";
+        } else if (isDirectCatalogWebMatch(match, evidence)) {
+          catalogSeverity = "critical";
+        } else {
+          catalogSeverity = "medium";
+        }
+      } else if (artifactType === "browser_recovery") {
+        const recoveredUrl = evidence?.recoveredUrl || artifactValue;
+        if (isSearchEngineUrl(recoveredUrl)) {
+          catalogSeverity = "medium";
+        } else if (isDirectCatalogWebMatch(match, evidence)) {
+          catalogSeverity = "critical";
+        } else {
+          catalogSeverity = "medium";
+        }
+      } else if (artifactType === "browser_download") {
+        catalogSeverity = isDirectCatalogWebMatch(match, evidence)
+          ? "critical"
+          : "high";
+      }
 
       await insertReviewFinding(
         analysisId,
@@ -1259,8 +1371,16 @@ async function addBuiltInReviewFindings(analysisId, report) {
         {
           ...evidence,
           catalogMatch: match,
-          confidence: "high",
-          note: "Nome, domínio ou convite público associado a software/comunidade de cheat/script para Rust foi encontrado. Esta assinatura é tratada como evidência de alta prioridade, mas ainda deve ser revisada no contexto completo.",
+          confidence: catalogSeverity === "medium" ? "medium" : "high",
+          note:
+            artifactType === "browser_history" && (
+              Boolean(String(evidence?.searchQuery || "").trim()) ||
+              isSearchEngineUrl(evidence?.url)
+            )
+              ? "A ocorrência veio de uma pesquisa em mecanismo de busca. É sinal para revisão, não prova de acesso direto ao site."
+              : artifactType === "browser_recovery" && isSearchEngineUrl(evidence?.recoveredUrl || artifactValue)
+                ? "Vestígio recuperado de uma pesquisa em mecanismo de busca. Mantido como ocorrência média, não como acesso direto."
+                : "Nome, domínio ou convite público associado a software/comunidade de cheat/script para Rust foi encontrado em evidência direta e deve ser revisado no contexto completo.",
         }
       );
     }
