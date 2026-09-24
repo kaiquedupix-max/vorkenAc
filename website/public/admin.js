@@ -716,6 +716,58 @@ async function openReport(id) {
     });
   }
 
+  const importantServices = ["PcaSvc", "DiagTrack", "EventLog"];
+
+  for (const serviceName of importantServices) {
+    const service = arrays.services.find((item) =>
+      String(item.name || "").toLowerCase() === serviceName.toLowerCase());
+
+    if (!service) continue;
+
+    const disabled =
+      String(service.startMode || "").toLowerCase() === "disabled";
+
+    if (!disabled) continue;
+
+    integritySignals.push({
+      title: "Recurso do Windows desativado",
+      value: service.name + " · " + (service.displayName || ""),
+      detail: "StartMode: " + (service.startMode || "—") + " · Estado: " + (service.state || "—"),
+      tag: "medium"
+    });
+  }
+
+  const explorer = arrays.processes.find((item) =>
+    String(item.name || "").toLowerCase() === "explorer");
+
+  if (explorer?.startTimeUtc && arrays.pca.length === 0) {
+    const explorerAgeMinutes =
+      (Date.now() - new Date(explorer.startTimeUtc).getTime()) / 60000;
+
+    if (Number.isFinite(explorerAgeMinutes) &&
+        explorerAgeMinutes >= 0 &&
+        explorerAgeMinutes <= 20) {
+      integritySignals.push({
+        title: "Explorer reiniciado recentemente",
+        value: "explorer.exe",
+        detail: "Início: " + formatDate(explorer.startTimeUtc) + " · PCA Store vazio nesta coleta.",
+        tag: "medium"
+      });
+    }
+  }
+
+  if (payload.vmEnvironment?.isVirtualMachine) {
+    integritySignals.push({
+      title: "Ambiente virtual detectado",
+      value: payload.vmEnvironment.detectedPlatform || "Máquina virtual",
+      detail: [
+        payload.vmEnvironment.manufacturer,
+        payload.vmEnvironment.model
+      ].filter(Boolean).join(" · "),
+      tag: "info"
+    });
+  }
+
   document.getElementById("integritySignalsList").innerHTML = integritySignals.length
     ? integritySignals.slice(0, 250).map((item) => `
         <div class="finding">
