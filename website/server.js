@@ -5046,6 +5046,9 @@ app.get("/api/admin/analyses/:id/rebuild-status", requireAdmin, async (req, res)
 
   const result = await pool.query(
     `SELECT
+       status,
+       processing_stage,
+       processing_message,
        ai_review_status,
        ai_review_error,
        ai_reviewed_at
@@ -5059,11 +5062,25 @@ app.get("/api/admin/analyses/:id/rebuild-status", requireAdmin, async (req, res)
     return res.status(404).json({ error: "analysis_not_found" });
   }
 
+  const row = result.rows[0];
+  const stage = row.processing_stage || "waiting";
+
   res.json({
-    processing: activeRebuilds.has(id),
-    aiReviewStatus: result.rows[0].ai_review_status || "pending",
-    aiReviewError: result.rows[0].ai_review_error || null,
-    aiReviewedAt: result.rows[0].ai_reviewed_at || null,
+    processing:
+      activeRebuilds.has(id) ||
+      [
+        "collecting",
+        "preparing",
+        "normal_filter",
+        "ai_filter",
+        "finalizing",
+      ].includes(stage),
+    status: row.status || "waiting",
+    processingStage: stage,
+    processingMessage: row.processing_message || null,
+    aiReviewStatus: row.ai_review_status || "pending",
+    aiReviewError: row.ai_review_error || null,
+    aiReviewedAt: row.ai_reviewed_at || null,
   });
 });
 
