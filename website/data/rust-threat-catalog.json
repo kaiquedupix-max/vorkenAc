@@ -1,5 +1,5 @@
 {
-  "version": "2026-09-24.6",
+  "version": "2026-09-24.7",
   "notes": "Catálogo defensivo de nomes, domínios e convites publicamente associados a cheats/scripts/spoofers de Rust. Indicadores exatos/fortes recebem prioridade; nomes genéricos exigem contexto para reduzir falsos positivos.",
   "brands": [
     {
@@ -1291,6 +1291,52 @@
       ],
       "severity": "high",
       "source": "public_forum_historical",
+      "discordInvites": []
+    },
+    {
+      "name": "RecoilScripts",
+      "aliases": [
+        "recoilscripts",
+        "recoil scripts",
+        "recoilscripts rust",
+        "rust recoil scripts"
+      ],
+      "domains": [
+        "recoilscripts.com"
+      ],
+      "severity": "critical",
+      "source": "public_web_2026",
+      "discordInvites": []
+    },
+    {
+      "name": "CheatStore Rust",
+      "aliases": [
+        "cheatstore rust",
+        "cheatstore.net rust",
+        "rc rust script",
+        "ultimate rust loader"
+      ],
+      "domains": [
+        "cheatstore.net",
+        "rustloader.wtf"
+      ],
+      "severity": "critical",
+      "source": "public_web_2026",
+      "discordInvites": []
+    },
+    {
+      "name": "GetCheats Rust",
+      "aliases": [
+        "getcheats rust",
+        "getcheats full rust",
+        "getcheats lite rust",
+        "getcheats external rust"
+      ],
+      "domains": [
+        "getcheats.io"
+      ],
+      "severity": "critical",
+      "source": "public_web_2026",
       "discordInvites": []
     }
   ]
