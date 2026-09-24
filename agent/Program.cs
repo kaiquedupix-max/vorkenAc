@@ -165,6 +165,11 @@ internal static class Program
                 ProcessModuleIntegrityCollector.Collect,
                 errors);
 
+            List<ProcessMemoryIntegrityRecord> processMemoryIntegrity = SafeCollect(
+                "Memória executável privada / manual-map",
+                ProcessMemoryIntegrityCollector.Collect,
+                errors);
+
             List<WindowProtectionRecord> protectedWindows = SafeCollect(
                 "Janelas excluídas de captura",
                 WindowProtectionCollector.Collect,
@@ -418,6 +423,7 @@ internal static class Program
                 AlternateDataStreams = alternateDataStreams,
                 AutorunIntegrity = autorunIntegrity,
                 ProcessModuleIntegrity = processModuleIntegrity,
+                ProcessMemoryIntegrity = processMemoryIntegrity,
                 ProtectedWindows = protectedWindows,
                 Bam = bam,
                 UserAssist = userAssist,
@@ -1552,6 +1558,7 @@ internal sealed class ScanReport
     public List<AlternateDataStreamRecord> AlternateDataStreams { get; set; } = new();
     public List<AutorunIntegrityRecord> AutorunIntegrity { get; set; } = new();
     public List<ProcessModuleIntegrityRecord> ProcessModuleIntegrity { get; set; } = new();
+    public List<ProcessMemoryIntegrityRecord> ProcessMemoryIntegrity { get; set; } = new();
     public List<WindowProtectionRecord> ProtectedWindows { get; set; } = new();
     public List<BamRecord> Bam { get; set; } = new();
     public List<UserAssistRecord> UserAssist { get; set; } = new();
