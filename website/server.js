@@ -765,10 +765,17 @@ async function addBuiltInReviewFindings(analysisId, report) {
 
       catalogFindingKeys.add(key);
 
+      const catalogSeverity =
+        ["browser_download", "browser_history"].includes(artifactType)
+          ? "critical"
+          : match.severity === "critical"
+            ? "critical"
+            : "high";
+
       await insertReviewFinding(
         analysisId,
         "Catálogo Rust: " + match.name,
-        match.severity === "critical" ? "critical" : "high",
+        catalogSeverity,
         artifactType,
         artifactValue || match.name,
         {
