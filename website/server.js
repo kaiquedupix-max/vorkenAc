@@ -5056,6 +5056,56 @@ async function addBuiltInReviewFindings(analysisId, report) {
   }
 
   for (const download of report.browserDownloads || []) {
+    const sourceCatalogMatches =
+      findRustCatalogMatches(
+        download.sourceUrl,
+        download.finalUrl,
+        download.referrerUrl,
+        download.siteUrl,
+        download.pageUrl,
+        download.urlChain
+      );
+
+    const directSourceMatch =
+      sourceCatalogMatches.find((match) =>
+        isDirectCatalogWebMatch(
+          match,
+          download
+        )
+      );
+
+    if (directSourceMatch) {
+      const directSeverity =
+        normalizeSeverity(
+          directSourceMatch.severity || "high"
+        );
+
+      await insertReviewFinding(
+        analysisId,
+        "Download originado de fonte suspeita do catálogo",
+        directSeverity,
+        "browser_download",
+        download.targetPath ||
+          download.fileName ||
+          download.finalUrl ||
+          download.sourceUrl ||
+          "download",
+        {
+          ...download,
+          catalogMatch: directSourceMatch,
+          catalogMatches: sourceCatalogMatches,
+          directCatalogMatch: true,
+          knownCheatDomain: true,
+          confidence:
+            directSeverity === "critical"
+              ? "high"
+              : "medium",
+          note:
+            "O histórico do navegador confirma download cuja origem/referrer/URL final corresponde diretamente a uma fonte verificada da planilha OSINT. O tipo ou extensão do arquivo não é necessário para gerar o alerta.",
+        }
+      );
+    }
+
     const name = download.fileName || download.targetPath || "";
     const ext = path.extname(name).toLowerCase();
     const originKind = downloadOriginKind(download);
@@ -5728,7 +5778,9 @@ async function addBuiltInReviewFindings(analysisId, report) {
       analysisId,
       isSearch
         ? "Pesquisa no navegador relacionada a cheat/script/hack"
-        : "Site relacionado a cheat/script/hack",
+        : directKnownSite
+          ? "Site suspeito acessado (catálogo)"
+          : "Site relacionado a cheat/script/hack",
       isSearch
         ? "medium"
         : directKnownSite
@@ -7129,7 +7181,7 @@ app.get("/api/agent/:token/rules", async (req, res) => {
   res.json({
     analysisId: Number(analysis.id),
     rules: result.rows,
-    threatCatalog: rustThreatCatalog,
+    threatCatalog: agentThreatCatalog,
   });
 });
 
