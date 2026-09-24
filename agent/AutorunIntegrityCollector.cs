@@ -211,19 +211,13 @@ internal static class AutorunIntegrityCollector
         bool userWritable =
             IsUserWritablePath(executable);
 
+        // Autoruns in protected Windows/Program Files paths are common and
+        // must not become detections merely because Authenticode verification
+        // failed or the binary is unsigned. Treat persistence as suspicious
+        // here only when it points to a user-writable location.
         bool suspicious =
             enabled &&
-            (
-                userWritable ||
-                (
-                    exists &&
-                    !signed &&
-                    Path.GetExtension(executable)
-                        .Equals(
-                            ".exe",
-                            StringComparison.OrdinalIgnoreCase)
-                )
-            );
+            userWritable;
 
         result.Add(new AutorunIntegrityRecord
         {
