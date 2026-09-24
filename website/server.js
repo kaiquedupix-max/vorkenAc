@@ -448,8 +448,17 @@ function decodeStoredRawReport(row) {
   }
 }
 
+function windowsBaseName(value) {
+  const normalized = String(value || "")
+    .replaceAll("/", "\\")
+    .trim();
+
+  const parts = normalized.split("\\").filter(Boolean);
+  return parts.at(-1) || "";
+}
+
 function findCommonAppByFileName(value) {
-  const name = path.basename(String(value || "")).toLowerCase();
+  const name = windowsBaseName(value).toLowerCase();
   if (!name) return null;
 
   for (const appInfo of commonAppCatalog) {
@@ -523,11 +532,52 @@ function isTrustedInstalledPathForCommonApp(value) {
   );
 }
 
-function isGenericInstallerExecutableName(value) {
-  const stem = path
-    .basename(String(value || ""), path.extname(String(value || "")))
+const readableExecutableTokens = [
+  "installer",
+  "install",
+  "setup",
+  "updater",
+  "update",
+  "uninstall",
+  "bootstrapper",
+  "launcher",
+  "browser",
+  "microsoft",
+  "windows",
+  "store",
+  "opera",
+  "avast",
+  "crystal",
+  "disk",
+  "info",
+  "control",
+  "driver",
+  "client",
+  "helper",
+  "service",
+  "runtime",
+  "manager",
+  "discord",
+  "chrome",
+  "edge",
+  "steam",
+  "spotify",
+  "firefox",
+  "nvidia",
+  "amd",
+  "intel",
+];
+
+function normalizedExecutableStem(value) {
+  const name = windowsBaseName(value);
+  const dot = name.lastIndexOf(".");
+  return (dot > 0 ? name.slice(0, dot) : name)
     .toLowerCase()
     .trim();
+}
+
+function isGenericInstallerExecutableName(value) {
+  const stem = normalizedExecutableStem(value);
 
   return new Set([
     "installer",
@@ -544,14 +594,29 @@ function isGenericInstallerExecutableName(value) {
   ]).has(stem);
 }
 
+function hasReadableExecutableToken(value) {
+  const stem = normalizedExecutableStem(value)
+    .replace(/[^a-z0-9]+/g, "");
+
+  if (!stem)
+    return false;
+
+  return readableExecutableTokens.some((token) =>
+    token.length >= 4 && stem.includes(token));
+}
+
 function looksRandomExecutableName(value) {
-  const name = path.basename(String(value || ""));
-  let stem = path.basename(name, path.extname(name));
+  const name = windowsBaseName(value);
+  let stem = normalizedExecutableStem(name);
 
   stem = stem.replace(/\.(zip|rar|7z|pdf|jpg|jpeg|png|txt)$/i, "");
 
-  if (isGenericInstallerExecutableName(name))
+  if (
+    isGenericInstallerExecutableName(name) ||
+    hasReadableExecutableToken(name)
+  ) {
     return false;
+  }
 
   if (stem.length < 4 || stem.length > 28) return false;
   if (!/^[a-z0-9]+$/i.test(stem)) return false;
@@ -560,7 +625,8 @@ function looksRandomExecutableName(value) {
   const digits = [...stem].filter((ch) => /[0-9]/.test(ch));
   const vowels = letters.filter((ch) => /[aeiou]/i.test(ch));
   const distinct = new Set(stem.toUpperCase()).size;
-  const allUpperOrDigits = /^[A-Z0-9]+$/.test(stem);
+  const originalStem = windowsBaseName(name).replace(/\.[^.]+$/, "");
+  const allUpperOrDigits = /^[A-Z0-9]+$/.test(originalStem);
   const vowelRatio = letters.length ? vowels.length / letters.length : 0;
 
   // 4-5 chars: only flag very "machine-like" tokens. This protects short
@@ -600,11 +666,37 @@ function looksRandomExecutableName(value) {
     return true;
   }
 
+  const transitions =
+    stem
+      .split("")
+      .slice(1)
+      .reduce((count, ch, index) => {
+        const previous = stem[index];
+        const currentIsDigit = /[0-9]/.test(ch);
+        const previousIsDigit = /[0-9]/.test(previous);
+        return count + (currentIsDigit !== previousIsDigit ? 1 : 0);
+      }, 0);
+
+  const trailingDigitsOnly =
+    /^[a-z]+[0-9]{1,4}$/i.test(stem);
+
+  if (
+    trailingDigitsOnly &&
+    letters.length >= 5 &&
+    vowelRatio >= 0.16
+  ) {
+    return false;
+  }
+
   return (
     stem.length >= 10 &&
     letters.length >= 6 &&
     digits.length >= 2 &&
-    distinct >= 8
+    distinct >= 8 &&
+    (
+      transitions >= 3 ||
+      vowelRatio <= 0.12
+    )
   );
 }
 
@@ -2172,7 +2264,10 @@ async function addBuiltInReviewFindings(analysisId, report) {
     let title = "";
 
     if (
-      item.randomLikeName === true ||
+      (
+        recoveredFileName &&
+        looksRandomExecutableName(recoveredFileName)
+      ) ||
       item.deceptiveDoubleExtension === true
     ) {
       severity = "critical";
@@ -2248,8 +2343,9 @@ async function addBuiltInReviewFindings(analysisId, report) {
       catalogMatches.length > 0;
 
     const recentRandomExecutable =
-      item.randomLikeName === true &&
+      looksRandomExecutableName(name) &&
       !isGenericInstallerExecutableName(name) &&
+      !hasReadableExecutableToken(name) &&
       ageDays(item.timestampUtc) <= 3;
 
     // Deleted/present EXEs are not detections unless there is independent
@@ -2354,7 +2450,7 @@ async function addBuiltInReviewFindings(analysisId, report) {
         /^[a-f0-9]{64}$/i.test(String(item.sha256 || "")) &&
         (
           isSuspiciousUserPath(item.path) ||
-          item.randomLikeName === true
+          looksRandomExecutableName(item.name || item.path)
         )
       )
       .slice(0, 20);
@@ -2396,7 +2492,10 @@ async function addBuiltInReviewFindings(analysisId, report) {
     if (isKnownBenignPeNoise(pathValue))
       continue;
 
-    if (item.randomLikeName === true && item.signed !== true) {
+    if (
+      looksRandomExecutableName(pathValue) &&
+      item.signed !== true
+    ) {
       await insertReviewFinding(
         analysisId,
         "Executável aleatório com indicadores PE",
@@ -3060,13 +3159,20 @@ async function addBuiltInReviewFindings(analysisId, report) {
         continue;
 
       if (
+        isTrustedInstalledPathForCommonApp(item.path) &&
+        explicitSignerMismatch !== true
+      ) {
+        continue;
+      }
+
+      if (
         item.signed !== true ||
         !isTrustedInstalledPathForCommonApp(item.path)
       ) {
         await insertReviewFinding(
           analysisId,
           "Aplicativo conhecido com assinatura/origem não confirmada",
-          "high",
+          "medium",
           "unknown_app",
           item.path || item.name || appInfo.name,
           {
@@ -3075,8 +3181,8 @@ async function addBuiltInReviewFindings(analysisId, report) {
             expectedSigners,
             signatureMatched: signerOk,
             officialDownloadMatched: officialDownloadOk,
-            confidence: "high",
-            note: "O nome imita um aplicativo comum, mas nem a assinatura digital esperada nem uma origem oficial de download foram confirmadas.",
+            confidence: "medium",
+            note: "Aplicativo conhecido sem assinatura/origem confirmada. Mantido apenas para revisão; caminhos protegidos como WindowsApps/Program Files não geram alerta.",
           }
         );
       }
@@ -3129,19 +3235,23 @@ async function addBuiltInReviewFindings(analysisId, report) {
     );
   }
 
-  const archiveRiskTerms = [
-    "rust",
+  const archiveStrongTerms = [
     "cheat",
-    "hack",
+    "aimbot",
+    "wallhack",
+    "spoofer",
+    "injector",
+    "bypass",
+    "recoil"
+  ];
+
+  const archiveContextTerms = [
+    "rust",
+    "eac",
     "script",
     "loader",
-    "injector",
-    "aimbot",
-    "recoil",
     "macro",
-    "spoofer",
-    "bypass",
-    "eac"
+    "hack"
   ];
 
   for (const item of report.files || []) {
@@ -3155,7 +3265,10 @@ async function addBuiltInReviewFindings(analysisId, report) {
         ...(Array.isArray(item.archiveEntries) ? item.archiveEntries : [])
       ].join(" ").toLowerCase();
 
-      const matchedTerms = archiveRiskTerms.filter((term) =>
+      const strongTerms = archiveStrongTerms.filter((term) =>
+        archiveText.includes(term));
+
+      const contextTerms = archiveContextTerms.filter((term) =>
         archiveText.includes(term));
 
       const randomExecutables = ext === ".zip"
@@ -3166,26 +3279,32 @@ async function addBuiltInReviewFindings(analysisId, report) {
             .slice(0, 20)
         : [];
 
-      if (
-        matchedTerms.length >= 2 ||
-        randomExecutables.length > 0
-      ) {
+      const termSignal =
+        strongTerms.length >= 2 ||
+        (
+          strongTerms.length >= 1 &&
+          contextTerms.length >= 1
+        );
+
+      if (termSignal || randomExecutables.length > 0) {
         await insertReviewFinding(
           analysisId,
           ext === ".zip"
-            ? "ZIP suspeito em pasta de usuário"
-            : "Arquivo compactado suspeito em pasta de usuário",
-          randomExecutables.length > 0 ? "high" : "medium",
+            ? "ZIP para revisão"
+            : "Arquivo compactado para revisão",
+          "medium",
           "archive",
           item.path || item.name || "arquivo compactado",
           {
             ...item,
-            matchedTerms,
+            matchedTerms: [...strongTerms, ...contextTerms],
+            strongTerms,
+            contextTerms,
             randomExecutables,
-            confidence: randomExecutables.length > 0 ? "high" : "medium",
-            note: ext === ".zip"
-              ? "ZIP recente contém combinação de termos associados a cheat/script ou executáveis com nome aleatório. O conteúdo é apenas listado; nada é extraído ou executado."
-              : "RAR/7Z recente possui combinação de termos associados a cheat/script no nome/caminho. O agente não extrai nem executa o arquivo.",
+            confidence: "medium",
+            note: randomExecutables.length > 0
+              ? "Arquivo compactado contém EXE com nome fortemente aleatório, mas não há prova de execução. Mantido somente para revisão."
+              : "Arquivo compactado contém combinação explícita de termos de alto interesse. A presença no ZIP, sem execução, não é tratada como crítica.",
           }
         );
       }
@@ -3194,8 +3313,8 @@ async function addBuiltInReviewFindings(analysisId, report) {
     const isRandomExe =
       ext === ".exe" &&
       !isGenericInstallerExecutableName(item.name || item.path) &&
-      (item.randomLikeName === true ||
-       looksRandomExecutableName(item.name || item.path)) &&
+      !hasReadableExecutableToken(item.name || item.path) &&
+      looksRandomExecutableName(item.name || item.path) &&
       item.signed !== true &&
       isSuspiciousUserPath(item.path);
 

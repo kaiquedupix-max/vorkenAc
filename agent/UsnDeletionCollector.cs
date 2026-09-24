@@ -271,8 +271,12 @@ internal static class UsnDeletionCollector
 
         string stem = Path.GetFileNameWithoutExtension(value);
 
-        if (IsGenericInstallerStem(stem))
+        if (
+            IsGenericInstallerStem(stem) ||
+            HasReadableExecutableToken(stem))
+        {
             return false;
+        }
 
         stem = Regex.Replace(
             stem,
@@ -307,29 +311,60 @@ internal static class UsnDeletionCollector
                 vowelRatio <= 0.25;
         }
 
+        if (
+            allUpperOrDigits &&
+            distinct >= Math.Min(6, stem.Length - 1) &&
+            (
+                digits >= 1
+                    ? vowelRatio <= 0.35
+                    : vowelRatio <= 0.12
+            ))
+        {
+            return true;
+        }
+
+        if (
+            stem.Length >= 8 &&
+            stem.Length <= 18 &&
+            digits == 0 &&
+            letters == stem.Length &&
+            distinct >= 7 &&
+            vowelRatio <= 0.22)
+        {
+            return true;
+        }
+
+        int transitions = 0;
+        for (int i = 1; i < stem.Length; i++)
+        {
+            bool previousDigit = char.IsDigit(stem[i - 1]);
+            bool currentDigit = char.IsDigit(stem[i]);
+
+            if (previousDigit != currentDigit)
+                transitions++;
+        }
+
+        bool trailingDigitsOnly =
+            Regex.IsMatch(
+                stem,
+                @"^[A-Za-z]+[0-9]{1,4}$");
+
+        if (
+            trailingDigitsOnly &&
+            letters >= 5 &&
+            vowelRatio >= 0.16)
+        {
+            return false;
+        }
+
         return
+            stem.Length >= 10 &&
+            letters >= 6 &&
+            digits >= 2 &&
+            distinct >= 8 &&
             (
-                allUpperOrDigits &&
-                distinct >= Math.Min(6, stem.Length - 1) &&
-                (
-                    digits >= 1
-                        ? vowelRatio <= 0.35
-                        : vowelRatio <= 0.12
-                )
-            ) ||
-            (
-                stem.Length >= 8 &&
-                stem.Length <= 18 &&
-                digits == 0 &&
-                letters == stem.Length &&
-                distinct >= 7 &&
-                vowelRatio <= 0.22
-            ) ||
-            (
-                stem.Length >= 10 &&
-                letters >= 6 &&
-                digits >= 2 &&
-                distinct >= 8
+                transitions >= 3 ||
+                vowelRatio <= 0.12
             );
     }
 
@@ -349,6 +384,30 @@ internal static class UsnDeletionCollector
             "uninstaller" or
             "bootstrapper" or
             "launcherinstaller";
+    }
+
+    private static bool HasReadableExecutableToken(string value)
+    {
+        string stem = (value ?? "")
+            .ToLowerInvariant()
+            .Replace("_", "")
+            .Replace("-", "")
+            .Replace(".", "");
+
+        string[] tokens =
+        {
+            "installer", "install", "setup", "updater", "update",
+            "uninstall", "bootstrapper", "launcher", "browser",
+            "microsoft", "windows", "store", "opera", "avast",
+            "crystal", "disk", "info", "control", "driver", "client",
+            "helper", "service", "runtime", "manager", "discord",
+            "chrome", "edge", "steam", "spotify", "firefox",
+            "nvidia", "amd", "intel"
+        };
+
+        return tokens.Any(token =>
+            token.Length >= 4 &&
+            stem.Contains(token, StringComparison.OrdinalIgnoreCase));
     }
 
     [StructLayout(LayoutKind.Sequential)]
