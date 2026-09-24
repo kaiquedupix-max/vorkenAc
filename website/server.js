@@ -245,6 +245,17 @@ function buildAgentThreatCatalog() {
 
 const agentThreatCatalog = buildAgentThreatCatalog();
 
+const osintAiContext =
+  [
+    ...(rustOsintCatalog.aliases || []),
+    ...(rustOsintCatalog.keywords || []),
+  ]
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .slice(0, 500)
+    .join(", ")
+    .slice(0, 6500);
+
 const commonAppCatalogPath = path.join(
   __dirname,
   "data",
@@ -270,7 +281,7 @@ const commonAppCatalog = loadCommonAppCatalog();
 
 const activeRebuilds = new Set();
 
-const AI_REVIEW_POLICY_VERSION = "v3-protected-evidence-origin";
+const AI_REVIEW_POLICY_VERSION = "v4-osint-spreadsheet-catalog";
 
 const aiReviewConfig = {
   provider: "gemini",
@@ -580,6 +591,7 @@ async function callAiReviewBatch(cases) {
     "Windows/System32/SysWOW64/WinSxS, Program Files, Steam, anti-cheats legítimos (Easy Anti-Cheat, BattlEye, Riot Vanguard e componentes assinados de jogos como Warframe), instaladores/updaters assinados e software conhecido devem tender a likely_false_positive quando os metadados forem coerentes.",
     "Use sourceUrl/finalUrl/pageUrl/siteUrl/referrerUrl/recoveredUrl para classificar a ORIGEM. Diferencie cheat/script/loader/macro de software legítimo. Uma pesquisa no Google/Bing é apenas needs_review; acesso/download direto de domínio conhecido do catálogo é sinal forte.",
     "O catálogo OSINT 2026-09-24 inclui fontes verificadas, providers/aliases, keywords e infraestrutura de venda. Um catalogMatch de fonte verificada é sinal forte; provider/alias ou keyword isolado é apenas contexto e precisa de Rust/origem/execução ou outro sinal independente.",
+    "Vocabulário contextual carregado da planilha (não use isoladamente como prova): " + osintAiContext,
     "Stripe, SellHub, Sellix, Shoppy, Selly, Digiseller, PayPal, Cash App, Apple Pay, Google Pay, Discord, Telegram, GitHub, YouTube, TikTok, Reddit e X são plataformas genéricas: NUNCA classifique cheat só porque uma delas aparece isoladamente. Eleve apenas quando houver vínculo com provider/fonte verificada, referrer/URL específica, download ou outros sinais concretos.",
     "Arquivos .xls/.xlsx e outros documentos baixados só devem permanecer como suspeitos se a origem/metadados tiverem relação concreta com cheat/script/loader/macro; extensão ou download isolado não prova cheat.",
     "Nome estranho sozinho, caminho Temp sozinho, arquivo apagado sozinho, ausência de assinatura sozinha e ZIP sozinho não provam cheat.",
