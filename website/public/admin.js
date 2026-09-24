@@ -786,14 +786,32 @@ async function openReport(id) {
     advancedGroup(
       "JournalTrace / USN",
       usnInteresting,
-      (item) => `
-        <div class="finding">
-          <div class="finding-head"><h4>${escapeHtml(item.fileName || "USN")}</h4><span class="tag ${item.deleted ? "high" : "info"}">${item.deleted ? "DELETE" : "USN"}</span></div>
-          <div class="kv"><span>Data</span><span>${escapeHtml(formatDate(item.timestampUtc))}</span></div>
-          <div class="kv"><span>Motivos</span><span>${escapeHtml(safeArray(item.reasons).join(", ") || "—")}</span></div>
-          <div class="kv"><span>Volume</span><span>${escapeHtml(item.volume || "—")}</span></div>
-        </div>
-      `
+      (item) => {
+        const informationalForensic =
+          item.underPrefetchDirectory === true ||
+          item.windowsForensicArtifact === true;
+
+        const tagClass = informationalForensic
+          ? "info"
+          : item.deleted
+            ? "high"
+            : "info";
+
+        const tagText = informationalForensic
+          ? "INVENTÁRIO"
+          : item.deleted
+            ? "DELETE"
+            : "USN";
+
+        return `
+          <div class="finding">
+            <div class="finding-head"><h4>${escapeHtml(item.fileName || "USN")}</h4><span class="tag ${tagClass}">${tagText}</span></div>
+            <div class="kv"><span>Data</span><span>${escapeHtml(formatDate(item.timestampUtc))}</span></div>
+            <div class="kv"><span>Motivos</span><span>${escapeHtml(safeArray(item.reasons).join(", ") || "—")}</span></div>
+            <div class="kv"><span>Volume</span><span>${escapeHtml(item.volume || "—")}</span></div>
+          </div>
+        `;
+      }
     )
   );
 

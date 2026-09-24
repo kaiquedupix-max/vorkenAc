@@ -1230,6 +1230,29 @@ function matchesRule(rule, artifact) {
   }
 }
 
+function forceInformationalFinding(artifactType, evidence = {}, title = "") {
+  if (artifactType === "powershell" || artifactType === "powershell_artifact")
+    return true;
+
+  if (
+    artifactType === "usn_activity" &&
+    (
+      evidence?.underPrefetchDirectory === true ||
+      evidence?.windowsForensicArtifact === true
+    )
+  ) {
+    return true;
+  }
+
+  const lowerTitle = String(title || "").toLowerCase();
+
+  return (
+    lowerTitle.includes("prefetch apagado") ||
+    lowerTitle.includes("artefato forense") ||
+    lowerTitle.includes("powershell")
+  );
+}
+
 async function rebuildFindings(analysisId, report) {
   await pool.query("DELETE FROM scan_findings WHERE analysis_id = $1", [analysisId]);
 
@@ -1246,6 +1269,14 @@ async function rebuildFindings(analysisId, report) {
     for (const artifact of artifacts) {
       if (!matchesRule(rule, artifact)) continue;
 
+      const severity = forceInformationalFinding(
+        artifact.type,
+        artifact.evidence,
+        rule.name
+      )
+        ? "info"
+        : normalizeSeverity(rule.severity);
+
       await pool.query(
         `INSERT INTO scan_findings(
            analysis_id, rule_id, title, severity, artifact_type, artifact_value, evidence
@@ -1255,7 +1286,7 @@ async function rebuildFindings(analysisId, report) {
           analysisId,
           rule.id,
           rule.name,
-          normalizeSeverity(rule.severity),
+          severity,
           artifact.type,
           artifact.value.slice(0, 2000),
           JSON.stringify({
@@ -1283,6 +1314,14 @@ async function insertReviewFinding(
   if (isKnownBenignPeNoise(normalizedValue))
     return;
 
+  const normalizedSeverity = forceInformationalFinding(
+    artifactType,
+    evidence,
+    title
+  )
+    ? "info"
+    : normalizeSeverity(severity);
+
   await pool.query(
     `INSERT INTO scan_findings(
        analysis_id, rule_id, title, severity, artifact_type, artifact_value, evidence
@@ -1299,7 +1338,7 @@ async function insertReviewFinding(
     [
       analysisId,
       title,
-      normalizeSeverity(severity),
+      normalizedSeverity,
       artifactType,
       normalizedValue,
       JSON.stringify(evidence || {}),
@@ -1923,28 +1962,19 @@ async function addBuiltInReviewFindings(analysisId, report) {
     );
   }
 
-  // Full PowerShell history/event correlation.
+  // PowerShell is preserved strictly as blue/informational context.
+  // It must never be treated as suspicious by itself.
   for (const item of report.powerShellArtifacts || []) {
-    const command = String(item.command || "").toLowerCase();
-    const strong =
-      item.longEncodedPayload === true ||
-      command.includes("add-mppreference") ||
-      command.includes("set-mppreference") ||
-      command.includes("writeprocessmemory") ||
-      command.includes("createremotethread") ||
-      command.includes("frombase64string") ||
-      command.includes("-encodedcommand");
-
     await insertReviewFinding(
       analysisId,
-      "PowerShell com padrão de alto interesse",
-      strong ? "high" : "medium",
+      "Registro de PowerShell (informativo)",
+      "info",
       "powershell_artifact",
       item.command || item.source || "PowerShell",
       {
         ...item,
-        confidence: strong ? "high" : "medium",
-        note: "Comando preservado em PSReadLine/Event Log contém padrões associados a download, execução codificada, exclusões do Defender ou manipulação de processos."
+        confidence: "info",
+        note: "Histórico de PowerShell preservado apenas como contexto forense. Não é considerado detecção ou evidência suspeita por si só."
       }
     );
   }
@@ -2149,14 +2179,14 @@ async function addBuiltInReviewFindings(analysisId, report) {
     ) {
       await insertReviewFinding(
         analysisId,
-        "Prefetch apagado",
-        "high",
+        "Prefetch apagado (informativo)",
+        "info",
         "usn_activity",
         name,
         {
           ...item,
-          confidence: "high",
-          note: "O USN Journal registrou exclusão de arquivo .PF dentro do diretório Prefetch."
+          confidence: "info",
+          note: "O USN Journal registrou exclusão de arquivo .PF. Mantido somente no inventário azul; não é considerado detecção."
         }
       );
       continue;
@@ -2190,14 +2220,14 @@ async function addBuiltInReviewFindings(analysisId, report) {
     ) {
       await insertReviewFinding(
         analysisId,
-        "Artefato forense do Windows apagado",
-        "high",
+        "Artefato forense do Windows apagado (informativo)",
+        "info",
         "usn_activity",
         name,
         {
           ...item,
-          confidence: "high",
-          note: "O USN Journal registrou exclusão de artefato usado em análise forense do Windows."
+          confidence: "info",
+          note: "O USN Journal registrou alteração/exclusão de artefato forense do Windows. Mantido somente no inventário azul; não é considerado detecção."
         }
       );
     }
