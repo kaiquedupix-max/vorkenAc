@@ -37,8 +37,8 @@ internal sealed class AgentMainForm : Form
 
         Text = "Vorken Anti Cheat";
         StartPosition = FormStartPosition.CenterScreen;
-        Size = new Size(820, 610);
-        MinimumSize = new Size(760, 560);
+        Size = new Size(820, 660);
+        MinimumSize = new Size(760, 610);
         BackColor = Background;
         ForeColor = TextPrimary;
         Font = new Font("Segoe UI", 10F, FontStyle.Regular, GraphicsUnit.Point);
@@ -304,7 +304,7 @@ internal sealed class AgentMainForm : Form
     {
         if (InvokeRequired)
         {
-            BeginInvoke(() => ShowCompletion(success));
+            BeginInvoke((Action)(() => ShowCompletion(success)));
             return;
         }
 
@@ -345,7 +345,7 @@ internal sealed class AgentMainForm : Form
 
         if (InvokeRequired)
         {
-            BeginInvoke(() => AppendStatus(message));
+            BeginInvoke((Action)(() => AppendStatus(message)));
             return;
         }
 
