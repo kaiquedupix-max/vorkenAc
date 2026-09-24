@@ -16,7 +16,7 @@ namespace Vorken.Agent;
 
 internal static class Program
 {
-    private const string AgentVersion = "1.0.9";
+    private const string AgentVersion = "1.0.10";
     private const string DefaultServerUrl = "https://vorkenac.guerrafriarust.com.br";
 
     private static readonly JsonSerializerOptions JsonOptions =
@@ -1001,18 +1001,16 @@ internal static class Program
 
     private static List<UsbHistoryRecord> CollectUsbHistory(List<UsbDeviceRecord> current)
     {
+        _ = current;
+
         var result = new List<UsbHistoryRecord>();
         using RegistryKey? root =
             Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Enum\USBSTOR");
 
         if (root == null) return result;
 
-        HashSet<string> currentText =
-            current
-                .SelectMany(x => new[] { x.DeviceId, x.PnpDeviceId, x.Name })
-                .Where(x => !string.IsNullOrWhiteSpace(x))
-                .Select(x => x.ToLowerInvariant())
-                .ToHashSet();
+        HashSet<string> currentStorageTokens =
+            CollectCurrentUsbStorageTokens();
 
         foreach (string deviceClass in root.GetSubKeyNames())
         {
@@ -1033,11 +1031,27 @@ internal static class Program
                 string manufacturer =
                     Convert.ToString(instanceKey.GetValue("Mfg")) ?? "";
 
+                string normalizedInstance =
+                    NormalizeUsbIdentity(instance);
+
+                string normalizedWithoutSuffix =
+                    Regex.Replace(
+                        normalizedInstance,
+                        @"\d+$",
+                        "");
+
                 bool present =
-                    currentText.Any(x =>
-                        x.Contains(instance.ToLowerInvariant()) ||
-                        (!string.IsNullOrWhiteSpace(friendlyName) &&
-                         x.Contains(friendlyName.ToLowerInvariant())));
+                    currentStorageTokens.Any(token =>
+                        (!string.IsNullOrWhiteSpace(normalizedInstance) &&
+                         token.Contains(
+                             normalizedInstance,
+                             StringComparison.OrdinalIgnoreCase)) ||
+                        (
+                            normalizedWithoutSuffix.Length >= 6 &&
+                            token.Contains(
+                                normalizedWithoutSuffix,
+                                StringComparison.OrdinalIgnoreCase)
+                        ));
 
                 result.Add(new UsbHistoryRecord
                 {
@@ -1052,6 +1066,51 @@ internal static class Program
         }
 
         return result;
+    }
+
+    private static HashSet<string> CollectCurrentUsbStorageTokens()
+    {
+        var tokens =
+            new HashSet<string>(
+                StringComparer.OrdinalIgnoreCase);
+
+        try
+        {
+            using var searcher =
+                new ManagementObjectSearcher(
+                    "SELECT PNPDeviceID,DeviceID,Model,SerialNumber,InterfaceType FROM Win32_DiskDrive WHERE InterfaceType='USB'");
+
+            foreach (ManagementObject item in searcher.Get())
+            {
+                foreach (string? value in new[]
+                {
+                    Convert.ToString(item["PNPDeviceID"]),
+                    Convert.ToString(item["DeviceID"]),
+                    Convert.ToString(item["Model"]),
+                    Convert.ToString(item["SerialNumber"])
+                })
+                {
+                    string normalized =
+                        NormalizeUsbIdentity(value);
+
+                    if (normalized.Length >= 4)
+                        tokens.Add(normalized);
+                }
+            }
+        }
+        catch
+        {
+        }
+
+        return tokens;
+    }
+
+    private static string NormalizeUsbIdentity(string? value)
+    {
+        return Regex.Replace(
+            (value ?? "").ToUpperInvariant(),
+            @"[^A-Z0-9]+",
+            "");
     }
 
     private static List<SerialDeviceRecord> CollectSerialDevices()
