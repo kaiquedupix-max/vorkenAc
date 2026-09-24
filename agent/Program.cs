@@ -1058,7 +1058,14 @@ internal static class Program
         try
         {
             string stem = Path.GetFileNameWithoutExtension(fileName);
-            if (stem.Length < 7 || stem.Length > 28)
+
+            stem = System.Text.RegularExpressions.Regex.Replace(
+                stem,
+                @"\.(zip|rar|7z|pdf|jpg|jpeg|png|txt)$",
+                "",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+            if (stem.Length < 4 || stem.Length > 28)
                 return false;
 
             if (!stem.All(char.IsLetterOrDigit))
@@ -1068,18 +1075,33 @@ internal static class Program
             int digits = stem.Count(char.IsDigit);
             int vowels = stem.Count(ch => "aeiouAEIOU".Contains(ch));
             int distinct = stem.ToUpperInvariant().Distinct().Count();
-            bool allUpperOrDigits = stem.All(ch => !char.IsLetter(ch) || char.IsUpper(ch));
-            double vowelRatio = letters == 0 ? 0 : (double)vowels / letters;
+            bool allUpperOrDigits = stem.All(ch =>
+                char.IsDigit(ch) || char.IsUpper(ch));
 
-            if (allUpperOrDigits &&
-                letters >= 6 &&
+            double vowelRatio = letters > 0
+                ? (double)vowels / letters
+                : 0;
+
+            if (stem.Length <= 5)
+            {
+                return
+                    allUpperOrDigits &&
+                    distinct >= Math.Max(4, stem.Length - 1) &&
+                    (digits >= 1 || vowels == 0) &&
+                    vowelRatio <= 0.25;
+            }
+
+            if (
+                allUpperOrDigits &&
                 distinct >= Math.Min(6, stem.Length - 1) &&
-                vowelRatio <= 0.35)
+                vowelRatio <= 0.35 &&
+                (digits >= 1 || letters >= 5))
             {
                 return true;
             }
 
-            if (stem.Length >= 8 &&
+            if (
+                stem.Length >= 8 &&
                 stem.Length <= 18 &&
                 digits == 0 &&
                 letters == stem.Length &&
@@ -1089,21 +1111,18 @@ internal static class Program
                 return true;
             }
 
-            if (stem.Length >= 10 &&
+            return
+                stem.Length >= 10 &&
                 letters >= 6 &&
                 digits >= 2 &&
-                distinct >= 8)
-            {
-                return true;
-            }
-
-            return false;
+                distinct >= 8;
         }
         catch
         {
             return false;
         }
     }
+
 
     private static List<string> TryListZipEntries(string path)
     {
