@@ -51,6 +51,91 @@ function safeArray(value) {
   return Array.isArray(value) ? value.filter(Boolean) : [];
 }
 
+function downloadUrlCandidatesClient(item) {
+  return [
+    item?.sourceUrl,
+    item?.finalUrl,
+    item?.referrerUrl,
+    item?.siteUrl,
+    item?.pageUrl,
+    ...safeArray(item?.urlChain)
+  ].filter(Boolean);
+}
+
+function isOfficialDiscordInstallerOrUpdateClient(item) {
+  const name = String(
+    item?.fileName ||
+    item?.targetPath ||
+    ""
+  ).split(/[\\/]/).at(-1)?.toLowerCase() || "";
+
+  const target = String(
+    item?.targetPath ||
+    item?.currentPath ||
+    ""
+  )
+    .replaceAll("/", "\\")
+    .toLowerCase();
+
+  if (
+    target.includes("\\appdata\\local\\discord\\") &&
+    ["update.exe", "discord.exe", "discordsetup.exe", "squirrel.exe"].includes(name)
+  ) {
+    return true;
+  }
+
+  return downloadUrlCandidatesClient(item).some((value) => {
+    try {
+      const url = new URL(String(value || ""));
+      const host = url.hostname.toLowerCase();
+      const pathname = url.pathname.toLowerCase();
+
+      const officialHost =
+        host === "discord.com" ||
+        host === "www.discord.com" ||
+        host === "discordapp.com" ||
+        host === "www.discordapp.com" ||
+        host === "dl.discordapp.net" ||
+        host === "stable.dl2.discordapp.net";
+
+      return officialHost && (
+        pathname.includes("/api/download") ||
+        pathname.includes("/apps/") ||
+        pathname.includes("/download")
+      );
+    } catch {
+      return false;
+    }
+  });
+}
+
+function isDiscordAttachmentDownloadClient(item) {
+  if (isOfficialDiscordInstallerOrUpdateClient(item))
+    return false;
+
+  return downloadUrlCandidatesClient(item).some((value) => {
+    try {
+      const url = new URL(String(value || ""));
+      const host = url.hostname.toLowerCase();
+      const pathname = url.pathname.toLowerCase();
+
+      return (
+        (
+          host === "cdn.discordapp.com" ||
+          host === "media.discordapp.net" ||
+          host.endsWith(".discordattachments.com")
+        ) &&
+        (
+          pathname.includes("/attachments/") ||
+          host.endsWith(".discordattachments.com")
+        )
+      );
+    } catch {
+      return false;
+    }
+  });
+}
+
 function downloadOriginKind(item) {
   const urls = [
     item?.sourceUrl,
