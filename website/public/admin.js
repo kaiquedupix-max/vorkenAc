@@ -340,7 +340,7 @@ function updateAnalysisProcessingBanner(status) {
     banner.className = "message";
     banner.textContent =
       message ||
-      "Esta análise ainda não passou pela segunda camada Gemini. Use Recalcular com IA.";
+      "Esta análise ainda não passou pela segunda camada Gemini. Use Recalcular com Gemini.";
     return;
   }
 
@@ -348,7 +348,7 @@ function updateAnalysisProcessingBanner(status) {
     banner.className = "message error";
     banner.textContent =
       message ||
-      "A revisão por IA não foi concluída. O resultado técnico continua disponível.";
+      "A revisão pelo Gemini não foi concluída. O resultado técnico continua disponível.";
     return;
   }
 
@@ -702,8 +702,8 @@ async function openReport(id) {
 
   toggleAiViewBtn.textContent =
     showWithoutAiResult
-      ? "Ver resultado com IA"
-      : "Ver resultado sem IA";
+      ? "Ver resultado com Gemini"
+      : "Ver resultado sem Gemini";
 
   updateAnalysisProcessingBanner({
     status: analysis.status,
@@ -828,8 +828,8 @@ async function openReport(id) {
   document.getElementById("reportMetrics").innerHTML = `
     <div class="metric"><small>STATUS</small><strong>${escapeHtml(currentStageLabel)}</strong></div>
     <div class="metric"><small>VISUALIZAÇÃO</small><strong>${showWithoutAiResult ? "SEM GEMINI" : aiReview.status === "completed" ? "COM GEMINI" : aiReview.status === "partial_error" ? "GEMINI PARCIAL" : "TÉCNICO"}</strong><span>${showWithoutAiResult ? "Filtro técnico original" : aiReview.status === "completed" ? "Resultado final filtrado" : aiReview.status === "partial_error" ? "Filtro parcial; revise o aviso" : "Gemini ainda não concluiu"}</span></div>
-    <div class="metric danger-metric"><small>VERMELHO · CRÍTICO/ALTO</small><strong>${criticalFindings.length}</strong><span>${showWithoutAiResult ? "Antes do Gemini" : "Resultado final pós-Gemini"}</span></div>
-    <div class="metric warning-metric"><small>AMARELO · REVISAR</small><strong>${mediumFindings.length}</strong><span>${showWithoutAiResult ? "Antes do Gemini" : "Resultado final pós-Gemini"}</span></div>
+    <div class="metric danger-metric"><small>VERMELHO · CRÍTICO/ALTO</small><strong>${criticalFindings.length}</strong><span>${showWithoutAiResult ? "Filtro técnico original" : aiReview.status === "completed" ? "Resultado final pós-Gemini" : aiReview.status === "partial_error" ? "Resultado parcialmente revisado" : "Resultado técnico atual"}</span></div>
+    <div class="metric warning-metric"><small>AMARELO · REVISAR</small><strong>${mediumFindings.length}</strong><span>${showWithoutAiResult ? "Filtro técnico original" : aiReview.status === "completed" ? "Resultado final pós-Gemini" : aiReview.status === "partial_error" ? "Resultado parcialmente revisado" : "Resultado técnico atual"}</span></div>
     <div class="metric info-metric"><small>GEMINI FILTROU</small><strong>${aiFilteredFindings.length}</strong><span>Prováveis falsos positivos</span></div>
     <div class="metric hardware-metric"><small>HARDWARE / USB</small><strong>${hardwareCount}</strong><span>Pendrives e placas separados</span></div>
     <div class="metric priority-metric"><small>ARQUIVOS PRIORITÁRIOS</small><strong id="summaryPriorityCount">0</strong><span>EXE/ZIP/RAR/7Z suspeitos</span></div>
@@ -908,13 +908,13 @@ async function openReport(id) {
             escapeHtml(String(aiConfidence) + "% · " + (ai.reason || "Sem justificativa.")) +
           '</span></div>'
         : evidence.priorityMaximum === true
-          ? '<div class="kv"><span>IA</span><span>Prioridade máxima protegida · não pode ser rebaixada</span></div>'
+          ? '<div class="kv"><span>Gemini</span><span>Prioridade máxima protegida · não pode ser rebaixada</span></div>'
           : "";
 
       element.innerHTML = `
         <div class="finding-head">
           <h4>${escapeHtml(finding.title)}</h4>
-          <span class="tag ${escapeHtml(displaySeverity)}">${escapeHtml(filteredByAi ? "FILTRADO IA" : severityLabel(finding.severity))}</span>
+          <span class="tag ${escapeHtml(displaySeverity)}">${escapeHtml(filteredByAi ? "FILTRADO GEMINI" : severityLabel(finding.severity))}</span>
         </div>
         <code>${escapeHtml(finding.artifact_value)}</code>
         ${catalogName}
@@ -962,23 +962,23 @@ async function openReport(id) {
 
   aiStatusBox.textContent =
     showWithoutAiResult
-      ? "Modo sem IA ativo: a lista principal mostra o resultado original do filtro técnico."
+      ? "Modo sem Gemini ativo: a lista principal mostra o resultado original do filtro técnico."
       : aiReview.status === "completed"
-        ? "Segunda camada concluída. A lista principal já está filtrada pela IA."
+        ? "Segunda camada concluída. A lista principal já está filtrada pelo Gemini."
         : aiReview.status === "partial_error"
-          ? "A IA revisou parte dos achados, mas alguns lotes falharam. Os itens não revisados continuam visíveis."
+          ? "O Gemini revisou parte dos achados, mas alguns lotes falharam. Os itens não revisados continuam visíveis."
           : aiReview.status === "error"
-            ? "A revisão por IA falhou nesta análise. O Vorken manteve o resultado do filtro normal."
+            ? "A revisão pelo Gemini falhou nesta análise. O Vorken manteve o resultado do filtro normal."
             : aiReview.status === "disabled"
-              ? "Filtro por IA desativado. Resultado exibido somente pelo motor normal."
+              ? "Filtro Gemini desativado. Resultado exibido somente pelo motor normal."
               : aiReview.status === "not_configured"
-                ? "Filtro por IA ainda não está configurado no servidor."
-                : "Revisão por IA pendente ou em andamento.";
+                ? "Filtro Gemini ainda não está configurado no servidor."
+                : "Revisão pelo Gemini pendente ou em andamento.";
 
   renderFindings(
     "aiFilteredFindingsList",
     aiFilteredFindings,
-    "A IA não removeu nenhum provável falso positivo desta análise."
+    "O Gemini não removeu nenhum provável falso positivo desta análise."
   );
 
   const unknownAppFindings = findings.filter((item) =>
