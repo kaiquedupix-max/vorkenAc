@@ -612,6 +612,75 @@ async function openReport(id) {
     });
   }
 
+  for (const item of arrays.files) {
+    const ext = String(item.extension || "").toLowerCase();
+    if (ext !== ".zip") continue;
+
+    const zipText = [
+      item.name,
+      item.path,
+      ...safeArray(item.archiveEntries)
+    ].join(" ").toLowerCase();
+
+    const zipTerms = [
+      "rust", "cheat", "hack", "script", "loader", "injector",
+      "aimbot", "recoil", "macro", "spoofer", "bypass", "eac"
+    ].filter((term) => zipText.includes(term));
+
+    const randomExeInside = safeArray(item.archiveEntries).some((entry) =>
+      /\.exe$/i.test(String(entry || "")) &&
+      /^[A-Z0-9]{7,28}\.exe$/i.test(
+        String(entry || "").split(/[\\/]/).at(-1) || ""
+      ));
+
+    if (zipTerms.length < 2 && !randomExeInside) continue;
+
+    priorityFiles.push({
+      priority: randomExeInside ? 7 : 5,
+      status: "ZIP SUSPEITO",
+      tag: randomExeInside ? "high" : "medium",
+      name: item.name || "Arquivo ZIP",
+      path: item.path || "—",
+      time: item.lastWriteUtc || item.createdUtc,
+      source: "Análise do ZIP",
+      url: "",
+      detail: randomExeInside
+        ? "ZIP contém executável com nome aleatório."
+        : "ZIP contém combinação de termos associados a cheat/script: " + zipTerms.join(", ")
+    });
+  }
+
+  for (const finding of [...criticalFindings, ...mediumFindings]) {
+    if (![
+      "archive",
+      "file",
+      "browser_download",
+      "prefetch_execution",
+      "bam",
+      "recycle_bin"
+    ].includes(finding.artifact_type)) {
+      continue;
+    }
+
+    priorityFiles.push({
+      priority: finding.severity === "critical" ? 10 :
+        finding.severity === "high" ? 8 : 4,
+      status: finding.severity === "critical"
+        ? "CATÁLOGO / CRÍTICO"
+        : finding.severity === "high"
+          ? "ALTO RISCO"
+          : "REVISAR",
+      tag: finding.severity === "critical" ? "critical" :
+        finding.severity === "high" ? "high" : "medium",
+      name: finding.title || "Arquivo suspeito",
+      path: finding.artifact_value || "—",
+      time: finding.created_at,
+      source: finding.evidence?.catalogMatch?.name || finding.artifact_type,
+      url: finding.evidence?.sourceUrl || finding.evidence?.finalUrl || "",
+      detail: finding.evidence?.note || "Achado priorizado pelo motor de detecção."
+    });
+  }
+
   const prioritySeen = new Set();
   const priorityUnique = priorityFiles
     .sort((a, b) => b.priority - a.priority || new Date(b.time || 0) - new Date(a.time || 0))
