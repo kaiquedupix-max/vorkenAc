@@ -148,11 +148,16 @@ internal static class BrowserArtifactRecoveryCollector
 
         foreach (Match match in UrlRegex.Matches(text))
         {
+            string url = CleanUrl(match.Value);
+
+            // Never let unrelated strings from the same raw SQLite page
+            // contaminate a URL finding. The URL itself already contains
+            // search queries, domains and paths needed for classification.
             AddCandidate(
                 artifact,
-                url: CleanUrl(match.Value),
+                url: url,
                 fileName: "",
-                context: text,
+                context: url,
                 threatCatalog,
                 target,
                 seen);
@@ -160,11 +165,22 @@ internal static class BrowserArtifactRecoveryCollector
 
         foreach (Match match in RiskyFileRegex.Matches(text))
         {
+            string fileName = match.Groups[1].Value;
+
+            // For filenames keep only a small neighborhood. Raw SQLite pages
+            // can contain thousands of unrelated URLs/strings.
+            int start = Math.Max(0, match.Index - 192);
+            int length = Math.Min(
+                text.Length - start,
+                match.Length + 384);
+
+            string nearby = text.Substring(start, length);
+
             AddCandidate(
                 artifact,
                 url: "",
-                fileName: match.Groups[1].Value,
-                context: text,
+                fileName: fileName,
+                context: nearby,
                 threatCatalog,
                 target,
                 seen);
@@ -180,16 +196,30 @@ internal static class BrowserArtifactRecoveryCollector
         List<RecoveredBrowserArtifact> target,
         HashSet<string> seen)
     {
-        string combined =
+        string candidateText =
             string.Join(
                 " ",
                 url,
-                fileName,
+                fileName)
+            .ToLowerInvariant();
+
+        string combined =
+            string.Join(
+                " ",
+                candidateText,
                 context)
             .ToLowerInvariant();
 
         List<string> catalogMatches =
-            MatchCatalog(combined, threatCatalog);
+            MatchCatalog(candidateText, threatCatalog);
+
+        if (
+            catalogMatches.Count == 0 &&
+            !string.IsNullOrWhiteSpace(fileName))
+        {
+            catalogMatches =
+                MatchCatalog(combined, threatCatalog);
+        }
 
         List<string> matchedTerms = ContextTerms
             .Where(term =>
