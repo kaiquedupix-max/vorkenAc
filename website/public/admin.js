@@ -570,77 +570,31 @@ async function openReport(id) {
     "Nenhum aplicativo desconhecido ou aplicativo conhecido com assinatura/origem inválida."
   );
 
-  const recoveredHistory = [...arrays.browserRecoveredArtifacts]
-    .sort((a, b) => Number(b.riskScore || 0) - Number(a.riskScore || 0))
-    .slice(0, 500);
+  const recoveredHistoryFindings = findings.filter((item) =>
+    item.artifact_type === "browser_recovery"
+  );
 
   document.getElementById("recoveredHistoryCountBadge").textContent =
-    recoveredHistory.length;
+    recoveredHistoryFindings.length;
 
-  document.getElementById("recoveredHistoryList").innerHTML = recoveredHistory.length
-    ? recoveredHistory.map((item) => {
-        const critical =
-          item.randomLikeName === true ||
-          item.deceptiveDoubleExtension === true ||
-          safeArray(item.catalogMatches).length > 0 ||
-          Number(item.riskScore || 0) >= 5;
+  renderFindings(
+    "recoveredHistoryList",
+    recoveredHistoryFindings,
+    "Nenhum vestígio recuperado passou pelos filtros de relevância."
+  );
 
-        const tag = critical ? "critical" : "medium";
-        const url = safeExternalUrl(item.recoveredUrl);
-
-        return `
-          <div class="finding severity-card ${tag}">
-            <div class="finding-head">
-              <h4>${escapeHtml(item.recoveredFileName || item.recoveredUrl || "Vestígio recuperado")}</h4>
-              <span class="tag ${tag}">${critical ? "RECUPERADO · ALTO" : "RECUPERADO"}</span>
-            </div>
-            <div class="kv"><span>Navegador</span><span>${escapeHtml((item.browser || "—") + " · " + (item.profile || "perfil"))}</span></div>
-            <div class="kv"><span>Fonte forense</span><span>${escapeHtml((item.recoveryKind || "SQLite") + " · " + (item.sourceArtifact || "—"))}</span></div>
-            <div class="kv"><span>Catálogo</span><span>${escapeHtml(safeArray(item.catalogMatches).join(", ") || "—")}</span></div>
-            <div class="kv"><span>Termos</span><span>${escapeHtml(safeArray(item.matchedTerms).join(", ") || "—")}</span></div>
-            ${url ? `<div class="kv"><span>URL recuperada</span><span><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.recoveredUrl)}</a></span></div>` : ""}
-            <div class="kv"><span>Observação</span><span>${escapeHtml(item.note || "—")}</span></div>
-          </div>
-        `;
-      }).join("")
-    : '<div class="message ok">Nenhum vestígio suspeito recuperado de páginas SQLite/WAL/journal.</div>';
-
-  const deletedUsn = [...arrays.deletedUsnRecords]
-    .sort((a, b) => new Date(b.timestampUtc || 0) - new Date(a.timestampUtc || 0))
-    .slice(0, 1000);
+  const deletedUsnFindings = findings.filter((item) =>
+    item.artifact_type === "usn_delete"
+  );
 
   document.getElementById("deletedUsnCountBadge").textContent =
-    deletedUsn.length;
+    deletedUsnFindings.length;
 
-  document.getElementById("deletedUsnList").innerHTML = deletedUsn.length
-    ? deletedUsn.map((item) => {
-        const critical =
-          item.randomLikeName === true ||
-          item.deceptiveDoubleExtension === true;
-
-        const lower = String(item.fileName || "").toLowerCase();
-        const highInterest =
-          critical ||
-          ["loader", "injector", "cheat", "hack", "script", "aimbot", "recoil", "spoofer", "bypass", "eac"]
-            .some((term) => lower.includes(term));
-
-        const tag = critical ? "critical" : highInterest ? "high" : "info";
-
-        return `
-          <div class="finding severity-card ${tag}">
-            <div class="finding-head">
-              <h4>${escapeHtml(item.fileName || "Arquivo apagado")}</h4>
-              <span class="tag ${tag}">${escapeHtml(item.reason || "USN")}</span>
-            </div>
-            <div class="kv"><span>Apagado/alterado em</span><span>${escapeHtml(formatDate(item.timestampUtc))}</span></div>
-            <div class="kv"><span>Volume</span><span>${escapeHtml(item.volume || "—")}</span></div>
-            <div class="kv"><span>Nome aleatório</span><span>${item.randomLikeName ? "SIM" : "Não"}</span></div>
-            <div class="kv"><span>Dupla extensão</span><span>${item.deceptiveDoubleExtension ? "SIM" : "Não"}</span></div>
-            <div class="kv"><span>USN</span><span>${escapeHtml(item.usn ?? "—")}</span></div>
-          </div>
-        `;
-      }).join("")
-    : '<div class="message ok">Nenhum EXE/ZIP/RAR/7Z/script apagado foi encontrado no trecho recente do USN Journal.</div>';
+  renderFindings(
+    "deletedUsnList",
+    deletedUsnFindings,
+    "Nenhum arquivo apagado passou pelos filtros de relevância do USN."
+  );
 
   document.getElementById("advancedForensicsCountBadge").textContent =
     advancedForensicsCount;
@@ -687,7 +641,7 @@ async function openReport(id) {
         safeArray(x.suspiciousApis).length > 0),
       (item) => `
         <div class="finding">
-          <div class="finding-head"><h4>${escapeHtml(item.name || "PE")}</h4><span class="tag ${item.randomLikeName ? "critical" : item.packedLike ? "high" : "medium"}">${item.packedLike ? "PACKER" : item.highEntropy ? "ENTROPIA" : "PE"}</span></div>
+          <div class="finding-head"><h4>${escapeHtml(item.name || "PE")}</h4><span class="tag ${item.randomLikeName ? "critical" : "info"}">${item.randomLikeName ? "ALEATÓRIO" : item.packedLike ? "PACKER · INVENTÁRIO" : item.highEntropy ? "ENTROPIA · INVENTÁRIO" : "PE · INVENTÁRIO"}</span></div>
           <code>${escapeHtml(item.path || "—")}</code>
           <div class="kv"><span>Entropia</span><span>${escapeHtml(item.entropy ?? "—")}</span></div>
           <div class="kv"><span>Assinado</span><span>${item.signed ? "Sim" : "Não"}</span></div>
@@ -719,7 +673,7 @@ async function openReport(id) {
       arrays.powerShellArtifacts,
       (item) => `
         <div class="finding">
-          <div class="finding-head"><h4>${escapeHtml(item.source || "PowerShell")}</h4><span class="tag medium">POWERSHELL</span></div>
+          <div class="finding-head"><h4>${escapeHtml(item.source || "PowerShell")}</h4><span class="tag info">POWERSHELL · INVENTÁRIO</span></div>
           <code>${escapeHtml(item.command || "—")}</code>
           <div class="kv"><span>Indicadores</span><span>${escapeHtml(safeArray(item.matchedIndicators).join(", ") || "—")}</span></div>
           <div class="kv"><span>Data</span><span>${escapeHtml(formatDate(item.timestampUtc))}</span></div>
