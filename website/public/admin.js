@@ -1212,9 +1212,9 @@ async function openReport(id) {
     if (!/\.(exe|com|scr|dll|bat|cmd|ps1|msi)$/i.test(name)) continue;
 
     priorityFiles.push({
-      priority: 5,
+      priority: 2,
       status: "BAIXADO E APAGADO / MOVIDO",
-      tag: "high",
+      tag: "medium",
       name: item.fileName || "Executável",
       path: item.targetPath || item.currentPath || "—",
       time: item.startTimeUtc,
@@ -1224,52 +1224,11 @@ async function openReport(id) {
     });
   }
 
-  for (const item of arrays.deletedUsnRecords) {
-    const lower = String(item.fileName || "").toLowerCase();
-    const highInterest =
-      item.randomLikeName === true ||
-      item.deceptiveDoubleExtension === true ||
-      ["loader", "injector", "cheat", "hack", "script", "aimbot", "recoil", "spoofer", "bypass", "eac"]
-        .some((term) => lower.includes(term));
+  // Arquivo apagado no USN, sem prova de execução, não entra na prioridade vermelha.
+  // Achados válidos de execução aleatória são adicionados pelo motor de findings.
 
-    if (!highInterest) continue;
-
-    priorityFiles.push({
-      priority: item.randomLikeName || item.deceptiveDoubleExtension ? 10 : 8,
-      status: item.randomLikeName || item.deceptiveDoubleExtension
-        ? "APAGADO · CRÍTICO"
-        : "APAGADO · ALTO INTERESSE",
-      tag: item.randomLikeName || item.deceptiveDoubleExtension ? "critical" : "high",
-      name: item.fileName || "Arquivo apagado",
-      path: item.volume || "NTFS",
-      time: item.timestampUtc,
-      source: "USN Journal",
-      url: "",
-      detail: "O NTFS registrou a exclusão mesmo sem haver execução do arquivo."
-    });
-  }
-
-  for (const item of arrays.browserRecoveredArtifacts) {
-    const critical =
-      item.randomLikeName === true ||
-      item.deceptiveDoubleExtension === true ||
-      safeArray(item.catalogMatches).length > 0;
-
-    if (!critical && Number(item.riskScore || 0) < 4)
-      continue;
-
-    priorityFiles.push({
-      priority: critical ? 10 : 7,
-      status: critical ? "HISTÓRICO APAGADO · CRÍTICO" : "HISTÓRICO APAGADO",
-      tag: critical ? "critical" : "high",
-      name: item.recoveredFileName || item.recoveredUrl || "Vestígio recuperado",
-      path: item.sourceArtifact || "SQLite",
-      time: null,
-      source: item.recoveryKind || "SQLite",
-      url: item.recoveredUrl || "",
-      detail: item.note || "Vestígio recuperado do banco do navegador."
-    });
-  }
+  // Vestígios recuperados do navegador só entram aqui quando o servidor
+  // confirmar acesso/download crítico no catálogo. O SQLite bruto não gera vermelho.
 
   for (const item of arrays.prefetchExecutions) {
     if (item.likelyDetachedOrRemovable !== true) continue;
@@ -1281,9 +1240,11 @@ async function openReport(id) {
         lower.includes("\\steamapps\\common\\")) continue;
 
     priorityFiles.push({
-      priority: 6,
-      status: "EXECUTADO / VOLUME REMOVIDO",
-      tag: "high",
+      priority: item.currentRemovable === true ? 100 : 3,
+      status: item.currentRemovable === true
+        ? "PENDRIVE · PRIORIDADE MÁXIMA"
+        : "EXECUTADO / VOLUME NÃO MONTADO",
+      tag: item.currentRemovable === true ? "critical" : "medium",
       name: item.executableName || item.prefetchFile || "Executável",
       path: pathValue || "—",
       time: item.lastRunUtc,
@@ -1353,9 +1314,9 @@ async function openReport(id) {
     if (zipTerms.length < 2 && !randomExeInside) continue;
 
     priorityFiles.push({
-      priority: randomExeInside ? 7 : 5,
-      status: ext === ".zip" ? "ZIP SUSPEITO" : "ARQUIVO COMPACTADO SUSPEITO",
-      tag: randomExeInside ? "high" : "medium",
+      priority: randomExeInside ? 4 : 3,
+      status: ext === ".zip" ? "ZIP PARA REVISÃO" : "ARQUIVO COMPACTADO PARA REVISÃO",
+      tag: "medium",
       name: item.name || "Arquivo ZIP",
       path: item.path || "—",
       time: item.lastWriteUtc || item.createdUtc,
@@ -1376,22 +1337,30 @@ async function openReport(id) {
       "usn_delete",
       "unknown_app",
       "prefetch_execution",
+      "executed_random_exe",
+      "usb_execution",
       "bam",
       "recycle_bin"
     ].includes(finding.artifact_type)) {
       continue;
     }
 
+    const usbPriority =
+      finding.artifact_type === "usb_execution" ||
+      finding.evidence?.usbPriorityMaximum === true;
+
     priorityFiles.push({
-      priority: finding.severity === "critical" ? 10 :
-        finding.severity === "high" ? 8 : 4,
-      status: finding.severity === "critical"
-        ? "CATÁLOGO / CRÍTICO"
-        : finding.severity === "high"
-          ? "ALTO RISCO"
+      priority: usbPriority
+        ? 100
+        : finding.severity === "critical"
+          ? 90
+          : 4,
+      status: usbPriority
+        ? "PENDRIVE · PRIORIDADE MÁXIMA"
+        : finding.severity === "critical"
+          ? "CRÍTICO"
           : "REVISAR",
-      tag: finding.severity === "critical" ? "critical" :
-        finding.severity === "high" ? "high" : "medium",
+      tag: finding.severity === "critical" ? "critical" : "medium",
       name: finding.title || "Arquivo suspeito",
       path: finding.artifact_value || "—",
       time: finding.created_at,
