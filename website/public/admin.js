@@ -51,6 +51,75 @@ function safeArray(value) {
   return Array.isArray(value) ? value.filter(Boolean) : [];
 }
 
+function downloadOriginKind(item) {
+  const urls = [
+    item?.sourceUrl,
+    item?.finalUrl,
+    item?.referrerUrl,
+    item?.siteUrl,
+    item?.pageUrl,
+    ...safeArray(item?.urlChain)
+  ].filter(Boolean).map((value) => String(value).toLowerCase());
+
+  const joined = urls.join(" ");
+
+  if (
+    joined.includes("discord.com/") ||
+    joined.includes("discord.gg/") ||
+    joined.includes("discordapp.com/") ||
+    joined.includes("cdn.discordapp.com/") ||
+    joined.includes("media.discordapp.net/") ||
+    joined.includes("discordattachments.com/")
+  ) {
+    return "Discord";
+  }
+
+  if (
+    joined.includes("t.me/") ||
+    joined.includes("telegram.me/") ||
+    joined.includes("telegram.org/") ||
+    joined.includes("web.telegram.org/") ||
+    joined.includes("telegram-cdn.org/") ||
+    joined.includes("cdn-telegram.org/")
+  ) {
+    return "Telegram";
+  }
+
+  return "";
+}
+
+function browserDangerInfo(value) {
+  const code = Number(value ?? 0);
+  const map = {
+    1: ["Arquivo perigoso", "high"],
+    2: ["URL perigosa", "high"],
+    3: ["Conteúdo perigoso", "high"],
+    4: ["Conteúdo possivelmente perigoso", "medium"],
+    5: ["Download incomum", "medium"],
+    6: ["Alerta validado/ignorado pelo usuário", "medium"],
+    7: ["Host perigoso", "high"],
+    8: ["Software potencialmente indesejado", "high"],
+    16: ["Deep Scan: perigoso", "high"],
+    19: ["Risco de comprometimento de conta", "high"],
+  };
+
+  const hit = map[code];
+  return hit
+    ? { code, label: hit[0], severity: hit[1], suspicious: true }
+    : { code, label: code ? "DangerType " + code : "Sem alerta", severity: "info", suspicious: false };
+}
+
+function isDeceptiveDoubleExtension(value) {
+  return /\.(zip|rar|7z|pdf|jpg|jpeg|png|gif|txt|doc|docx|xls|xlsx|ppt|pptx)\.exe$/i
+    .test(String(value || ""));
+}
+
+function isRiskyDownloadName(value) {
+  const name = String(value || "");
+  return /\.(exe|com|scr|dll|msi|bat|cmd|ps1|zip|rar|7z)$/i.test(name) ||
+    isDeceptiveDoubleExtension(name);
+}
+
 async function openReportSafe(id) {
   try {
     await openReport(id);
@@ -525,6 +594,75 @@ async function openReport(id) {
     <div class="kv"><span>Outros seriais</span><span>${Number(hw.otherSerialCount ?? 0)}</span></div>
     <div class="message">A contagem identifica famílias/bridges por VID/PID, descritor e fabricante. CH34x/CP210x/FTDI isoladamente não provam qual placa está atrás do bridge.</div>
   `;
+
+  const socialDownloads = arrays.browserDownloads
+    .map((item) => ({
+      item,
+      origin: downloadOriginKind(item),
+      name: item.fileName || item.targetPath || ""
+    }))
+    .filter((entry) => entry.origin && isRiskyDownloadName(entry.name))
+    .sort((a, b) => new Date(b.item.startTimeUtc || 0) - new Date(a.item.startTimeUtc || 0))
+    .slice(0, 300);
+
+  document.getElementById("socialDownloadsCountBadge").textContent = socialDownloads.length;
+  document.getElementById("socialDownloadsList").innerHTML = socialDownloads.length
+    ? socialDownloads.map(({ item, origin, name }) => {
+        const sourceUrl =
+          safeExternalUrl(item.sourceUrl) ||
+          safeExternalUrl(item.finalUrl) ||
+          safeExternalUrl(item.pageUrl) ||
+          safeExternalUrl(item.referrerUrl);
+
+        const doubleExtension = isDeceptiveDoubleExtension(name);
+        const tag = doubleExtension ? "high" : "medium";
+
+        return `
+          <div class="finding severity-card ${tag}">
+            <div class="finding-head">
+              <h4>${escapeHtml(item.fileName || "Download")}</h4>
+              <span class="tag ${tag}">${escapeHtml(origin.toUpperCase())}</span>
+            </div>
+            <div class="kv"><span>Baixado em</span><span>${escapeHtml(formatDate(item.startTimeUtc))}</span></div>
+            <div class="kv"><span>Destino</span><span>${escapeHtml(item.targetPath || item.currentPath || "—")}</span></div>
+            <div class="kv"><span>Arquivo presente</span><span>${item.fileExists ? "Sim" : "Não / movido"}</span></div>
+            <div class="kv"><span>Dupla extensão</span><span>${doubleExtension ? "SIM" : "Não"}</span></div>
+            ${sourceUrl ? `<div class="kv"><span>Origem</span><span><a href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(sourceUrl)}</a></span></div>` : ""}
+          </div>
+        `;
+      }).join("")
+    : '<div class="message ok">Nenhum executável/script/arquivo compactado originado de Discord ou Telegram foi encontrado.</div>';
+
+  const browserDangerDownloads = arrays.browserDownloads
+    .map((item) => ({ item, danger: browserDangerInfo(item.dangerType) }))
+    .filter((entry) => entry.danger.suspicious)
+    .sort((a, b) => new Date(b.item.startTimeUtc || 0) - new Date(a.item.startTimeUtc || 0))
+    .slice(0, 300);
+
+  document.getElementById("browserDangerCountBadge").textContent = browserDangerDownloads.length;
+  document.getElementById("browserDangerDownloadsList").innerHTML = browserDangerDownloads.length
+    ? browserDangerDownloads.map(({ item, danger }) => {
+        const sourceUrl =
+          safeExternalUrl(item.sourceUrl) ||
+          safeExternalUrl(item.finalUrl) ||
+          safeExternalUrl(item.pageUrl) ||
+          safeExternalUrl(item.referrerUrl);
+
+        return `
+          <div class="finding severity-card ${escapeHtml(danger.severity)}">
+            <div class="finding-head">
+              <h4>${escapeHtml(item.fileName || "Download")}</h4>
+              <span class="tag ${escapeHtml(danger.severity)}">${escapeHtml(danger.label)}</span>
+            </div>
+            <div class="kv"><span>DangerType</span><span>${Number(danger.code)}</span></div>
+            <div class="kv"><span>Baixado em</span><span>${escapeHtml(formatDate(item.startTimeUtc))}</span></div>
+            <div class="kv"><span>Destino</span><span>${escapeHtml(item.targetPath || item.currentPath || "—")}</span></div>
+            <div class="kv"><span>Navegador</span><span>${escapeHtml(item.browser || "—")}</span></div>
+            ${sourceUrl ? `<div class="kv"><span>Origem</span><span><a href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(sourceUrl)}</a></span></div>` : ""}
+          </div>
+        `;
+      }).join("")
+    : '<div class="message ok">Nenhum download sinalizado como perigoso/incomum pelo navegador foi preservado no histórico.</div>';
 
   const priorityFiles = [];
 
