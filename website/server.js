@@ -1873,22 +1873,48 @@ function isDirectCatalogWebMatch(match, evidence = {}) {
     ...(Array.isArray(evidence.urlChain) ? evidence.urlChain : [])
   ].filter(Boolean);
 
-  if (!String(match?.matchedBy || "").startsWith("domain:") &&
-      !String(match?.matchedBy || "").startsWith("discord:")) {
+  const matchedBy =
+    String(match?.matchedBy || "")
+      .toLowerCase();
+
+  let needle = "";
+
+  if (matchedBy.startsWith("domain:")) {
+    needle = matchedBy.slice("domain:".length);
+  } else if (matchedBy.startsWith("discord:")) {
+    needle = matchedBy.slice("discord:".length);
+  } else if (matchedBy.startsWith("osint-domain:")) {
+    needle = matchedBy.slice("osint-domain:".length);
+  } else if (matchedBy.startsWith("osint-url:")) {
+    needle = matchedBy.slice("osint-url:".length);
+  } else {
     return false;
   }
 
   return candidates.some((value) => {
-    if (isSearchEngineUrl(value) || isKnownBenignWebHost(value))
+    if (
+      isSearchEngineUrl(value) ||
+      isKnownBenignWebHost(value)
+    ) {
       return false;
+    }
 
-    const lower = String(value || "").toLowerCase();
-    const matchedBy = String(match?.matchedBy || "").toLowerCase();
-    const needle = matchedBy.includes(":")
-      ? matchedBy.slice(matchedBy.indexOf(":") + 1)
-      : "";
+    const lower =
+      String(value || "")
+        .toLowerCase()
+        .replace(/^https?:\/\/(www\.)?/, "")
+        .replace(/\/+$/, "");
 
-    return needle && lower.includes(needle);
+    const normalizedNeedle =
+      String(needle || "")
+        .toLowerCase()
+        .replace(/^https?:\/\/(www\.)?/, "")
+        .replace(/\/+$/, "");
+
+    return (
+      normalizedNeedle &&
+      lower.includes(normalizedNeedle)
+    );
   });
 }
 
