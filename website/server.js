@@ -6155,6 +6155,23 @@ app.post(
         ? "Resultado da verificação reprovado."
         : "Resultado da verificação aprovado.");
 
+    const evidenceIds = [
+      ...new Set(
+        (Array.isArray(req.body?.evidenceIds)
+          ? req.body.evidenceIds
+          : [])
+          .map(Number)
+          .filter(value => Number.isInteger(value) && value > 0)
+      )
+    ].slice(0, 80);
+
+    if (decision === "deny" && evidenceIds.length === 0) {
+      return res.status(400).json({
+        error: "evidence_required",
+        message: "Selecione pelo menos uma evidência que justifique o banimento."
+      });
+    }
+
     const analysisResult = await pool.query(
       `SELECT
          id,
@@ -6197,6 +6214,75 @@ app.post(
       });
     }
 
+    let evidenceUrl = "";
+    let packageToken = "";
+
+    if (decision === "deny") {
+      const evidenceResult = await pool.query(
+        `SELECT
+           id,
+           title,
+           severity,
+           artifact_type,
+           artifact_value,
+           evidence
+         FROM scan_findings
+         WHERE analysis_id=$1
+           AND id = ANY($2::bigint[])
+         ORDER BY
+           CASE severity
+             WHEN 'critical' THEN 5
+             WHEN 'high' THEN 4
+             WHEN 'medium' THEN 3
+             WHEN 'low' THEN 2
+             ELSE 1
+           END DESC,
+           id ASC`,
+        [id, evidenceIds]
+      );
+
+      if (evidenceResult.rows.length !== evidenceIds.length) {
+        return res.status(400).json({
+          error: "invalid_evidence_selection",
+          message: "Uma ou mais evidências selecionadas não pertencem a esta análise."
+        });
+      }
+
+      const snapshot =
+        evidenceResult.rows.map(item => ({
+          id: Number(item.id),
+          title: item.title || "Evidência",
+          severity: item.severity || "info",
+          artifactType: item.artifact_type || "",
+          artifactValue: item.artifact_value || "",
+          evidence: safePublicEvidence(item.evidence || {})
+        }));
+
+      packageToken =
+        crypto.randomBytes(24).toString("hex");
+
+      await pool.query(
+        `INSERT INTO evidence_packages(
+           analysis_id,
+           public_token,
+           reason,
+           findings
+         )
+         VALUES ($1,$2,$3,$4::jsonb)`,
+        [
+          id,
+          packageToken,
+          reason,
+          JSON.stringify(snapshot)
+        ]
+      );
+
+      evidenceUrl =
+        publicUrl +
+        "/resultados/" +
+        packageToken;
+    }
+
     const baseUrl =
       String(process.env.GUERRA_FRIA_INTEGRATION_URL || "")
         .trim()
@@ -6206,6 +6292,13 @@ app.post(
       String(process.env.VORKEN_GF_INTEGRATION_KEY || "").trim();
 
     if (!baseUrl || !key) {
+      if (packageToken) {
+        await pool.query(
+          "DELETE FROM evidence_packages WHERE public_token=$1",
+          [packageToken]
+        ).catch(() => {});
+      }
+
       return res.status(503).json({
         error: "guerra_fria_integration_not_configured",
         message: "Integração com o Guerra Fria não configurada."
@@ -6224,6 +6317,8 @@ app.post(
           analysisId: id,
           decision,
           reason,
+          evidenceUrl: evidenceUrl || null,
+          evidenceCount: evidenceIds.length,
           steamId: analysis.external_player_id,
           discordUserId: analysis.external_discord_user_id,
           ticketChannelId: analysis.external_ticket_channel_id
@@ -6235,6 +6330,13 @@ app.post(
       await response.json().catch(() => ({}));
 
     if (!response.ok) {
+      if (packageToken) {
+        await pool.query(
+          "DELETE FROM evidence_packages WHERE public_token=$1",
+          [packageToken]
+        ).catch(() => {});
+      }
+
       return res.status(502).json({
         error: "guerra_fria_decision_failed",
         message:
@@ -6248,19 +6350,22 @@ app.post(
       `UPDATE analyses
        SET external_decision=$2,
            external_decision_at=NOW(),
-           external_decision_result=$3
+           external_decision_result=$3,
+           external_evidence_url=$4
        WHERE id=$1`,
       [
         id,
         decision,
-        cleanText(body?.result, 900) || "Decisão confirmada."
+        cleanText(body?.result, 900) || "Decisão confirmada.",
+        evidenceUrl || null
       ]
     );
 
     res.json({
       ok: true,
       decision,
-      result: body?.result || "Decisão confirmada."
+      result: body?.result || "Decisão confirmada.",
+      evidenceUrl: evidenceUrl || null
     });
   }
 );
@@ -7072,6 +7177,103 @@ app.get("/api/agent/:token/result", async (req, res) => {
       });
     }
   }
+});
+
+app.get("/resultados/:token", async (req, res) => {
+  const token =
+    String(req.params.token || "")
+      .trim()
+      .toLowerCase();
+
+  if (!/^[a-f0-9]{48}$/.test(token)) {
+    return res.status(404).send("Resultado não encontrado.");
+  }
+
+  const result = await pool.query(
+    `SELECT
+       ep.reason,
+       ep.findings,
+       ep.created_at,
+       a.id AS analysis_id,
+       a.label,
+       a.external_player_id
+     FROM evidence_packages ep
+     JOIN analyses a
+       ON a.id=ep.analysis_id
+     WHERE ep.public_token=$1
+     LIMIT 1`,
+    [token]
+  );
+
+  const row = result.rows[0];
+
+  if (!row)
+    return res.status(404).send("Resultado não encontrado.");
+
+  const findings =
+    Array.isArray(row.findings)
+      ? row.findings
+      : [];
+
+  const cards = findings.map(item => {
+    const evidence =
+      item?.evidence && typeof item.evidence === "object"
+        ? item.evidence
+        : {};
+
+    const meta = Object.entries(evidence)
+      .filter(([, value]) =>
+        value !== undefined &&
+        value !== null &&
+        value !== "" &&
+        typeof value !== "object"
+      )
+      .map(([key, value]) =>
+        `<div class="kv"><span>${htmlEscape(key)}</span><code>${htmlEscape(value)}</code></div>`
+      )
+      .join("");
+
+    return `
+      <article class="finding ${htmlEscape(item.severity || "info")}">
+        <div class="head">
+          <h2>${htmlEscape(item.title || "Evidência")}</h2>
+          <b>${htmlEscape(String(item.severity || "info").toUpperCase())}</b>
+        </div>
+        <div class="path">${htmlEscape(item.artifactValue || "—")}</div>
+        ${meta}
+      </article>
+    `;
+  }).join("");
+
+  res.type("html").send(`<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Vorken Anti-Cheat · Evidências</title>
+<link rel="icon" type="image/svg+xml" href="/vorken-logo.svg">
+<style>
+:root{color-scheme:dark;--bg:#050a0e;--panel:#09131a;--line:#17323b;--text:#eaf7f4;--muted:#89a1a5;--accent:#2bf0c9;--danger:#ff6173}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 50% -20%,#0d2d31 0,#050a0e 42%);color:var(--text);font:14px Inter,Segoe UI,Arial,sans-serif}
+main{width:min(1080px,calc(100% - 32px));margin:0 auto;padding:52px 0 80px}
+.brand{display:flex;align-items:center;gap:12px;margin-bottom:36px}.brand img{width:42px;height:42px;border-radius:10px}.brand strong{letter-spacing:.08em}.brand small{display:block;color:var(--accent);margin-top:3px}
+.hero{border:1px solid var(--line);background:rgba(9,19,26,.9);border-radius:18px;padding:28px;margin-bottom:18px}.hero h1{margin:0 0 10px;font-size:30px}.hero p{color:var(--muted);line-height:1.65}.pill{display:inline-flex;padding:6px 9px;border:1px solid #235f57;border-radius:999px;color:var(--accent);font:700 11px Consolas,monospace}
+.finding{border:1px solid var(--line);background:rgba(9,19,26,.9);border-radius:16px;padding:20px;margin-top:12px}.finding.critical,.finding.high{border-color:#6b2833}.finding.medium{border-color:#68541f}.head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start}.head h2{font-size:17px;margin:0}.head b{font:700 10px Consolas,monospace;color:var(--accent)}.path{margin:13px 0;padding:11px;border-radius:9px;background:#04090c;color:#b9d4d0;font-family:Consolas,monospace;word-break:break-all}.kv{display:grid;grid-template-columns:180px 1fr;gap:10px;padding:8px 0;border-top:1px solid #12262d}.kv span{color:var(--muted)}.kv code{white-space:pre-wrap;word-break:break-word;color:#d7e9e5}
+.notice{margin-top:24px;color:#70898e;font-size:12px;line-height:1.6}
+</style>
+</head>
+<body><main>
+<div class="brand"><img src="/vorken-logo.svg" alt=""><div><strong>VORKEN ANTI-CHEAT</strong><small>REGISTRO DE EVIDÊNCIAS</small></div></div>
+<section class="hero">
+<span class="pill">ANÁLISE #${htmlEscape(row.analysis_id)}</span>
+<h1>Evidências selecionadas pela administração</h1>
+<p><strong>SteamID:</strong> ${htmlEscape(row.external_player_id || "—")}<br>
+<strong>Motivo:</strong> ${htmlEscape(row.reason || "—")}<br>
+<strong>Gerado em:</strong> ${htmlEscape(new Date(row.created_at).toLocaleString("pt-BR"))}</p>
+</section>
+${cards || '<div class="finding">Nenhuma evidência publicada.</div>'}
+<p class="notice">Esta página contém somente metadados e registros técnicos selecionados pela administração. O Vorken não publica aqui cópias dos arquivos privados encontrados no computador.</p>
+</main></body></html>`);
 });
 
 app.get("/admin", (_req, res) => {
