@@ -11,7 +11,7 @@ namespace Vorken.Agent;
 
 internal static class Program
 {
-    private const string AgentVersion = "0.4.2";
+    private const string AgentVersion = "0.5.0";
 
     private static readonly JsonSerializerOptions JsonOptions =
         new(JsonSerializerDefaults.Web)
@@ -38,6 +38,7 @@ internal static class Program
             Console.WriteLine("- processos, serviços, drivers e inicialização;");
             Console.WriteLine("- metadados de arquivos executáveis em pastas de risco;");
             Console.WriteLine("- hashes SHA-256, assinatura digital e Prefetch quando disponível.");
+            Console.WriteLine("- histórico de downloads dos navegadores: nome/caminho, horários e URL de origem;");
             Console.WriteLine();
             Console.WriteLine("O Vorken não coleta senhas, cookies, mensagens, fotos ou conteúdo de documentos.");
             Console.WriteLine();
@@ -216,6 +217,11 @@ internal static class Program
                 DeepForensicCollector.CollectRecentShortcuts,
                 errors);
 
+            List<BrowserDownloadRecord> browserDownloads = SafeCollect(
+                "Histórico de downloads",
+                BrowserDownloadsCollector.Collect,
+                errors);
+
             List<ExtensionMismatchRecord> extensionMismatches = SafeCollect(
                 "Extensões modificadas",
                 DeepForensicCollector.CollectModifiedExtensions,
@@ -313,6 +319,7 @@ internal static class Program
                 ProcessCreationEvents = processCreationEvents,
                 DefenderDetections = defenderDetections,
                 RecentShortcuts = recentShortcuts,
+                BrowserDownloads = browserDownloads,
                 ExtensionMismatches = extensionMismatches,
                 DefenderExclusions = defenderExclusions,
                 BootIntegrity = bootIntegrity,
@@ -1105,6 +1112,7 @@ internal sealed class ScanReport
     public List<ProcessCreationRecord> ProcessCreationEvents { get; set; } = new();
     public List<DefenderDetectionRecord> DefenderDetections { get; set; } = new();
     public List<RecentShortcutRecord> RecentShortcuts { get; set; } = new();
+    public List<BrowserDownloadRecord> BrowserDownloads { get; set; } = new();
     public List<ExtensionMismatchRecord> ExtensionMismatches { get; set; } = new();
     public List<DefenderExclusionRecord> DefenderExclusions { get; set; } = new();
     public List<BootIntegrityRecord> BootIntegrity { get; set; } = new();
