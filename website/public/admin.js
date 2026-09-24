@@ -1001,18 +1001,51 @@ async function openReport(id) {
   `;
 
   const hw = payload.hardwareSummary || {};
-  const connectedStorage = arrays.usbCurrent.filter((item) => {
-    const haystack = [item.name, item.deviceId, item.pnpDeviceId, item.manufacturer]
-      .join(" ").toLowerCase();
-    return haystack.includes("disk") ||
-      haystack.includes("mass storage") ||
+  const isUsbStorageLikeClient = (item) => {
+    const haystack = [
+      item?.name,
+      item?.deviceId,
+      item?.pnpDeviceId,
+      item?.deviceClass,
+      item?.instanceId,
+      item?.friendlyName,
+      item?.deviceDescription,
+      item?.manufacturer
+    ].filter(Boolean).join(" ").toLowerCase();
+
+    return (
       haystack.includes("usbstor") ||
-      haystack.includes("storage");
-  }).length;
+      haystack.includes("mass storage") ||
+      haystack.includes("diskdrive") ||
+      haystack.includes("usb disk") ||
+      haystack.includes("flash drive") ||
+      haystack.includes("pendrive")
+    );
+  };
+
+  const connectedStorage = arrays.usbCurrent
+    .filter(isUsbStorageLikeClient)
+    .length;
+
+  const recentDisconnectedStorage = arrays.usbHistory.filter((item) => {
+    if (item.present !== false || !isUsbStorageLikeClient(item))
+      return false;
+
+    const time = new Date(
+      item.lastDisconnectedUtc ||
+      item.lastConnectedUtc ||
+      0
+    ).getTime();
+
+    return Number.isFinite(time) &&
+      time > 0 &&
+      Date.now() - time <= 3 * 86400000;
+  });
 
   document.getElementById("deviceOverviewList").innerHTML = `
     <div class="metric-grid">
       <div class="metric"><small>PENDRIVES CONECTADOS</small><strong>${connectedStorage}</strong></div>
+      <div class="metric warning-metric"><small>PENDRIVE DESCONECTADO ≤ 3 DIAS</small><strong>${recentDisconnectedStorage.length}</strong></div>
       <div class="metric"><small>USB DESCONECTADOS</small><strong>${disconnectedUsb}</strong></div>
       <div class="metric"><small>ARDUINO</small><strong>${Number(hw.arduinoCount ?? 0)}</strong></div>
       <div class="metric"><small>MAKCU / MOKU</small><strong>${Number(hw.makcuCount ?? 0)}</strong></div>
@@ -1050,20 +1083,35 @@ async function openReport(id) {
         .sort((a, b) =>
           new Date(b.lastDisconnectedUtc || b.lastConnectedUtc || 0) -
           new Date(a.lastDisconnectedUtc || a.lastConnectedUtc || 0))
-        .map((item) => `
-        <div class="finding">
-          <div class="finding-head">
-            <h4>${escapeHtml(item.friendlyName || item.deviceDescription || item.deviceClass || "Dispositivo USB")}</h4>
-            <span class="tag medium">DESCONECTADO</span>
-          </div>
-          <div class="kv"><span>Fabricante</span><span>${escapeHtml(item.manufacturer || "—")}</span></div>
-          <div class="kv"><span>Instância / serial</span><span>${escapeHtml(item.instanceId || "—")}</span></div>
-          <div class="kv"><span>Última conexão</span><span>${escapeHtml(formatDate(item.lastConnectedUtc))}</span></div>
-          <div class="kv"><span>Última desconexão</span><span>${escapeHtml(formatDate(item.lastDisconnectedUtc))}</span></div>
-          <div class="kv"><span>Fonte do horário</span><span>${escapeHtml(item.timelineSource || "Não registrado pelo Windows")}</span></div>
-          <code>${escapeHtml(item.deviceClass || "")}</code>
-        </div>
-      `).join("")
+        .map((item) => {
+          const time = new Date(
+            item.lastDisconnectedUtc ||
+            item.lastConnectedUtc ||
+            0
+          ).getTime();
+
+          const recentStorage =
+            isUsbStorageLikeClient(item) &&
+            Number.isFinite(time) &&
+            time > 0 &&
+            Date.now() - time <= 3 * 86400000;
+
+          return `
+            <div class="finding ${recentStorage ? "severity-card medium" : ""}">
+              <div class="finding-head">
+                <h4>${escapeHtml(item.friendlyName || item.deviceDescription || item.deviceClass || "Dispositivo USB")}</h4>
+                <span class="tag ${recentStorage ? "medium" : "info"}">${recentStorage ? "PENDRIVE RECENTE" : "DESCONECTADO"}</span>
+              </div>
+              <div class="kv"><span>Fabricante</span><span>${escapeHtml(item.manufacturer || "—")}</span></div>
+              <div class="kv"><span>Instância / serial</span><span>${escapeHtml(item.instanceId || "—")}</span></div>
+              <div class="kv"><span>Última conexão</span><span>${escapeHtml(formatDate(item.lastConnectedUtc))}</span></div>
+              <div class="kv"><span>Última desconexão</span><span>${escapeHtml(formatDate(item.lastDisconnectedUtc))}</span></div>
+              <div class="kv"><span>Fonte do horário</span><span>${escapeHtml(item.timelineSource || "Não registrado pelo Windows")}</span></div>
+              ${recentStorage ? '<div class="kv"><span>Alerta</span><span>Armazenamento USB desconectado nos últimos 3 dias.</span></div>' : ""}
+              <code>${escapeHtml(item.deviceClass || "")}</code>
+            </div>
+          `;
+        }).join("")
     : '<div class="message ok">Nenhum dispositivo USB histórico marcado como desconectado.</div>';
 
   document.getElementById("serialDeviceList").innerHTML = `
@@ -1083,15 +1131,23 @@ async function openReport(id) {
     .map((item) => ({
       item,
       origin: downloadOriginKind(item),
-      name: item.fileName || item.targetPath || ""
+      name: item.fileName || item.targetPath || "",
+      strictDiscord: isDiscordAttachmentDownloadClient(item),
+      officialDiscordUpdate: isOfficialDiscordInstallerOrUpdateClient(item)
     }))
-    .filter((entry) => entry.origin && isRiskyDownloadName(entry.name))
+    .filter((entry) =>
+      isRiskyDownloadName(entry.name) &&
+      !entry.officialDiscordUpdate &&
+      (
+        entry.origin === "Telegram" ||
+        entry.strictDiscord
+      ))
     .sort((a, b) => new Date(b.item.startTimeUtc || 0) - new Date(a.item.startTimeUtc || 0))
     .slice(0, 300);
 
   document.getElementById("socialDownloadsCountBadge").textContent = socialDownloads.length;
   document.getElementById("socialDownloadsList").innerHTML = socialDownloads.length
-    ? socialDownloads.map(({ item, origin, name }) => {
+    ? socialDownloads.map(({ item, origin, name, strictDiscord }) => {
         const sourceUrl =
           safeExternalUrl(item.sourceUrl) ||
           safeExternalUrl(item.finalUrl) ||
@@ -1099,7 +1155,7 @@ async function openReport(id) {
           safeExternalUrl(item.referrerUrl);
 
         const doubleExtension = isDeceptiveDoubleExtension(name);
-        const tag = doubleExtension ? "high" : "medium";
+        const tag = strictDiscord ? "critical" : "medium";
 
         return `
           <div class="finding severity-card ${tag}">
