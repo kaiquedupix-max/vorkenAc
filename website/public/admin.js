@@ -7,6 +7,8 @@ const reportCard = document.getElementById("reportCard");
 let currentReportId = null;
 let showTechnicalResult = false;
 let currentClientReportReleased = false;
+let currentGuerraFriaLinked = false;
+let currentIntegrationDecision = null;
 let dashboardPollTimer = null;
 let lastOpenReportProcessing = null;
 
@@ -557,9 +559,97 @@ document.getElementById("closeReportBtn").addEventListener("click", () => {
   document.getElementById("reportEmptyState")?.classList.remove("hidden");
   currentReportId = null;
   currentClientReportReleased = false;
+  currentGuerraFriaLinked = false;
+  currentIntegrationDecision = null;
   showTechnicalResult = false;
   lastOpenReportProcessing = null;
 });
+
+async function queueGuerraFriaDecision(action) {
+  if (!currentReportId || !currentGuerraFriaLinked)
+    return;
+
+  const isBan =
+    action === "ban";
+
+  let reason =
+    isBan
+      ? window.prompt(
+          "Motivo do banimento:",
+          "Trapaça confirmada na verificação Vorken."
+        )
+      : "Verificação Vorken concluída sem bloqueio.";
+
+  if (isBan && reason === null)
+    return;
+
+  reason =
+    String(reason || "").trim();
+
+  if (isBan && !reason) {
+    alert("Informe o motivo do banimento.");
+    return;
+  }
+
+  const confirmed =
+    window.confirm(
+      isBan
+        ? "Confirmar BANIMENTO PERMANENTE deste jogador?"
+        : "Confirmar LIBERAÇÃO deste jogador no servidor?"
+    );
+
+  if (!confirmed)
+    return;
+
+  const banButton =
+    document.getElementById("gfBanBtn");
+  const releaseButton =
+    document.getElementById("gfReleaseBtn");
+
+  try {
+    if (banButton) banButton.disabled = true;
+    if (releaseButton) releaseButton.disabled = true;
+
+    const data = await api(
+      "/api/admin/analyses/" +
+      encodeURIComponent(currentReportId) +
+      "/guerra-fria-action",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          action,
+          reason,
+        }),
+      }
+    );
+
+    alert(
+      isBan
+        ? "Banimento enviado para o Guerra Fria. O bot aplicará a ação em alguns segundos."
+        : "Liberação enviada para o Guerra Fria. O bot aplicará a ação em alguns segundos."
+    );
+
+    await openReport(currentReportId);
+  } catch (error) {
+    alert(
+      "Não foi possível enviar a decisão: " +
+      (error?.message || "erro desconhecido")
+    );
+
+    if (banButton) banButton.disabled = false;
+    if (releaseButton) releaseButton.disabled = false;
+  }
+}
+
+document.getElementById("gfBanBtn")?.addEventListener(
+  "click",
+  () => queueGuerraFriaDecision("ban")
+);
+
+document.getElementById("gfReleaseBtn")?.addEventListener(
+  "click",
+  () => queueGuerraFriaDecision("release")
+);
 
 document.getElementById("clientReportToggleBtn")?.addEventListener("click", async () => {
   if (!currentReportId) return;
@@ -794,6 +884,70 @@ async function openReport(id) {
   currentClientReportReleased =
     analysis.client_report_released === true;
 
+  currentGuerraFriaLinked =
+    analysis.external_source === "guerra_fria" &&
+    /^7656119\d{10}$/.test(
+      String(analysis.external_player_id || "")
+    );
+
+  currentIntegrationDecision =
+    data.integrationDecision || null;
+
+  const gfActions =
+    document.getElementById("gfIntegrationActions");
+  const gfDecisionBadge =
+    document.getElementById("gfDecisionBadge");
+  const gfBanBtn =
+    document.getElementById("gfBanBtn");
+  const gfReleaseBtn =
+    document.getElementById("gfReleaseBtn");
+
+  gfActions?.classList.toggle(
+    "hidden",
+    !currentGuerraFriaLinked
+  );
+
+  if (currentGuerraFriaLinked && gfDecisionBadge) {
+    const decision =
+      currentIntegrationDecision;
+
+    gfDecisionBadge.textContent =
+      decision
+        ? (
+            decision.action === "ban"
+              ? "BANIMENTO"
+              : "LIBERAÇÃO"
+          ) +
+          " · " +
+          String(decision.status || "").toUpperCase()
+        : "GUERRA FRIA · AGUARDANDO DECISÃO";
+
+    gfDecisionBadge.className =
+      "gf-decision-badge " +
+      (
+        decision?.status === "completed"
+          ? "complete"
+          : decision?.status === "failed"
+            ? "failed"
+            : decision
+              ? "pending"
+              : ""
+      );
+  }
+
+  const decisionLocked =
+    Boolean(
+      currentIntegrationDecision &&
+      ["pending","processing","completed"]
+        .includes(currentIntegrationDecision.status)
+    );
+
+  if (gfBanBtn)
+    gfBanBtn.disabled = decisionLocked;
+
+  if (gfReleaseBtn)
+    gfReleaseBtn.disabled = decisionLocked;
+
   const clientToggle = document.getElementById("clientReportToggleBtn");
   if (clientToggle) {
     clientToggle.textContent = currentClientReportReleased
@@ -992,6 +1146,8 @@ async function openReport(id) {
     <div class="kv"><span>Computador</span><span>${escapeHtml(analysis.machine_name || "—")}</span></div>
     <div class="kv"><span>Sistema</span><span>${escapeHtml(analysis.os_version || "—")}</span></div>
     <div class="kv"><span>Agente</span><span>${escapeHtml(analysis.agent_version || "—")}</span></div>
+    ${currentGuerraFriaLinked ? '<div class="kv"><span>Guerra Fria · SteamID</span><span>' + escapeHtml(analysis.external_player_id || "—") + '</span></div>' : ""}
+    ${currentGuerraFriaLinked ? '<div class="kv"><span>Código da verificação</span><span>' + escapeHtml(analysis.external_verification_code || "—") + '</span></div>' : ""}
     <div class="kv"><span>Revisão final</span><span>${escapeHtml(reviewStatusLabel)}</span></div>
     <div class="kv"><span>Última revisão</span><span>${escapeHtml(formatDate(reviewState.reviewedAt))}</span></div>
     <div class="kv"><span>Início</span><span>${escapeHtml(formatDate(analysis.started_at))}</span></div>
