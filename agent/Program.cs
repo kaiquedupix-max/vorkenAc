@@ -39,6 +39,7 @@ internal static class Program
             Console.WriteLine("- metadados de arquivos executáveis em pastas de risco;");
             Console.WriteLine("- hashes SHA-256, assinatura digital e Prefetch quando disponível.");
             Console.WriteLine("- histórico de downloads dos navegadores: nome/caminho, horários e URL de origem;");
+            Console.WriteLine("- hash técnico do equipamento para relacionar análises anteriores, sem enviar os seriais brutos;");
             Console.WriteLine();
             Console.WriteLine("O Vorken não coleta senhas, cookies, mensagens, fotos ou conteúdo de documentos.");
             Console.WriteLine();
@@ -58,6 +59,9 @@ internal static class Program
 
             var rules = await LoadRulesAsync(http, config.Token);
 
+            string machineFingerprint =
+                EchoEnvironmentCollector.ComputeMachineFingerprint();
+
             await PostJsonAsync(
                 http,
                 $"api/agent/{Uri.EscapeDataString(config.Token)}/start",
@@ -65,7 +69,8 @@ internal static class Program
                 {
                     machineName = Environment.MachineName,
                     osVersion = Environment.OSVersion.VersionString,
-                    agentVersion = AgentVersion
+                    agentVersion = AgentVersion,
+                    machineFingerprint
                 });
 
             Console.WriteLine();
@@ -312,7 +317,8 @@ internal static class Program
                 {
                     MachineName = Environment.MachineName,
                     OsVersion = Environment.OSVersion.VersionString,
-                    Is64BitOs = Environment.Is64BitOperatingSystem
+                    Is64BitOs = Environment.Is64BitOperatingSystem,
+                    Fingerprint = machineFingerprint
                 },
                 UsbCurrent = usbCurrent,
                 UsbHistory = usbHistory,
@@ -1206,6 +1212,7 @@ internal sealed class MachineRecord
     public string MachineName { get; set; } = "";
     public string OsVersion { get; set; } = "";
     public bool Is64BitOs { get; set; }
+    public string Fingerprint { get; set; } = "";
 }
 
 internal sealed class UsbDeviceRecord
