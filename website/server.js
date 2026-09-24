@@ -4262,10 +4262,27 @@ async function addBuiltInReviewFindings(analysisId, report) {
         download.pageUrl,
       ].join(" ").toLowerCase();
 
-      const archiveTerms = archiveRiskTerms.filter((term) =>
+      const strongTerms = archiveStrongTerms.filter((term) =>
         archiveText.includes(term));
 
-      if (archiveTerms.length >= 2) {
+      const contextTerms = archiveContextTerms.filter((term) =>
+        archiveText.includes(term));
+
+      const archiveTerms = [
+        ...new Set([
+          ...strongTerms,
+          ...contextTerms,
+        ]),
+      ];
+
+      const termSignal =
+        strongTerms.length >= 2 ||
+        (
+          strongTerms.length >= 1 &&
+          contextTerms.length >= 1
+        );
+
+      if (termSignal) {
         await insertReviewFinding(
           analysisId,
           ext === ".zip"
