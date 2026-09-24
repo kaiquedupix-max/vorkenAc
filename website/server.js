@@ -1502,6 +1502,52 @@ function downloadMatchesOfficialSource(appInfo, download) {
   return false;
 }
 
+function isTrustedCommonAppArtifact(value, evidence = {}) {
+  const appInfo =
+    findCommonAppByFileName(
+      evidence?.fileName ||
+      evidence?.name ||
+      evidence?.path ||
+      evidence?.fullPath ||
+      evidence?.targetPath ||
+      evidence?.currentPath ||
+      evidence?.originalPath ||
+      value
+    );
+
+  if (!appInfo)
+    return false;
+
+  const signerOk =
+    signerMatchesCommonApp(
+      appInfo,
+      evidence?.signerSubject ||
+      evidence?.publisher ||
+      evidence?.companyName
+    );
+
+  const officialSourceOk =
+    downloadMatchesOfficialSource(
+      appInfo,
+      evidence
+    );
+
+  const installedPathOk =
+    isTrustedInstalledPathForCommonApp(
+      evidence?.path ||
+      evidence?.fullPath ||
+      evidence?.currentPath ||
+      evidence?.targetPath ||
+      value
+    );
+
+  return (
+    signerOk ||
+    officialSourceOk ||
+    installedPathOk
+  );
+}
+
 function isTrustedInstalledPathForCommonApp(value) {
   const p = String(value || "")
     .replaceAll("/", "\\")
@@ -3253,6 +3299,29 @@ async function rebuildFindings(analysisId, report) {
       if (!matchesRule(rule, artifact)) continue;
       if (isKnownBenignPeNoise(artifact.value)) continue;
 
+      const strongIndependentSignal =
+        artifact.evidence?.priorityMaximum === true ||
+        artifact.evidence?.protectedByTechnicalEngine === true ||
+        artifact.evidence?.usbExecution === true ||
+        artifact.evidence?.knownCheatDomain === true ||
+        artifact.evidence?.directCatalogMatch === true ||
+        artifact.evidence?.executionConfirmed === true &&
+          (
+            artifact.evidence?.catalogMatch ||
+            Array.isArray(artifact.evidence?.catalogMatches) &&
+            artifact.evidence.catalogMatches.length > 0
+          );
+
+      if (
+        !strongIndependentSignal &&
+        isTrustedCommonAppArtifact(
+          artifact.value,
+          artifact.evidence || {}
+        )
+      ) {
+        continue;
+      }
+
       const severity = forceInformationalFinding(
         artifact.type,
         artifact.evidence,
@@ -3342,7 +3411,29 @@ async function insertReviewFinding(
   const protectedFinding =
     evidence?.priorityMaximum === true ||
     evidence?.protectedByTechnicalEngine === true ||
-    evidence?.usbExecution === true;
+    evidence?.usbExecution === true ||
+    evidence?.knownCheatDomain === true ||
+    evidence?.directCatalogMatch === true ||
+    (
+      evidence?.executionConfirmed === true &&
+      (
+        evidence?.catalogMatch ||
+        (
+          Array.isArray(evidence?.catalogMatches) &&
+          evidence.catalogMatches.length > 0
+        )
+      )
+    );
+
+  if (
+    !protectedFinding &&
+    isTrustedCommonAppArtifact(
+      normalizedValue,
+      evidence || {}
+    )
+  ) {
+    return;
+  }
 
   if (
     !protectedFinding &&
@@ -6544,6 +6635,7 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
       reviewedAt: analysisInternal.ai_reviewed_at || null,
     },
     relatedAnalyses,
+    commonApps: commonAppCatalog,
   });
 });
 
