@@ -368,18 +368,18 @@ async function openReport(id) {
   `;
 
   document.getElementById("relatedAnalysesList").innerHTML = relatedAnalyses.length
-    ? relatedAnalyses.map((item) => \`
+    ? relatedAnalyses.map((item) => `
         <div class="finding">
           <div class="finding-head">
-            <h4>#\${escapeHtml(item.id)} · \${escapeHtml(item.label || "Análise")}</h4>
-            <span class="tag \${escapeHtml(item.status || "info")}">\${escapeHtml(statusLabel(item.status))}</span>
+            <h4>#${escapeHtml(item.id)} · ${escapeHtml(item.label || "Análise")}</h4>
+            <span class="tag ${escapeHtml(item.status || "info")}">${escapeHtml(statusLabel(item.status))}</span>
           </div>
-          <div class="kv"><span>Data</span><span>\${escapeHtml(formatDate(item.created_at))}</span></div>
-          <div class="kv"><span>Computador</span><span>\${escapeHtml(item.machine_name || "—")}</span></div>
-          <div class="kv"><span>Agente</span><span>\${escapeHtml(item.agent_version || "—")}</span></div>
-          <button class="button ghost open-related-report" data-id="\${escapeHtml(item.id)}">Abrir relatório</button>
+          <div class="kv"><span>Data</span><span>${escapeHtml(formatDate(item.created_at))}</span></div>
+          <div class="kv"><span>Computador</span><span>${escapeHtml(item.machine_name || "—")}</span></div>
+          <div class="kv"><span>Agente</span><span>${escapeHtml(item.agent_version || "—")}</span></div>
+          <button class="button ghost open-related-report" data-id="${escapeHtml(item.id)}">Abrir relatório</button>
         </div>
-      \`).join("")
+      `).join("")
     : '<div class="message">Nenhuma análise anterior associada a este fingerprint.</div>';
 
   document.querySelectorAll(".open-related-report").forEach((button) => {
