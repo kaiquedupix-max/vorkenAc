@@ -45,6 +45,25 @@ PORT=3000
 VIRUSTOTAL_API_KEY=
 ```
 
+### Revisão por Gemini
+
+O Vorken usa o filtro técnico normal como primeira camada e pode usar o **Gemini** como segunda camada para reduzir falsos positivos. A integração usa a Gemini Developer API diretamente por HTTPS, sem SDK adicional.
+
+Variáveis recomendadas:
+
+```text
+AI_REVIEW_ENABLED=true
+GEMINI_API_KEY=sua-chave-do-google-ai-studio
+GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta
+GEMINI_MODEL=gemini-3.5-flash-lite
+AI_TIMEOUT_MS=60000
+AI_REVIEW_BATCH_SIZE=20
+AI_FALSE_POSITIVE_THRESHOLD=0.85
+AI_REVIEW_MAX_FINDINGS=0
+```
+
+A chave deve ficar somente no servidor/Coolify. Ela nunca é enviada ao agente Windows nem ao navegador. Se o Gemini falhar, ficar sem cota ou atingir rate limit, o Vorken mantém o resultado do filtro técnico normal e deixa os lotes não revisados disponíveis para uma tentativa posterior.
+
 ## Agent
 
 ```bash
