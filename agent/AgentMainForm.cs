@@ -152,7 +152,7 @@ internal sealed class AgentMainForm : Form
         _headerStatus.Text = "●  READY";
         _headerStatus.AutoSize = false;
         _headerStatus.Size = new Size(140, 36);
-        _headerStatus.Location = new Point(1080, 35);
+        _headerStatus.Location = new Point(1020, 35);
         _headerStatus.TextAlign = ContentAlignment.MiddleCenter;
         _headerStatus.Font = new Font("Consolas", 8.5F, FontStyle.Bold);
         _headerStatus.ForeColor = Accent;
@@ -196,7 +196,7 @@ internal sealed class AgentMainForm : Form
 
         Resize += (_, _) =>
         {
-            _headerStatus.Left = Math.Max(900, ClientSize.Width - 200);
+            _headerStatus.Left = Math.Max(860, ClientSize.Width - 260);
             minButton.Left = ClientSize.Width - 118;
             maxButton.Left = ClientSize.Width - 80;
             exitButton.Left = ClientSize.Width - 42;
@@ -1307,8 +1307,9 @@ internal sealed class AgentMainForm : Form
         _nav.Visible = true;
         SetActiveNav(3);
 
-        _surface.Controls.Add(MakeBadge("HISTÓRICO   ·   SESSÕES LOCAIS"));
-        _surface.Controls[^1].Location = new Point(44, 34);
+        var historyBadge = MakeBadge("HISTÓRICO   ·   SESSÕES LOCAIS");
+        historyBadge.Location = new Point(44, 34);
+        _surface.Controls.Add(historyBadge);
         _surface.Controls.Add(MakeLabel(
             "Histórico de análises",
             new Rectangle(44, 80, 700, 56),
@@ -1362,8 +1363,9 @@ internal sealed class AgentMainForm : Form
         _nav.Visible = true;
         SetActiveNav(4);
 
-        _surface.Controls.Add(MakeBadge("CONFIGURAÇÕES   ·   VORKEN"));
-        _surface.Controls[^1].Location = new Point(44, 34);
+        var settingsBadge = MakeBadge("CONFIGURAÇÕES   ·   VORKEN");
+        settingsBadge.Location = new Point(44, 34);
+        _surface.Controls.Add(settingsBadge);
         _surface.Controls.Add(MakeLabel(
             "Configurações",
             new Rectangle(44, 80, 600, 56),

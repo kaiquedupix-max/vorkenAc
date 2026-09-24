@@ -2460,8 +2460,13 @@ function switchAdminTab(name) {
     settings: document.getElementById("settingsPanel"),
   };
 
+  const panelName =
+    name === "home"
+      ? "sessions"
+      : name;
+
   for (const [key, panel] of Object.entries(panels)) {
-    panel?.classList.toggle("hidden", key !== name);
+    panel?.classList.toggle("hidden", key !== panelName);
   }
 
   document.querySelectorAll("[data-admin-tab]").forEach((button) => {
