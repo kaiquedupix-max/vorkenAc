@@ -35,10 +35,11 @@ async function load() {
     document.getElementById("analysisLabel").textContent = data.analysis.label;
     document.getElementById("analysisText").textContent =
       "Esta sessão é válida até " + formatDate(data.analysis.expiresAt) +
-      ". Baixe o pacote, extraia os dois arquivos na mesma pasta e execute Vorken.Agent.exe.";
+      ". Baixe o Vorken em .EXE e execute-o como administrador. Não é necessário extrair ZIP nem copiar arquivo de configuração.";
 
     const button = document.getElementById("downloadBtn");
-    button.href = data.packageUrl;
+    button.href = data.downloadUrl || data.packageUrl;
+    button.textContent = "Baixar Vorken.exe";
 
     const status = document.getElementById("analysisStatus");
     status.textContent = statusText(data.analysis.status);
