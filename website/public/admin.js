@@ -713,6 +713,10 @@ async function openReport(id) {
 
   const historyRiskOrder = { high: 3, medium: 2, low: 1 };
   const browserHistorySignals = [...arrays.browserHistorySignals]
+    .filter((item) =>
+      ["high", "medium"].includes(
+        String(item.riskLevel || "").toLowerCase()
+      ))
     .sort((a, b) =>
       (historyRiskOrder[String(b.riskLevel || "").toLowerCase()] || 0) -
       (historyRiskOrder[String(a.riskLevel || "").toLowerCase()] || 0) ||
