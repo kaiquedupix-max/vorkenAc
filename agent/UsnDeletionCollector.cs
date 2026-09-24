@@ -37,6 +37,7 @@ internal static class UsnDeletionCollector
                 result.AddRange(
                     CollectVolume(
                         drive.Name.TrimEnd('\\'),
+                        drive.DriveType.ToString(),
                         maxRecords: 6000));
             }
             catch
@@ -59,6 +60,7 @@ internal static class UsnDeletionCollector
 
     private static List<DeletedUsnRecord> CollectVolume(
         string volume,
+        string driveType,
         int maxRecords)
     {
         var result = new List<DeletedUsnRecord>();
@@ -148,6 +150,7 @@ internal static class UsnDeletionCollector
                         offset,
                         recordLength,
                         volume,
+                        driveType,
                         cutoff,
                         result);
                 }
@@ -172,6 +175,7 @@ internal static class UsnDeletionCollector
         int offset,
         uint recordLength,
         string volume,
+        string driveType,
         DateTime cutoff,
         List<DeletedUsnRecord> target)
     {
@@ -234,6 +238,7 @@ internal static class UsnDeletionCollector
             target.Add(new DeletedUsnRecord
             {
                 Volume = volume,
+                DriveType = driveType,
                 FileName = name,
                 Extension = extension,
                 TimestampUtc = timestamp,
@@ -392,6 +397,7 @@ internal static class UsnDeletionCollector
 internal sealed class DeletedUsnRecord
 {
     public string Volume { get; set; } = "";
+    public string DriveType { get; set; } = "";
     public string FileName { get; set; } = "";
     public string Extension { get; set; } = "";
     public DateTime TimestampUtc { get; set; }
