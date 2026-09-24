@@ -1376,6 +1376,7 @@ async function rebuildFindings(analysisId, report) {
 
   await addBuiltInReviewFindings(analysisId, report);
   await downgradeUnexecutedExeFindings(analysisId, report);
+  await enforceFinalSeverityPolicy(analysisId);
 }
 
 async function insertReviewFinding(
@@ -1547,6 +1548,124 @@ async function downgradeUnexecutedExeFindings(analysisId, report) {
        WHERE id = $1`,
       [finding.id, JSON.stringify(updatedEvidence)]
     );
+  }
+}
+
+async function enforceFinalSeverityPolicy(analysisId) {
+  const result = await pool.query(
+    `SELECT id, title, severity, artifact_type, artifact_value, evidence
+     FROM scan_findings
+     WHERE analysis_id = $1`,
+    [analysisId]
+  );
+
+  const noisyInfoTypes = new Set([
+    "unknown_app",
+    "powershell",
+    "powershell_artifact",
+    "system_integrity_expansion",
+    "network_indicator",
+    "usn_activity",
+    "autorun_integrity",
+    "prefetch_integrity",
+    "crash_artifact",
+    "module_integrity",
+    "memory_integrity"
+  ]);
+
+  for (const finding of result.rows) {
+    const type = String(finding.artifact_type || "");
+    const evidence = finding.evidence || {};
+    const value = String(finding.artifact_value || "");
+    const candidateName =
+      evidence.executableName ||
+      evidence.fileName ||
+      evidence.name ||
+      evidence.processName ||
+      value;
+
+    const catalogMatches = evidence.catalogMatch
+      ? [evidence.catalogMatch]
+      : findRustCatalogMatches(
+          evidence.url,
+          evidence.sourceUrl,
+          evidence.finalUrl,
+          evidence.pageUrl,
+          evidence.siteUrl,
+          evidence.referrerUrl,
+          evidence.recoveredUrl,
+          ...(Array.isArray(evidence.urlChain) ? evidence.urlChain : [])
+        );
+
+    const directCatalogWeb =
+      ["browser_history", "browser_recovery", "browser_download"].includes(type) &&
+      catalogMatches.some((match) =>
+        isDirectCatalogWebMatch(match, evidence));
+
+    const strictDiscordDownload =
+      type === "browser_download" &&
+      isDiscordAttachmentDownload(evidence) &&
+      isRiskyDownloadName(
+        evidence.fileName ||
+        evidence.targetPath ||
+        evidence.currentPath ||
+        value
+      );
+
+    const randomExecutedExe =
+      type === "executed_random_exe" ||
+      (
+        evidence.executionConfirmed === true &&
+        /\.exe$/i.test(path.basename(String(candidateName || ""))) &&
+        looksRandomExecutableName(candidateName)
+      );
+
+    const usbExecuted =
+      type === "usb_execution" ||
+      evidence.usbPriorityMaximum === true;
+
+    const allowedCritical =
+      directCatalogWeb ||
+      strictDiscordDownload ||
+      randomExecutedExe ||
+      usbExecuted;
+
+    let targetSeverity = finding.severity;
+    let note = String(evidence.note || "");
+
+    if (allowedCritical) {
+      targetSeverity = "critical";
+    } else if (["high", "critical"].includes(String(finding.severity))) {
+      targetSeverity =
+        noisyInfoTypes.has(type) ||
+        (type === "browser_download" && isOfficialDiscordInstallerOrUpdate(evidence))
+          ? "info"
+          : "medium";
+
+      note = note ||
+        "Mantido para revisão, mas não atende à política de detecção crítica.";
+    }
+
+    if (
+      targetSeverity !== finding.severity ||
+      note !== String(evidence.note || "")
+    ) {
+      await pool.query(
+        `UPDATE scan_findings
+         SET severity = $2,
+             evidence = $3::jsonb
+         WHERE id = $1`,
+        [
+          finding.id,
+          targetSeverity,
+          JSON.stringify({
+            ...evidence,
+            finalSeverityPolicy: true,
+            note
+          })
+        ]
+      );
+    }
   }
 }
 
