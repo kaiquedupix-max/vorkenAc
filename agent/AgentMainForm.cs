@@ -144,7 +144,31 @@ internal sealed class AgentMainForm : Form
     {
         _args = args;
 
-        Text = "Vorken Anti Cheat";
+        string executableTitle =
+            Path.GetFileNameWithoutExtension(
+                Environment.ProcessPath ??
+                Application.ExecutablePath);
+
+        Text =
+            executableTitle.StartsWith(
+                "Vorken AntiCheat - ",
+                StringComparison.OrdinalIgnoreCase)
+                ? executableTitle
+                : "Vorken AntiCheat";
+
+        try
+        {
+            Icon? executableIcon =
+                Icon.ExtractAssociatedIcon(
+                    Application.ExecutablePath);
+
+            if (executableIcon != null)
+                Icon = executableIcon;
+        }
+        catch
+        {
+        }
+
         StartPosition = FormStartPosition.CenterScreen;
         ClientSize = new Size(1280, 900);
         MinimumSize = new Size(1160, 820);
@@ -2388,7 +2412,7 @@ internal sealed class AgentMainForm : Form
         DialogResult answer = MessageBox.Show(
             this,
             "A análise ainda está em andamento. Fechar agora pode interromper o envio dos dados. Deseja fechar mesmo assim?",
-            "Vorken Anti Cheat",
+            "Vorken AntiCheat",
             MessageBoxButtons.YesNo,
             MessageBoxIcon.Warning);
 

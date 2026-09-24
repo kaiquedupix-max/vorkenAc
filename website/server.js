@@ -2256,6 +2256,7 @@ async function notifyGuerraFriaProgress(analysisId, stage, message) {
         body: JSON.stringify({
           analysisId,
           steamId: analysis.external_player_id,
+          playerName,
           discordUserId: analysis.external_discord_user_id,
           ticketChannelId: analysis.external_ticket_channel_id,
           stage,
@@ -2269,6 +2270,48 @@ async function notifyGuerraFriaProgress(analysisId, stage, message) {
       error?.message || error
     );
   }
+}
+
+function sanitizeWindowsFileName(value) {
+  const cleaned = String(value || "")
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/[. ]+$/g, "")
+    .trim()
+    .slice(0, 72);
+
+  return cleaned || "Cliente";
+}
+
+async function getAnalysisClientName(analysis) {
+  if (!analysis)
+    return "Cliente";
+
+  if (analysis.external_source === "guerra_fria") {
+    const result = await pool.query(
+      `SELECT player_name
+       FROM guerra_fria_verifications
+       WHERE analysis_id=$1
+       ORDER BY id DESC
+       LIMIT 1`,
+      [analysis.id]
+    );
+
+    const linkedName =
+      sanitizeWindowsFileName(
+        result.rows[0]?.player_name
+      );
+
+    if (linkedName && linkedName !== "Cliente")
+      return linkedName;
+  }
+
+  const label =
+    String(analysis.label || "")
+      .replace(/^Guerra Fria\s*·\s*/i, "")
+      .replace(/\s*·\s*7656119\d{10}\s*$/i, "");
+
+  return sanitizeWindowsFileName(label);
 }
 
 async function getAnalysisByToken(token) {
@@ -6324,6 +6367,22 @@ app.post(
       });
     }
 
+    const playerNameResult = await pool.query(
+      `SELECT player_name
+       FROM guerra_fria_verifications
+       WHERE analysis_id=$1
+       ORDER BY id DESC
+       LIMIT 1`,
+      [id]
+    );
+
+    const playerName =
+      cleanText(
+        playerNameResult.rows[0]?.player_name,
+        100
+      ) ||
+      cleanText(analysis.label, 100);
+
     const response = await fetch(
       baseUrl + "/api/integrations/vorken/decision",
       {
@@ -6725,8 +6784,22 @@ app.get("/api/public/analyses/:token/download", async (req, res) => {
     .update(binary)
     .digest("hex");
 
+  const clientName =
+    await getAnalysisClientName(analysis);
+
   const fileName =
-    "Vorken-" + analysis.id + "--" + token + ".exe";
+    "Vorken AntiCheat - " +
+    clientName +
+    ".exe";
+
+  const asciiFileName =
+    fileName
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^\x20-\x7E]/g, "")
+      .replace(/["\\]/g, "")
+      .slice(0, 120) ||
+    "Vorken AntiCheat.exe";
 
   res.setHeader(
     "Content-Type",
@@ -6734,7 +6807,10 @@ app.get("/api/public/analyses/:token/download", async (req, res) => {
   );
   res.setHeader(
     "Content-Disposition",
-    'attachment; filename="' + fileName + '"'
+    'attachment; filename="' +
+      asciiFileName +
+      '"; filename*=UTF-8\'\'' +
+      encodeURIComponent(fileName)
   );
   res.setHeader("Content-Length", String(binary.length));
   res.setHeader("Cache-Control", "private, no-store");
