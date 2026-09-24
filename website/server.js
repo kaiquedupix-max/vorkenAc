@@ -179,6 +179,93 @@ function validToken(value) {
   return /^[A-Za-z0-9_-]{20,80}$/.test(String(value || ""));
 }
 
+let lolDriversCache = {
+  expiresAt: 0,
+  bySha256: new Map()
+};
+
+async function getLolDriversIndex() {
+  if (
+    lolDriversCache.expiresAt > Date.now() &&
+    lolDriversCache.bySha256.size > 0
+  ) {
+    return lolDriversCache.bySha256;
+  }
+
+  try {
+    const response = await fetch(
+      "https://www.loldrivers.io/api/drivers.json",
+      {
+        headers: {
+          "accept": "application/json",
+          "user-agent": "Vorken-AntiCheat/1.0"
+        },
+        signal: AbortSignal.timeout(10000)
+      }
+    );
+
+    if (!response.ok)
+      return lolDriversCache.bySha256;
+
+    const payload = await response.json();
+    const entries = Array.isArray(payload) ? payload : [];
+    const index = new Map();
+
+    const readHash = (sample) =>
+      String(
+        sample?.SHA256 ??
+        sample?.Sha256 ??
+        sample?.sha256 ??
+        sample?.Hashes?.SHA256 ??
+        sample?.hashes?.sha256 ??
+        ""
+      )
+        .trim()
+        .toLowerCase();
+
+    for (const entry of entries) {
+      const samples =
+        Array.isArray(entry?.KnownVulnerableSamples)
+          ? entry.KnownVulnerableSamples
+          : [];
+
+      for (const sample of samples) {
+        const sha256 = readHash(sample);
+        if (!/^[a-f0-9]{64}$/.test(sha256))
+          continue;
+
+        index.set(sha256, {
+          title:
+            entry?.Tags?.join?.(", ") ||
+            entry?.Category ||
+            entry?.Verified ||
+            "LOLDrivers",
+          description:
+            entry?.Description ||
+            sample?.Filename ||
+            sample?.FileName ||
+            "Known vulnerable driver",
+          filename:
+            sample?.Filename ||
+            sample?.FileName ||
+            "",
+          verified: entry?.Verified ?? null,
+          source: "LOLDrivers"
+        });
+      }
+    }
+
+    lolDriversCache = {
+      expiresAt: Date.now() + 6 * 60 * 60 * 1000,
+      bySha256: index
+    };
+
+    return index;
+  } catch {
+    return lolDriversCache.bySha256;
+  }
+}
+
 async function queryVirusTotalHash(sha256) {
   const apiKey = String(process.env.VIRUSTOTAL_API_KEY || "").trim();
   const hash = String(sha256 || "").trim().toLowerCase();
@@ -1383,6 +1470,35 @@ async function addBuiltInReviewFindings(analysisId, report) {
           matchedRiskTerms,
           confidence: "medium",
           note: "O arquivo foi apagado e o nome contém termo frequentemente associado a loaders/scripts/cheats. Não é necessário haver Prefetch para esta ocorrência.",
+        }
+      );
+    }
+  }
+
+  // Vulnerable-driver reputation based on the public LOLDrivers hash catalog.
+  const vulnerableDriverIndex = await getLolDriversIndex();
+
+  if (vulnerableDriverIndex.size > 0) {
+    for (const driver of report.drivers || []) {
+      const sha256 = String(driver.sha256 || "").toLowerCase();
+      if (!/^[a-f0-9]{64}$/.test(sha256))
+        continue;
+
+      const match = vulnerableDriverIndex.get(sha256);
+      if (!match)
+        continue;
+
+      await insertReviewFinding(
+        analysisId,
+        "Driver vulnerável conhecido",
+        "critical",
+        "driver",
+        driver.resolvedPath || driver.pathName || driver.name || sha256,
+        {
+          ...driver,
+          vulnerableDriverMatch: match,
+          confidence: "high",
+          note: "O SHA-256 do driver corresponde a uma amostra pública do catálogo LOLDrivers. A presença do driver não prova uso malicioso, mas é uma evidência de alta prioridade."
         }
       );
     }
