@@ -31,6 +31,7 @@ internal sealed class AgentMainForm : Form
     private readonly System.Windows.Forms.Timer _motionTimer = new();
     private readonly System.Windows.Forms.Timer _scanTimer = new();
     private readonly System.Windows.Forms.Timer _fadeTimer = new();
+    private readonly System.Windows.Forms.Timer _clientResultPollTimer = new();
 
     private readonly List<Label> _stepStateLabels = new();
     private readonly List<string> _activityLines = new();
@@ -167,6 +168,9 @@ internal sealed class AgentMainForm : Form
         _fadeTimer.Interval = 16;
         _fadeTimer.Tick += FadeTimer_Tick;
 
+        _clientResultPollTimer.Interval = 5000;
+        _clientResultPollTimer.Tick += ClientResultPollTimer_Tick;
+
         Shown += (_, _) =>
         {
             UpdateWindowRegion();
@@ -217,7 +221,7 @@ internal sealed class AgentMainForm : Form
 
         var brandCaption = new Label
         {
-            Text = "ANTI CHEAT · SECURE SCAN SESSION",
+            Text = "ANTI CHEAT",
             AutoSize = true,
             Location = new Point(112, 50),
             Font = new Font("Consolas", 8.5F, FontStyle.Bold),
@@ -921,8 +925,8 @@ internal sealed class AgentMainForm : Form
             minimum = 68;
         }
 
-        if (lower.Contains("correl") || lower.Contains("filtro") || lower.Contains("gemini") ||
-            lower.Contains("processando"))
+        if (lower.Contains("correl") || lower.Contains("filtro") ||
+            lower.Contains("revis") || lower.Contains("processando"))
         {
             stage = 6;
             minimum = 80;
@@ -973,6 +977,40 @@ internal sealed class AgentMainForm : Form
         _progressPercentLabel.Text = $"{_progressPercent}%";
     }
 
+    private async void ClientResultPollTimer_Tick(object? sender, EventArgs e)
+    {
+        if (_running || _lastRun is null)
+            return;
+
+        try
+        {
+            AgentResultSnapshot? refreshed =
+                await Program.FetchCurrentResultAsync(_args);
+
+            if (refreshed is null)
+                return;
+
+            bool releaseChanged =
+                _lastRun.Result?.DetailsReleased !=
+                refreshed.DetailsReleased;
+
+            int previousFindingCount =
+                _lastRun.Result?.Findings?.Count ?? 0;
+
+            _lastRun.Result = refreshed;
+
+            if (releaseChanged ||
+                previousFindingCount != refreshed.Findings.Count)
+            {
+                ShowResultsView(_lastRun);
+            }
+        }
+        catch
+        {
+            // A liberação é opcional. Falhas temporárias de rede não alteram o relatório local.
+        }
+    }
+
     private void ShowResultsView(AgentRunResult result)
     {
         if (InvokeRequired)
@@ -994,10 +1032,17 @@ internal sealed class AgentMainForm : Form
         int criticalCount = snapshot?.Summary.Critical ?? 0;
         int reviewCount = snapshot?.Summary.Review ?? 0;
         int inventoryCount = snapshot?.Summary.Inventory ?? Math.Max(_artifactCount, 0);
+        int detectionCount = criticalCount + reviewCount;
+        bool detailsReleased = snapshot?.DetailsReleased == true;
 
         _visibleFindings.Clear();
-        if (snapshot?.Findings is not null)
+        if (detailsReleased && snapshot?.Findings is not null)
             _visibleFindings.AddRange(snapshot.Findings);
+
+        if (success)
+            _clientResultPollTimer.Start();
+        else
+            _clientResultPollTimer.Stop();
 
         var badge = MakeBadge("RESULTADOS   ·   RELATÓRIO DE ANÁLISE");
         badge.Location = new Point(44, 24);
@@ -1017,8 +1062,12 @@ internal sealed class AgentMainForm : Form
             FontStyle.Bold));
         _surface.Controls.Add(MakeLabel(
             success
-                ? "O Vorken analisou os dados do sistema e classificou os achados\npor nível de severidade. A decisão final é feita por revisão humana."
-                : "A coleta foi interrompida antes da conclusão. Consulte os detalhes técnicos abaixo.",
+                ? detailsReleased
+                    ? "O relatório detalhado foi liberado pela administração.\nAs evidências abaixo estão disponíveis para revisão."
+                    : detectionCount > 0
+                        ? "A análise foi concluída e houve detecção.\nOs detalhes ficam visíveis somente quando liberados pela administração."
+                        : "A análise foi concluída. Nenhuma detecção prioritária foi registrada."
+                : "A coleta foi interrompida antes da conclusão.",
             new Rectangle(46, 180, 610, 58),
             10.4F,
             TextSecondary));
@@ -1059,18 +1108,20 @@ internal sealed class AgentMainForm : Form
                 : Border
         };
         decision.Controls.Add(MakeLabel(
-            success && (criticalCount > 0 || reviewCount > 0)
-                ? "DECISÃO:\nREVISÃO MANUAL\nNECESSÁRIA"
+            success && detectionCount > 0
+                ? "STATUS:\nDETECÇÃO\nREGISTRADA"
                 : success
-                    ? "DECISÃO:\nRELATÓRIO PRONTO"
-                    : "DECISÃO:\nREPETIR ANÁLISE",
+                    ? "STATUS:\nANÁLISE\nCONCLUÍDA"
+                    : "STATUS:\nREPETIR\nANÁLISE",
             new Rectangle(18, 18, 165, 66),
             10.1F,
             success && (criticalCount > 0 || reviewCount > 0) ? Warning : TextPrimary,
             FontStyle.Bold));
         decision.Controls.Add(MakeLabel(
             success
-                ? "Os achados foram enviados\npara revisão da equipe."
+                ? detailsReleased
+                    ? "Detalhes liberados\npela administração."
+                    : "Detalhes restritos\nà administração."
                 : "O envio não foi concluído.",
             new Rectangle(18, 96, 165, 38),
             8.3F,
@@ -1078,29 +1129,91 @@ internal sealed class AgentMainForm : Form
         statusCard.Controls.Add(decision);
         _surface.Controls.Add(statusCard);
 
-        var criticalCard = MakeFindingColumn(
-            "⚠", "CRÍTICO", criticalCount, "Achados de alta severidade",
-            Danger, new Rectangle(28, 258, 380, 292),
-            _visibleFindings.Where(x => x.Severity is "critical" or "high").Take(4).ToList());
+        if (detailsReleased)
+        {
+            var criticalCard = MakeFindingColumn(
+                "⚠", "CRÍTICO", criticalCount, "Achados de alta severidade",
+                Danger, new Rectangle(28, 258, 380, 292),
+                _visibleFindings.Where(x => x.Severity is "critical" or "high").ToList());
 
-        var reviewCard = MakeFindingColumn(
-            "!", "REVISAR", reviewCount, "Achados de média severidade",
-            Warning, new Rectangle(420, 258, 380, 292),
-            _visibleFindings.Where(x => x.Severity == "medium").Take(4).ToList());
+            var reviewCard = MakeFindingColumn(
+                "!", "REVISAR", reviewCount, "Achados de média severidade",
+                Warning, new Rectangle(420, 258, 380, 292),
+                _visibleFindings.Where(x => x.Severity == "medium").ToList());
 
-        var inventoryCard = MakeInventoryColumn(
-            inventoryCount,
-            new Rectangle(812, 258, 414, 292));
+            var inventoryCard = MakeInventoryColumn(
+                inventoryCount,
+                new Rectangle(812, 258, 414, 292));
 
-        _surface.Controls.Add(criticalCard);
-        _surface.Controls.Add(reviewCard);
-        _surface.Controls.Add(inventoryCard);
+            _surface.Controls.Add(criticalCard);
+            _surface.Controls.Add(reviewCard);
+            _surface.Controls.Add(inventoryCard);
+        }
+        else
+        {
+            var lockedCard = MakeCard(new Rectangle(28, 258, 1198, 292));
+            lockedCard.BorderColor = detectionCount > 0 ? Warning : Accent;
+
+            lockedCard.Controls.Add(MakeLabel(
+                detectionCount > 0 ? "⚠" : "✓",
+                new Rectangle(30, 44, 80, 80),
+                36F,
+                detectionCount > 0 ? Warning : Accent,
+                FontStyle.Bold));
+
+            lockedCard.Controls.Add(MakeLabel(
+                detectionCount > 0
+                    ? "Detecção registrada"
+                    : "Nenhuma detecção prioritária",
+                new Rectangle(130, 46, 650, 42),
+                23F,
+                TextPrimary,
+                FontStyle.Bold));
+
+            lockedCard.Controls.Add(MakeLabel(
+                detectionCount > 0
+                    ? $"Foram registrados {detectionCount} achado(s) que exigem revisão. " +
+                      "Nomes, caminhos, arquivos e evidências permanecem ocultos para este cliente."
+                    : "O relatório foi enviado para a administração e permanece disponível para revisão.",
+                new Rectangle(132, 98, 930, 56),
+                10F,
+                TextSecondary));
+
+            lockedCard.Controls.Add(MakeLabel(
+                "DETALHES RESTRITOS",
+                new Rectangle(132, 176, 240, 24),
+                8F,
+                Warning,
+                FontStyle.Bold,
+                "Consolas"));
+
+            lockedCard.Controls.Add(MakeLabel(
+                "Se a administração liberar o relatório, os detalhes aparecerão automaticamente nesta tela.",
+                new Rectangle(132, 204, 820, 30),
+                8.8F,
+                TextDim));
+
+            _surface.Controls.Add(lockedCard);
+        }
 
         var summaryCard = MakeCard(new Rectangle(28, 565, 590, 230));
         summaryCard.Controls.Add(MakeSectionTitle("●   RESUMO DA ANÁLISE", 18, 16));
-        summaryCard.Controls.Add(MakeSummaryMetric("⚠", criticalCount.ToString(), "Itens críticos", "Alta severidade", Danger, 18));
-        summaryCard.Controls.Add(MakeSummaryMetric("!", reviewCount.ToString(), "Itens para revisão", "Média severidade", Warning, 196));
-        summaryCard.Controls.Add(MakeSummaryMetric("▤", inventoryCount.ToString(), "Artefatos catalogados", "Baixo risco / inventário", Blue, 388));
+        if (detailsReleased)
+        {
+            summaryCard.Controls.Add(MakeSummaryMetric("⚠", criticalCount.ToString(), "Itens críticos", "Alta severidade", Danger, 18));
+            summaryCard.Controls.Add(MakeSummaryMetric("!", reviewCount.ToString(), "Itens para revisão", "Média severidade", Warning, 196));
+            summaryCard.Controls.Add(MakeSummaryMetric("▤", inventoryCount.ToString(), "Artefatos catalogados", "Inventário técnico", Blue, 388));
+        }
+        else
+        {
+            summaryCard.Controls.Add(MakeSummaryMetric(
+                detectionCount > 0 ? "!" : "✓",
+                detectionCount.ToString(),
+                "Detecções registradas",
+                "Detalhes restritos",
+                detectionCount > 0 ? Warning : Accent,
+                18));
+        }
 
         string sessionId = snapshot?.AnalysisId > 0 ? snapshot.AnalysisId.ToString() : "—";
         summaryCard.Controls.Add(MakeLabel(
@@ -1116,14 +1229,35 @@ internal sealed class AgentMainForm : Form
         _surface.Controls.Add(summaryCard);
 
         _evidenceDetailPanel = MakeCard(new Rectangle(630, 565, 596, 230));
-        _evidenceDetailPanel.Controls.Add(MakeSectionTitle("DETALHES DA EVIDÊNCIA", 18, 15));
+        _evidenceDetailPanel.Controls.Add(MakeSectionTitle(
+            detailsReleased ? "DETALHES DA EVIDÊNCIA" : "ACESSO AO RELATÓRIO",
+            18,
+            15));
         _surface.Controls.Add(_evidenceDetailPanel);
 
-        AgentFindingSnapshot? selected =
-            _visibleFindings.FirstOrDefault(x => x.Severity is "critical" or "high")
-            ?? _visibleFindings.FirstOrDefault();
+        if (detailsReleased)
+        {
+            AgentFindingSnapshot? selected =
+                _visibleFindings.FirstOrDefault(x => x.Severity is "critical" or "high")
+                ?? _visibleFindings.FirstOrDefault();
 
-        ShowEvidenceDetail(selected);
+            ShowEvidenceDetail(selected);
+        }
+        else
+        {
+            var restricted = MakeLabel(
+                detectionCount > 0
+                    ? "A administração recebeu o relatório completo.\n\n" +
+                      "Esta cópia mostra apenas que houve detecção. " +
+                      "Os detalhes técnicos serão exibidos somente após liberação administrativa."
+                    : "A administração recebeu o relatório completo.\n\n" +
+                      "Nenhum detalhe técnico é exibido ao cliente sem liberação administrativa.",
+                new Rectangle(20, 62, 540, 116),
+                9.4F,
+                TextSecondary);
+            restricted.Tag = "dynamic";
+            _evidenceDetailPanel.Controls.Add(restricted);
+        }
 
         SetHeaderState(success ? "CONCLUÍDO" : "ERRO", success ? Accent : Danger);
     }
@@ -1139,6 +1273,7 @@ internal sealed class AgentMainForm : Form
     {
         var card = MakeCard(bounds);
         card.BorderColor = color;
+        card.AutoScroll = true;
 
         card.Controls.Add(MakeLabel(icon, new Rectangle(18, 18, 42, 42), 21F, color, FontStyle.Bold));
         card.Controls.Add(MakeLabel(title, new Rectangle(67, 17, 160, 26), 13.5F, color, FontStyle.Bold));
@@ -2246,6 +2381,7 @@ internal sealed class AgentMainForm : Form
 
     private void OnFormClosing(object? sender, FormClosingEventArgs e)
     {
+        _clientResultPollTimer.Stop();
         if (!_running)
             return;
 

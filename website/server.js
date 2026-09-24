@@ -1994,6 +1994,9 @@ async function initDb() {
     ALTER TABLE analyses
       ADD COLUMN IF NOT EXISTS processing_message TEXT NULL;
 
+    ALTER TABLE analyses
+      ADD COLUMN IF NOT EXISTS client_report_released BOOLEAN NOT NULL DEFAULT FALSE;
+
     UPDATE analyses
     SET
       processing_stage = CASE
@@ -2007,14 +2010,26 @@ async function initDb() {
       END,
       processing_message = CASE
         WHEN status='completed' AND ai_review_status='completed'
-          THEN COALESCE(processing_message, 'Análise concluída e filtrada pela IA.')
+          THEN COALESCE(processing_message, 'Análise concluída e resultado final preparado.')
         WHEN status='completed' AND ai_review_status<>'completed'
-          THEN COALESCE(processing_message, 'Análise antiga ainda não revisada pela IA. Use Recalcular com IA.')
+          THEN COALESCE(processing_message, 'Análise concluída. O resultado técnico permanece disponível.')
         WHEN status='running'
           THEN COALESCE(processing_message, 'Análise em andamento.')
         ELSE processing_message
       END
     WHERE processing_stage='waiting';
+
+    UPDATE analyses
+    SET processing_message = CASE
+      WHEN processing_stage='ai_filter' THEN 'Aplicando revisão final e reduzindo falsos positivos...'
+      WHEN processing_stage='finalizing' THEN 'Preparando o resultado final...'
+      WHEN processing_stage='completed' THEN 'Análise concluída e resultado final preparado.'
+      WHEN processing_stage='ai_error' THEN 'Análise técnica concluída. A revisão final não foi concluída.'
+      WHEN processing_stage='needs_ai' THEN 'Resultado técnico disponível para revisão.'
+      ELSE processing_message
+    END
+    WHERE processing_message ILIKE '%gemini%'
+       OR processing_message ~* '(^|[^A-ZÀ-Ú])IA([^A-ZÀ-Ú]|$)';
 
     ALTER TABLE scan_reports
       ADD COLUMN IF NOT EXISTS payload_raw BYTEA NULL;
@@ -2634,7 +2649,7 @@ async function rebuildFindings(analysisId, report) {
   await pool.query(
     `UPDATE analyses
      SET processing_stage='ai_filter',
-         processing_message='Filtro técnico concluído. A IA está revisando possíveis falsos positivos...'
+         processing_message='Filtro técnico concluído. Aplicando revisão final e reduzindo falsos positivos...'
      WHERE id=$1`,
     [analysisId]
   );
@@ -2653,8 +2668,8 @@ async function rebuildFindings(analysisId, report) {
         ? "finalizing"
         : "ai_error",
       aiResult?.status === "completed"
-        ? "Revisão por IA concluída. Preparando o resultado final..."
-        : "A revisão por IA não pôde ser concluída. O resultado técnico sem IA continua disponível.",
+        ? "Revisão final concluída. Preparando o resultado..."
+        : "A revisão final não pôde ser concluída. O resultado técnico continua disponível.",
     ]
   );
 
@@ -5245,7 +5260,20 @@ app.get("/api/admin/me", requireAdmin, (_req, res) => {
 app.get("/api/admin/analyses", requireAdmin, async (_req, res) => {
   const result = await pool.query(`
     SELECT
-      a.*,
+      a.id,
+      a.label,
+      a.status,
+      a.created_at,
+      a.expires_at,
+      a.started_at,
+      a.finished_at,
+      a.machine_name,
+      a.os_version,
+      a.agent_version,
+      a.machine_fingerprint,
+      a.processing_stage,
+      a.processing_message,
+      a.client_report_released,
       COALESCE(f.total_findings, 0)::int AS total_findings,
       COALESCE(f.high_findings, 0)::int AS high_findings
     FROM analyses a
@@ -5254,7 +5282,7 @@ app.get("/api/admin/analyses", requireAdmin, async (_req, res) => {
         sf.analysis_id,
         COUNT(DISTINCT LOWER(sf.artifact_type) || '|' || LOWER(TRIM(sf.artifact_value)))
           FILTER (
-            WHERE sf.severity IN ('high','critical')
+            WHERE sf.severity IN ('medium','high','critical')
               AND (
                 sf.evidence->>'priorityMaximum' = 'true'
                 OR ar.verdict IS DISTINCT FROM 'likely_false_positive'
@@ -5278,7 +5306,13 @@ app.get("/api/admin/analyses", requireAdmin, async (_req, res) => {
     LIMIT 500
   `);
 
-  res.json({ analyses: result.rows });
+  res.json({
+    analyses: result.rows.map((item) => ({
+      ...item,
+      processing_stage:
+        publicProcessingStage(item.processing_stage),
+    })),
+  });
 });
 
 app.post("/api/admin/analyses", requireAdmin, async (req, res) => {
@@ -5308,7 +5342,27 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "invalid_id" });
 
-  const analysisResult = await pool.query("SELECT * FROM analyses WHERE id = $1 LIMIT 1", [id]);
+  const analysisResult = await pool.query(
+    `SELECT
+       id,
+       label,
+       status,
+       created_at,
+       expires_at,
+       started_at,
+       finished_at,
+       machine_name,
+       os_version,
+       agent_version,
+       machine_fingerprint,
+       processing_stage,
+       processing_message,
+       client_report_released
+     FROM analyses
+     WHERE id = $1
+     LIMIT 1`,
+    [id]
+  );
   const analysis = analysisResult.rows[0];
   if (!analysis) return res.status(404).json({ error: "analysis_not_found" });
 
@@ -5340,11 +5394,9 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
          ELSE json_build_object(
            'verdict', ar.verdict,
            'confidence', ar.confidence,
-           'reason', ar.reason,
-           'model', ar.model,
-           'cached', ar.cached
+           'reason', ar.reason
          )
-       END AS ai_review
+       END AS review_layer
      FROM scan_findings sf
      LEFT JOIN ai_finding_reviews ar
        ON ar.analysis_id = sf.analysis_id
@@ -5380,10 +5432,8 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
        json_build_object(
          'verdict', ar.verdict,
          'confidence', ar.confidence,
-         'reason', ar.reason,
-         'model', ar.model,
-         'cached', ar.cached
-       ) AS ai_review
+         'reason', ar.reason
+       ) AS review_layer
      FROM scan_findings sf
      JOIN ai_finding_reviews ar
        ON ar.analysis_id = sf.analysis_id
@@ -5419,20 +5469,65 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
     relatedAnalyses = relatedResult.rows;
   }
 
+  const internalDetailStage =
+    analysis.processing_stage;
+
+  analysis.processing_stage =
+    publicProcessingStage(
+      internalDetailStage);
+
+  analysis.processing_message =
+    publicAgentProcessingMessage(
+      internalDetailStage,
+      analysis.status);
+
+  const internalReviewResult = await pool.query(
+    `SELECT ai_review_status, ai_review_error, ai_reviewed_at
+     FROM analyses
+     WHERE id=$1
+     LIMIT 1`,
+    [id]
+  );
+  const analysisInternal = internalReviewResult.rows[0] || {};
+
   res.json({
     analysis,
     report: reportResult.rows[0] || null,
     findings: findingsResult.rows,
-    aiFilteredFindings: aiFilteredResult.rows,
-    aiReview: {
-      status: analysis.ai_review_status || "pending",
-      error: analysis.ai_review_error || null,
-      reviewedAt: analysis.ai_reviewed_at || null,
-      configured: aiReviewAvailable(),
-      provider: aiReviewConfig.provider,
-      model: aiReviewConfig.model,
+    filteredFindings: aiFilteredResult.rows,
+    reviewState: {
+      status: analysisInternal.ai_review_status || "pending",
+      error: analysisInternal.ai_review_error || null,
+      reviewedAt: analysisInternal.ai_reviewed_at || null,
     },
     relatedAnalyses,
+  });
+});
+
+app.post("/api/admin/analyses/:id/client-report", requireAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: "invalid_id" });
+  }
+
+  const released = req.body?.released === true;
+
+  const result = await pool.query(
+    `UPDATE analyses
+     SET client_report_released=$2
+     WHERE id=$1
+     RETURNING id, client_report_released`,
+    [id, released]
+  );
+
+  if (!result.rows[0]) {
+    return res.status(404).json({ error: "analysis_not_found" });
+  }
+
+  res.json({
+    ok: true,
+    analysisId: Number(result.rows[0].id),
+    released: result.rows[0].client_report_released === true,
   });
 });
 
@@ -5461,7 +5556,8 @@ app.get("/api/admin/analyses/:id/rebuild-status", requireAdmin, async (req, res)
   }
 
   const row = result.rows[0];
-  const stage = row.processing_stage || "waiting";
+  const internalStage =
+    row.processing_stage || "waiting";
 
   res.json({
     processing:
@@ -5472,13 +5568,17 @@ app.get("/api/admin/analyses/:id/rebuild-status", requireAdmin, async (req, res)
         "normal_filter",
         "ai_filter",
         "finalizing",
-      ].includes(stage),
+      ].includes(internalStage),
     status: row.status || "waiting",
-    processingStage: stage,
-    processingMessage: row.processing_message || null,
-    aiReviewStatus: row.ai_review_status || "pending",
-    aiReviewError: row.ai_review_error || null,
-    aiReviewedAt: row.ai_reviewed_at || null,
+    processingStage:
+      publicProcessingStage(internalStage),
+    processingMessage:
+      publicAgentProcessingMessage(
+        internalStage,
+        row.status),
+    reviewStatus: row.ai_review_status || "pending",
+    reviewError: row.ai_review_error || null,
+    reviewedAt: row.ai_reviewed_at || null,
   });
 });
 
@@ -5528,7 +5628,7 @@ app.post("/api/admin/analyses/:id/rebuild", requireAdmin, async (req, res) => {
      SET ai_review_status='running',
          ai_review_error=NULL,
          processing_stage='preparing',
-         processing_message='Preparando recálculo com filtros técnico e de IA...'
+         processing_message='Preparando recálculo e revisão final...'
      WHERE id=$1`,
     [id]
   );
@@ -5562,8 +5662,8 @@ app.post("/api/admin/analyses/:id/rebuild", requireAdmin, async (req, res) => {
             ? "completed"
             : "ai_error",
           aiStatus === "completed"
-            ? "Recálculo concluído e filtrado pela IA."
-            : "Recálculo técnico concluído, mas a revisão por IA não foi finalizada.",
+            ? "Recálculo concluído e resultado final preparado."
+            : "Recálculo técnico concluído; a revisão final não foi finalizada.",
         ]
       );
     } catch (error) {
@@ -5587,7 +5687,7 @@ app.post("/api/admin/analyses/:id/rebuild", requireAdmin, async (req, res) => {
                ai_review_error=$2,
                ai_reviewed_at=NOW(),
                processing_stage='ai_error',
-               processing_message='Falha durante o recálculo com IA. O resultado técnico sem IA continua disponível.'
+               processing_message='Falha durante a revisão final. O resultado técnico continua disponível.'
            WHERE id=$1`,
           [
             id,
@@ -5901,7 +6001,7 @@ app.post("/api/agent/:token/report", async (req, res) => {
       `UPDATE analyses
        SET status='running',
            processing_stage='preparing',
-           processing_message='Relatório recebido. Preparando os dados para os filtros técnico e de IA...',
+           processing_message='Relatório recebido. Preparando os dados para análise técnica e revisão final...',
            machine_name=COALESCE($2, machine_name),
            os_version=COALESCE($3, os_version),
            agent_version=COALESCE($4, agent_version),
@@ -5950,8 +6050,8 @@ app.post("/api/agent/:token/report", async (req, res) => {
               ? "completed"
               : "ai_error",
             aiStatus === "completed"
-              ? "Análise concluída e filtrada pela IA."
-              : "Análise técnica concluída, mas a revisão por IA não foi finalizada.",
+              ? "Análise concluída e resultado final preparado."
+              : "Análise técnica concluída; a revisão final não foi finalizada.",
           ]
         );
       } catch (error) {
@@ -6012,6 +6112,40 @@ app.post("/api/agent/:token/report", async (req, res) => {
 });
 
 
+function publicProcessingStage(stage) {
+  const value = String(stage || "waiting");
+
+  const map = {
+    ai_filter: "review_filter",
+    ai_error: "review_error",
+    needs_ai: "needs_review",
+  };
+
+  return map[value] || value;
+}
+
+function publicAgentProcessingMessage(stage, status) {
+  const map = {
+    waiting: "Aguardando início da análise.",
+    collecting: "Coletando evidências técnicas...",
+    preparing: "Preparando os dados coletados...",
+    normal_filter: "Classificando evidências...",
+    ai_filter: "Aplicando revisão final...",
+    review_filter: "Aplicando revisão final...",
+    finalizing: "Preparando o resultado final...",
+    completed: "Análise concluída.",
+    needs_ai: "Resultado técnico preparado.",
+    needs_review: "Resultado técnico preparado.",
+    ai_error: "Análise concluída.",
+    review_error: "Análise concluída.",
+  };
+
+  return map[String(stage || "")] ||
+    (status === "completed"
+      ? "Análise concluída."
+      : "Processando análise...");
+}
+
 app.get("/api/agent/:token/result", async (req, res) => {
   try {
     const token = String(req.params.token || "");
@@ -6070,11 +6204,14 @@ app.get("/api/agent/:token/result", async (req, res) => {
            ELSE 1
          END DESC,
          sf.id ASC
-       LIMIT 80`,
+       `,
       [analysis.id]
     );
 
-    const findings =
+    const detailsReleased =
+      analysis.client_report_released === true;
+
+    const allFindings =
       findingsResult.rows.map((item) => ({
         id: Number(item.id),
         title: item.title || "Evidência detectada",
@@ -6084,14 +6221,19 @@ app.get("/api/agent/:token/result", async (req, res) => {
         evidence: item.evidence || {},
       }));
 
+    const findings =
+      detailsReleased
+        ? allFindings
+        : [];
+
     const critical =
-      findings.filter((item) =>
+      allFindings.filter((item) =>
         item.severity === "critical" ||
         item.severity === "high"
       ).length;
 
     const review =
-      findings.filter((item) =>
+      allFindings.filter((item) =>
         item.severity === "medium"
       ).length;
 
@@ -6109,9 +6251,13 @@ app.get("/api/agent/:token/result", async (req, res) => {
       label: analysis.label || "",
       status: analysis.status || "pending",
       processingStage:
-        analysis.processing_stage || "waiting",
+        publicProcessingStage(
+          analysis.processing_stage),
       processingMessage:
-        analysis.processing_message || "",
+        publicAgentProcessingMessage(
+          analysis.processing_stage,
+          analysis.status),
+      detailsReleased,
       startedAt: analysis.started_at || null,
       finishedAt: analysis.finished_at || null,
       summary: {

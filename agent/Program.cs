@@ -16,7 +16,7 @@ namespace Vorken.Agent;
 
 internal static class Program
 {
-    private const string AgentVersion = "1.0.7";
+    private const string AgentVersion = "1.0.8";
     private const string DefaultServerUrl = "https://vorkenac.guerrafriarust.com.br";
 
     private static readonly JsonSerializerOptions JsonOptions =
@@ -546,6 +546,28 @@ internal static class Program
                 Error = ex.Message
             };
         }
+    }
+
+    internal static async Task<AgentResultSnapshot?> FetchCurrentResultAsync(
+        string[] args)
+    {
+        AgentConfig config = LoadConfig(args);
+
+        using var http = new HttpClient
+        {
+            BaseAddress = new Uri(config.ServerUrl.TrimEnd('/') + "/"),
+            Timeout = TimeSpan.FromSeconds(30)
+        };
+
+        using HttpResponseMessage response =
+            await http.GetAsync(
+                $"api/agent/{Uri.EscapeDataString(config.Token)}/result");
+
+        if (!response.IsSuccessStatusCode)
+            return null;
+
+        return await response.Content.ReadFromJsonAsync<AgentResultSnapshot>(
+            JsonOptions);
     }
 
     private static async Task<AgentResultSnapshot?> WaitForAnalysisResultAsync(
@@ -2005,6 +2027,7 @@ internal sealed class AgentResultSnapshot
     public string Status { get; set; } = "";
     public string ProcessingStage { get; set; } = "";
     public string ProcessingMessage { get; set; } = "";
+    public bool DetailsReleased { get; set; }
     public DateTimeOffset? StartedAt { get; set; }
     public DateTimeOffset? FinishedAt { get; set; }
     public AgentResultSummary Summary { get; set; } = new();

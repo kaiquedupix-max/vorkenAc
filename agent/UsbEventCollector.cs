@@ -13,26 +13,26 @@ internal static class UsbEventCollector
         QueryLog(
             "Microsoft-Windows-DriverFrameworks-UserMode/Operational",
             "*[System[(EventID=2003 or EventID=2100 or EventID=2102)]]",
-            600,
+            2200,
             result);
 
         QueryLog(
             "Microsoft-Windows-Partition/Diagnostic",
             "*[System[(EventID=1006)]]",
-            600,
+            3000,
             result);
 
         QueryLog(
             "Microsoft-Windows-Kernel-PnP/Configuration",
             "*[System[(EventID=400 or EventID=410 or EventID=430)]]",
-            600,
+            3000,
             result);
 
         return result
             .OrderByDescending(x => x.TimeCreatedUtc)
             .GroupBy(x => $"{x.Provider}|{x.EventId}|{x.TimeCreatedUtc:O}|{x.DeviceId}|{x.Evidence}")
             .Select(x => x.First())
-            .Take(1500)
+            .Take(5000)
             .ToList();
     }
 
@@ -42,8 +42,7 @@ internal static class UsbEventCollector
     {
         foreach (UsbHistoryRecord item in history)
         {
-            string serial = Normalize(item.InstanceId);
-            string name = Normalize(item.FriendlyName);
+            HashSet<string> tokens = BuildMatchTokens(item);
 
             var matching = events
                 .Where(e =>
@@ -51,34 +50,83 @@ internal static class UsbEventCollector
                     string haystack = Normalize(
                         (e.DeviceId ?? "") + " " + (e.Evidence ?? ""));
 
-                    bool serialMatch =
-                        serial.Length >= 4 && haystack.Contains(serial);
-
-                    bool nameMatch =
-                        name.Length >= 6 && haystack.Contains(name);
-
-                    return serialMatch || nameMatch;
+                    return tokens.Any(token =>
+                        token.Length >= 4 &&
+                        haystack.Contains(
+                            token,
+                            StringComparison.Ordinal));
                 })
+                .OrderByDescending(x => x.TimeCreatedUtc)
                 .ToList();
 
             UsbDeviceEventRecord? lastConnect = matching
-                .Where(x => x.EventType == "connect")
-                .OrderByDescending(x => x.TimeCreatedUtc)
-                .FirstOrDefault();
+                .FirstOrDefault(x => x.EventType == "connect");
 
             UsbDeviceEventRecord? lastDisconnect = matching
-                .Where(x => x.EventType == "disconnect")
-                .OrderByDescending(x => x.TimeCreatedUtc)
-                .FirstOrDefault();
+                .FirstOrDefault(x => x.EventType == "disconnect");
 
             item.LastConnectedUtc = lastConnect?.TimeCreatedUtc;
             item.LastDisconnectedUtc = lastDisconnect?.TimeCreatedUtc;
 
-            UsbDeviceEventRecord? sourceEvent = lastDisconnect ?? lastConnect;
+            UsbDeviceEventRecord? sourceEvent =
+                matching.FirstOrDefault();
+
             item.TimelineSource = sourceEvent is null
                 ? ""
                 : $"{sourceEvent.Provider} Event {sourceEvent.EventId}";
         }
+    }
+
+    private static HashSet<string> BuildMatchTokens(
+        UsbHistoryRecord item)
+    {
+        var tokens =
+            new HashSet<string>(
+                StringComparer.OrdinalIgnoreCase);
+
+        void Add(string? value, int minLength = 4)
+        {
+            string normalized = Normalize(value);
+
+            if (normalized.Length >= minLength)
+                tokens.Add(normalized);
+        }
+
+        Add(item.InstanceId);
+        Add(item.FriendlyName, 6);
+        Add(item.DeviceDescription, 6);
+        Add(item.DeviceClass, 6);
+
+        string rawInstance =
+            item.InstanceId ?? "";
+
+        foreach (string part in rawInstance.Split(
+                     new[] { '&', '#', '\\', '/', '{', '}' },
+                     StringSplitOptions.RemoveEmptyEntries))
+        {
+            Add(part, 5);
+        }
+
+        // USBSTOR costuma acrescentar sufixos como "&0" ao instance id,
+        // enquanto eventos Partition/Diagnostic registram somente o serial.
+        string withoutSuffix =
+            Regex.Replace(
+                rawInstance,
+                @"&\d+$",
+                "",
+                RegexOptions.IgnoreCase);
+
+        Add(withoutSuffix, 5);
+
+        Match serialLike = Regex.Match(
+            rawInstance,
+            @"([A-Z0-9]{8,})",
+            RegexOptions.IgnoreCase);
+
+        if (serialLike.Success)
+            Add(serialLike.Groups[1].Value, 6);
+
+        return tokens;
     }
 
     private static void QueryLog(
@@ -106,7 +154,7 @@ internal static class UsbEventCollector
             string output = process.StandardOutput.ReadToEnd();
             _ = process.StandardError.ReadToEnd();
 
-            if (!process.WaitForExit(12000))
+            if (!process.WaitForExit(20000))
             {
                 try { process.Kill(true); } catch { }
                 return;

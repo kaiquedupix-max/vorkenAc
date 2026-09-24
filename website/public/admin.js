@@ -5,7 +5,8 @@ const analysesBody = document.getElementById("analysesBody");
 const rulesList = document.getElementById("rulesList");
 const reportCard = document.getElementById("reportCard");
 let currentReportId = null;
-let showWithoutAiResult = false;
+let showTechnicalResult = false;
+let currentClientReportReleased = false;
 let dashboardPollTimer = null;
 let lastOpenReportProcessing = null;
 
@@ -260,7 +261,7 @@ function looksRandomExecutableNameClient(value) {
 async function openReportSafe(id, options = {}) {
   try {
     if (options.resetAiView !== false)
-      showWithoutAiResult = false;
+      showTechnicalResult = false;
 
     reportCard.classList.remove("hidden");
     document.getElementById("reportEmptyState")?.classList.add("hidden");
@@ -294,11 +295,11 @@ function processingStageLabel(stage, status) {
     collecting: "Coletando evidências",
     preparing: "Preparando análise",
     normal_filter: "Aplicando filtro técnico",
-    ai_filter: "Filtrando falsos positivos com Gemini",
+    review_filter: "Aplicando revisão final",
     finalizing: "Preparando resultado final",
-    completed: "Concluído com Gemini",
-    needs_ai: "Pendente de filtro Gemini",
-    ai_error: "Gemini indisponível · resultado técnico",
+    completed: "Concluído",
+    needs_review: "Resultado técnico disponível",
+    review_error: "Revisão final indisponível · resultado técnico",
   };
 
   return map[stage] || statusLabel(status);
@@ -306,9 +307,9 @@ function processingStageLabel(stage, status) {
 
 function processingStageTag(stage, status) {
   if (stage === "completed") return "low";
-  if (stage === "needs_ai") return "medium";
-  if (stage === "ai_error") return "high";
-  if (stage === "ai_filter") return "medium";
+  if (stage === "needs_review") return "medium";
+  if (stage === "review_error") return "high";
+  if (stage === "review_filter") return "medium";
   if (
     ["collecting", "preparing", "normal_filter", "finalizing"]
       .includes(stage)
@@ -326,7 +327,7 @@ function isProcessingStage(stage) {
     "collecting",
     "preparing",
     "normal_filter",
-    "ai_filter",
+    "review_filter",
     "finalizing",
   ].includes(String(stage || ""));
 }
@@ -341,10 +342,10 @@ function updateAnalysisProcessingBanner(status) {
     status?.processing_message ||
     processingStageLabel(stage, status?.status);
 
-  if (showWithoutAiResult) {
+  if (showTechnicalResult) {
     banner.className = "message";
     banner.textContent =
-      "Visualizando o resultado técnico SEM o filtro do Gemini. " +
+      "Visualizando o resultado técnico antes da revisão final. " +
       (isProcessingStage(stage) ? message : "");
     return;
   }
@@ -355,19 +356,19 @@ function updateAnalysisProcessingBanner(status) {
     return;
   }
 
-  if (stage === "needs_ai") {
+  if (stage === "needs_review") {
     banner.className = "message";
     banner.textContent =
       message ||
-      "Esta análise ainda não passou pela segunda camada Gemini. Use Recalcular com Gemini.";
+      "Esta análise ainda não passou pela revisão final. Use Reprocessar análise.";
     return;
   }
 
-  if (stage === "ai_error") {
+  if (stage === "review_error") {
     banner.className = "message error";
     banner.textContent =
       message ||
-      "A revisão pelo Gemini não foi concluída. O resultado técnico continua disponível.";
+      "A revisão final não foi concluída. O resultado técnico continua disponível.";
     return;
   }
 
@@ -375,7 +376,7 @@ function updateAnalysisProcessingBanner(status) {
     banner.className = "message ok";
     banner.textContent =
       message ||
-      "Análise concluída. O resultado abaixo já passou pelo filtro do Gemini.";
+      "Análise concluída. O resultado final está pronto.";
     return;
   }
 
@@ -555,15 +556,40 @@ document.getElementById("closeReportBtn").addEventListener("click", () => {
   reportCard.classList.add("hidden");
   document.getElementById("reportEmptyState")?.classList.remove("hidden");
   currentReportId = null;
-  showWithoutAiResult = false;
+  currentClientReportReleased = false;
+  showTechnicalResult = false;
   lastOpenReportProcessing = null;
 });
 
-document.getElementById("toggleAiViewBtn").addEventListener("click", async () => {
+document.getElementById("clientReportToggleBtn")?.addEventListener("click", async () => {
+  if (!currentReportId) return;
+  const button = document.getElementById("clientReportToggleBtn");
+  const nextReleased = !currentClientReportReleased;
+  const original = button.textContent;
+  try {
+    button.disabled = true;
+    button.textContent = nextReleased ? "Liberando..." : "Ocultando...";
+    const data = await api(
+      "/api/admin/analyses/" + encodeURIComponent(currentReportId) + "/client-report",
+      { method: "POST", body: JSON.stringify({ released: nextReleased }) }
+    );
+    currentClientReportReleased = data.released === true;
+    button.textContent = currentClientReportReleased
+      ? "Ocultar detalhes do cliente"
+      : "Liberar detalhes ao cliente";
+    button.classList.toggle("release-active", currentClientReportReleased);
+  } catch (error) {
+    button.textContent = original;
+    alert(error.message);
+  } finally {
+    button.disabled = false;
+  }
+});
+document.getElementById("toggleReviewViewBtn").addEventListener("click", async () => {
   if (!currentReportId) return;
 
-  showWithoutAiResult =
-    !showWithoutAiResult;
+  showTechnicalResult =
+    !showTechnicalResult;
 
   await openReport(currentReportId);
 });
@@ -588,7 +614,7 @@ document.getElementById("rebuildFindingsBtn").addEventListener("click", async ()
     const timeoutMs = 5 * 60 * 1000;
 
     while (Date.now() - startedAt < timeoutMs) {
-      button.textContent = "Recalculando + Gemini...";
+      button.textContent = "Reprocessando...";
 
       const status = await api(
         "/api/admin/analyses/" +
@@ -600,10 +626,10 @@ document.getElementById("rebuildFindingsBtn").addEventListener("click", async ()
         await loadAnalyses();
         await openReport(analysisId);
 
-        if (status.aiReviewStatus === "error") {
+        if (status.reviewStatus === "error") {
           alert(
-            "O filtro normal foi recalculado, mas a revisão pelo Gemini encontrou um erro. " +
-            (status.aiReviewError || "O resultado normal foi mantido.")
+            "O filtro técnico foi recalculado, mas a revisão final encontrou um erro. " +
+            (status.reviewError || "O resultado normal foi mantido.")
           );
         }
 
@@ -734,23 +760,24 @@ async function loadAnalyses() {
 
 async function openReport(id) {
   currentReportId = id;
+  document.querySelector('[data-report-filter="overview"]')?.click();
 
   const data = await api("/api/admin/analyses/" + encodeURIComponent(id));
   const analysis = data.analysis || {};
   const report = data.report || null;
-  const aiFilteredFindings = safeArray(data.aiFilteredFindings);
-  const postAiFindings = safeArray(data.findings);
-  const findings = showWithoutAiResult
+  const filteredFindings = safeArray(data.filteredFindings);
+  const finalFindings = safeArray(data.findings);
+  const findings = showTechnicalResult
     ? [
-        ...postAiFindings,
-        ...aiFilteredFindings.filter(
-          (item) => !postAiFindings.some(
+        ...finalFindings,
+        ...filteredFindings.filter(
+          (item) => !finalFindings.some(
             (base) => String(base.id) === String(item.id)
           )
         ),
       ]
-    : postAiFindings;
-  const aiReview = data.aiReview || {};
+    : finalFindings;
+  const reviewState = data.reviewState || {};
   const relatedAnalyses = safeArray(data.relatedAnalyses);
   const payload = report?.payload && typeof report.payload === "object"
     ? report.payload
@@ -764,13 +791,24 @@ async function openReport(id) {
   document.getElementById("reportTitle").textContent =
     "#" + analysis.id + " · " + analysis.label;
 
-  const toggleAiViewBtn =
-    document.getElementById("toggleAiViewBtn");
+  currentClientReportReleased =
+    analysis.client_report_released === true;
 
-  toggleAiViewBtn.textContent =
-    showWithoutAiResult
-      ? "Ver resultado com Gemini"
-      : "Ver resultado sem Gemini";
+  const clientToggle = document.getElementById("clientReportToggleBtn");
+  if (clientToggle) {
+    clientToggle.textContent = currentClientReportReleased
+      ? "Ocultar detalhes do cliente"
+      : "Liberar detalhes ao cliente";
+    clientToggle.classList.toggle("release-active", currentClientReportReleased);
+  }
+
+  const toggleReviewViewBtn =
+    document.getElementById("toggleReviewViewBtn");
+
+  toggleReviewViewBtn.textContent =
+    showTechnicalResult
+      ? "Ver resultado final"
+      : "Ver resultado técnico";
 
   updateAnalysisProcessingBanner({
     status: analysis.status,
@@ -894,10 +932,10 @@ async function openReport(id) {
 
   document.getElementById("reportMetrics").innerHTML = `
     <div class="metric"><small>STATUS</small><strong>${escapeHtml(currentStageLabel)}</strong></div>
-    <div class="metric"><small>VISUALIZAÇÃO</small><strong>${showWithoutAiResult ? "SEM GEMINI" : aiReview.status === "completed" ? "COM GEMINI" : aiReview.status === "partial_error" ? "GEMINI PARCIAL" : "TÉCNICO"}</strong><span>${showWithoutAiResult ? "Filtro técnico original" : aiReview.status === "completed" ? "Resultado final filtrado" : aiReview.status === "partial_error" ? "Filtro parcial; revise o aviso" : "Gemini ainda não concluiu"}</span></div>
-    <div class="metric danger-metric"><small>VERMELHO · CRÍTICO/ALTO</small><strong>${criticalFindings.length}</strong><span>${showWithoutAiResult ? "Filtro técnico original" : aiReview.status === "completed" ? "Resultado final pós-Gemini" : aiReview.status === "partial_error" ? "Resultado parcialmente revisado" : "Resultado técnico atual"}</span></div>
-    <div class="metric warning-metric"><small>AMARELO · REVISAR</small><strong>${mediumFindings.length}</strong><span>${showWithoutAiResult ? "Filtro técnico original" : aiReview.status === "completed" ? "Resultado final pós-Gemini" : aiReview.status === "partial_error" ? "Resultado parcialmente revisado" : "Resultado técnico atual"}</span></div>
-    <div class="metric info-metric"><small>GEMINI FILTROU</small><strong>${aiFilteredFindings.length}</strong><span>Prováveis falsos positivos</span></div>
+    <div class="metric"><small>VISUALIZAÇÃO</small><strong>${showTechnicalResult ? "TÉCNICO" : reviewState.status === "completed" ? "FINAL" : reviewState.status === "partial_error" ? "PARCIAL" : "TÉCNICO"}</strong><span>${showTechnicalResult ? "Filtro técnico original" : reviewState.status === "completed" ? "Resultado final filtrado" : reviewState.status === "partial_error" ? "Filtro parcial; revise o aviso" : "Revisão final pendente"}</span></div>
+    <div class="metric danger-metric"><small>VERMELHO · CRÍTICO/ALTO</small><strong>${criticalFindings.length}</strong><span>${showTechnicalResult ? "Filtro técnico original" : reviewState.status === "completed" ? "Resultado final revisado" : reviewState.status === "partial_error" ? "Resultado parcialmente revisado" : "Resultado técnico atual"}</span></div>
+    <div class="metric warning-metric"><small>AMARELO · REVISAR</small><strong>${mediumFindings.length}</strong><span>${showTechnicalResult ? "Filtro técnico original" : reviewState.status === "completed" ? "Resultado final revisado" : reviewState.status === "partial_error" ? "Resultado parcialmente revisado" : "Resultado técnico atual"}</span></div>
+    <div class="metric info-metric"><small>FILTRADO</small><strong>${filteredFindings.length}</strong><span>Prováveis falsos positivos</span></div>
     <div class="metric hardware-metric"><small>HARDWARE / USB</small><strong>${hardwareCount}</strong><span>Pendrives e placas separados</span></div>
     <div class="metric priority-metric"><small>ARQUIVOS PRIORITÁRIOS</small><strong id="summaryPriorityCount">0</strong><span>EXE/ZIP/RAR/7Z suspeitos</span></div>
     <div class="metric"><small>MÓDULOS FORENSES</small><strong>${advancedForensicsCount}</strong><span>PE · USN · rede · PowerShell · WER</span></div>
@@ -934,24 +972,28 @@ async function openReport(id) {
   document.getElementById("mediumCountBadge").textContent = mediumFindings.length;
   document.getElementById("hardwareCountBadge").textContent = hardwareCount;
   document.getElementById("infoCountBadge").textContent = informationalCount;
+  document.getElementById("filterCriticalCount")?.replaceChildren(String(criticalFindings.length));
+  document.getElementById("filterMediumCount")?.replaceChildren(String(mediumFindings.length));
+  document.getElementById("filterUsbCount")?.replaceChildren(String(disconnectedUsb));
+  document.getElementById("filterSerialCount")?.replaceChildren(String(arrays.serialDevices.length));
+  document.getElementById("filterInventoryCount")?.replaceChildren(String(informationalCount));
 
-  const aiStatusLabel = {
+  const reviewStatusLabel = {
     completed: "Concluída",
     running: "Em andamento",
     partial_error: "Parcial · alguns lotes falharam",
-    disabled: "Desativada",
-    not_configured: "Não configurada",
-    error: "Falhou · usando filtro normal",
+    disabled: "Indisponível",
+    not_configured: "Indisponível",
+    error: "Falhou · resultado técnico mantido",
     pending: "Pendente",
-  }[aiReview.status] || aiReview.status || "Pendente";
+  }[reviewState.status] || reviewState.status || "Pendente";
 
   document.getElementById("reportMeta").innerHTML = `
     <div class="kv"><span>Computador</span><span>${escapeHtml(analysis.machine_name || "—")}</span></div>
     <div class="kv"><span>Sistema</span><span>${escapeHtml(analysis.os_version || "—")}</span></div>
     <div class="kv"><span>Agente</span><span>${escapeHtml(analysis.agent_version || "—")}</span></div>
-    <div class="kv"><span>Filtro Gemini</span><span>${escapeHtml(aiStatusLabel)}</span></div>
-    <div class="kv"><span>Modelo Gemini</span><span>${escapeHtml(aiReview.model || "—")}</span></div>
-    <div class="kv"><span>Revisão Gemini</span><span>${escapeHtml(formatDate(aiReview.reviewedAt))}</span></div>
+    <div class="kv"><span>Revisão final</span><span>${escapeHtml(reviewStatusLabel)}</span></div>
+    <div class="kv"><span>Última revisão</span><span>${escapeHtml(formatDate(reviewState.reviewedAt))}</span></div>
     <div class="kv"><span>Início</span><span>${escapeHtml(formatDate(analysis.started_at))}</span></div>
     <div class="kv"><span>Conclusão</span><span>${escapeHtml(formatDate(analysis.finished_at))}</span></div>
   `;
@@ -970,12 +1012,12 @@ async function openReport(id) {
       element.className = "finding severity-card " + escapeHtml(finding.severity || "info");
 
       const evidence = finding.evidence || {};
-      const ai = finding.ai_review || null;
-      const filteredByAi =
-        !showWithoutAiResult &&
-        ai?.verdict === "likely_false_positive";
+      const review = finding.review_layer || null;
+      const filteredByReview =
+        !showTechnicalResult &&
+        review?.verdict === "likely_false_positive";
       const displaySeverity =
-        filteredByAi
+        filteredByReview
           ? "info"
           : (finding.severity || "info");
       element.className = "finding severity-card " + escapeHtml(displaySeverity);
@@ -984,31 +1026,30 @@ async function openReport(id) {
         ? '<div class="kv"><span>Catálogo</span><span>' + escapeHtml(evidence.catalogMatch.name) + '</span></div>'
         : "";
 
-      const aiLabel = ai
-        ? ai.verdict === "likely_cheat"
-          ? "GEMINI CONFIRMOU"
-          : ai.verdict === "likely_false_positive"
-            ? "GEMINI FILTROU"
-            : "GEMINI · REVISAR"
+      const reviewLabel = review
+        ? review.verdict === "likely_cheat"
+          ? "REVISÃO CONFIRMOU"
+          : review.verdict === "likely_false_positive"
+            ? "FILTRADO"
+            : "REVISAR"
         : "";
 
-      const aiBlock = evidence.priorityMaximum === true ||
+      const reviewBlock = evidence.priorityMaximum === true ||
         evidence.protectedByTechnicalEngine === true
-        ? '<div class="kv"><span>Motor técnico</span><span>PROTEGIDO · execução/evidência forte confirmada · Gemini não pode remover nem rebaixar</span></div>'
-        : ai
-          ? '<div class="kv"><span>' + escapeHtml(aiLabel) + '</span><span>' +
-              escapeHtml(ai.reason || "Sem justificativa.") +
+        ? '<div class="kv"><span>Motor técnico</span><span>PROTEGIDO · execução/evidência forte confirmada · a revisão final não pode remover nem rebaixar</span></div>'
+        : review ? '<div class="kv"><span>' + escapeHtml(reviewLabel) + '</span><span>' +
+              escapeHtml(review.reason || "Sem justificativa.") +
             '</span></div>'
-          : '<div class="kv"><span>Revisão</span><span>Revisão necessária / aguardando Gemini</span></div>';
+          : '<div class="kv"><span>Revisão</span><span>Revisão necessária</span></div>';
 
       element.innerHTML = `
         <div class="finding-head">
           <h4>${escapeHtml(finding.title)}</h4>
-          <span class="tag ${escapeHtml(displaySeverity)}">${escapeHtml(filteredByAi ? "FILTRADO GEMINI" : severityLabel(finding.severity))}</span>
+          <span class="tag ${escapeHtml(displaySeverity)}">${escapeHtml(filteredByReview ? "FILTRADO" : severityLabel(finding.severity))}</span>
         </div>
         <code>${escapeHtml(finding.artifact_value)}</code>
         ${catalogName}
-        ${aiBlock}
+        ${reviewBlock}
         ${evidence.note ? '<div class="kv"><span>Motivo</span><span>' + escapeHtml(evidence.note) + '</span></div>' : ""}
         <details class="evidence-details">
           <summary>Ver evidência completa</summary>
@@ -1038,37 +1079,37 @@ async function openReport(id) {
     "Nenhum achado informativo/baixo."
   );
 
-  document.getElementById("aiFilteredCountBadge").textContent =
-    aiFilteredFindings.length;
+  document.getElementById("filteredCountBadge").textContent =
+    filteredFindings.length;
 
-  const aiStatusBox = document.getElementById("aiReviewStatus");
-  aiStatusBox.className =
+  const reviewBox = document.getElementById("reviewStatusBox");
+  reviewBox.className =
     "message " +
-    (aiReview.status === "completed"
+    (reviewState.status === "completed"
       ? "ok"
-      : aiReview.status === "error"
+      : reviewState.status === "error"
         ? "error"
         : "");
 
-  aiStatusBox.textContent =
-    showWithoutAiResult
-      ? "Modo sem Gemini ativo: a lista principal mostra o resultado original do filtro técnico."
-      : aiReview.status === "completed"
-        ? "Segunda camada concluída. A lista principal já está filtrada pelo Gemini."
-        : aiReview.status === "partial_error"
-          ? "O Gemini revisou parte dos achados, mas alguns lotes falharam. Os itens não revisados continuam visíveis."
-          : aiReview.status === "error"
-            ? "A revisão pelo Gemini falhou nesta análise. O Vorken manteve o resultado do filtro normal."
-            : aiReview.status === "disabled"
-              ? "Filtro Gemini desativado. Resultado exibido somente pelo motor normal."
-              : aiReview.status === "not_configured"
-                ? "Filtro Gemini ainda não está configurado no servidor."
-                : "Revisão pelo Gemini pendente ou em andamento.";
+  reviewBox.textContent =
+    showTechnicalResult
+      ? "Visualização técnica ativa: a lista principal mostra o resultado anterior à revisão final."
+      : reviewState.status === "completed"
+        ? "Revisão final concluída. A lista principal mostra o resultado final."
+        : reviewState.status === "partial_error"
+          ? "A revisão final foi parcial; os itens não revisados continuam visíveis."
+          : reviewState.status === "error"
+            ? "A revisão final falhou. O Vorken manteve o resultado técnico."
+            : reviewState.status === "disabled"
+              ? "Revisão final indisponível. Resultado técnico exibido."
+              : reviewState.status === "not_configured"
+                ? "Revisão final indisponível. Resultado técnico exibido."
+                : "Revisão final pendente ou em andamento.";
 
   renderFindings(
-    "aiFilteredFindingsList",
-    aiFilteredFindings,
-    "O Gemini não removeu nenhum provável falso positivo desta análise."
+    "filteredFindingsList",
+    filteredFindings,
+    "Nenhum provável falso positivo foi filtrado nesta análise."
   );
 
   const unknownAppFindings = findings.filter((item) =>
@@ -1487,6 +1528,15 @@ async function openReport(id) {
     });
   });
 
+  const latestUsbActivity = (item) => {
+    const values = [item.lastConnectedUtc, item.lastDisconnectedUtc]
+      .filter(Boolean)
+      .map((value) => new Date(value))
+      .filter((value) => !Number.isNaN(value.getTime()))
+      .sort((a, b) => b - a);
+    return values[0] || null;
+  };
+
   const disconnected = arrays.usbHistory.filter((item) => item.present === false);
   document.getElementById("disconnectedUsbList").innerHTML = disconnected.length
     ? disconnected
@@ -1501,8 +1551,9 @@ async function openReport(id) {
           </div>
           <div class="kv"><span>Fabricante</span><span>${escapeHtml(item.manufacturer || "—")}</span></div>
           <div class="kv"><span>Instância / serial</span><span>${escapeHtml(item.instanceId || "—")}</span></div>
-          <div class="kv"><span>Última conexão</span><span>${escapeHtml(formatDate(item.lastConnectedUtc))}</span></div>
-          <div class="kv"><span>Última desconexão</span><span>${escapeHtml(formatDate(item.lastDisconnectedUtc))}</span></div>
+          <div class="kv"><span>Última atividade detectada</span><span>${escapeHtml(formatDate(latestUsbActivity(item)))}</span></div>
+          <div class="kv"><span>Última conexão detectada</span><span>${escapeHtml(formatDate(item.lastConnectedUtc))}</span></div>
+          <div class="kv"><span>Última desconexão detectada</span><span>${escapeHtml(formatDate(item.lastDisconnectedUtc))}</span></div>
           <div class="kv"><span>Fonte do horário</span><span>${escapeHtml(item.timelineSource || "Não registrado pelo Windows")}</span></div>
           <code>${escapeHtml(item.deviceClass || "")}</code>
         </div>
@@ -1602,9 +1653,9 @@ async function openReport(id) {
       }).join("")
     : '<div class="message ok">Nenhum download sinalizado como perigoso/incomum pelo navegador foi preservado no histórico.</div>';
 
-  const aiFilteredNames = new Set();
+  const filteredNames = new Set();
 
-  for (const finding of aiFilteredFindings) {
+  for (const finding of filteredFindings) {
     const candidates = [
       finding.artifact_value,
       finding.evidence?.fileName,
@@ -1623,11 +1674,11 @@ async function openReport(id) {
         .trim();
 
       const name = normalized.split("\\").filter(Boolean).at(-1);
-      if (name) aiFilteredNames.add(name);
+      if (name) filteredNames.add(name);
     }
   }
 
-  const wasFilteredByAi = (...values) =>
+  const wasFilteredByReview = (...values) =>
     values
       .flat(Infinity)
       .filter(Boolean)
@@ -1638,7 +1689,7 @@ async function openReport(id) {
           .trim();
 
         const name = normalized.split("\\").filter(Boolean).at(-1);
-        return Boolean(name && aiFilteredNames.has(name));
+        return Boolean(name && filteredNames.has(name));
       });
 
   const priorityFiles = [];
@@ -1856,8 +1907,8 @@ async function openReport(id) {
   const prioritySeen = new Set();
   const priorityUnique = priorityFiles
     .filter((item) =>
-      showWithoutAiResult ||
-      !wasFilteredByAi(
+      showTechnicalResult ||
+      !wasFilteredByReview(
         item.name,
         item.path
       ))
@@ -2549,18 +2600,17 @@ function setupVorkenAdminUi() {
     });
   });
 
-  document.querySelectorAll("[data-report-anchor]").forEach((button) => {
+  document.querySelectorAll("[data-report-filter]").forEach((button) => {
     button.addEventListener("click", () => {
-      document.querySelectorAll("[data-report-anchor]").forEach((item) =>
+      const filter = button.dataset.reportFilter || "overview";
+      document.querySelectorAll("[data-report-filter]").forEach((item) =>
         item.classList.toggle("active", item === button)
       );
-
-      const target =
-        document.getElementById(button.dataset.reportAnchor || "");
-
-      target?.scrollIntoView({
-        behavior: "smooth",
-        block: "start",
+      document.querySelectorAll("[data-report-group]").forEach((section) => {
+        const groups = String(section.dataset.reportGroup || "").split(" ").filter(Boolean);
+        const visible = filter === "overview" || groups.includes(filter);
+        section.classList.toggle("report-filter-hidden", !visible);
+        if (visible && section.tagName === "DETAILS") section.open = true;
       });
     });
   });

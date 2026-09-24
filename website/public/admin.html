@@ -4,16 +4,17 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#061018">
-  <title>Vorken · Sessões e relatórios</title>
-  <link rel="stylesheet" href="/styles.css?v=20260924-report-open-fix">
+  <title>Vorken Anti-Cheat</title>
+  <link rel="icon" type="image/svg+xml" href="/vorken-logo.svg">
+  <link rel="stylesheet" href="/styles.css?v=20260924-privacy-filters">
 </head>
 <body class="vorken-admin">
   <header class="vorken-shell-header">
     <a class="vorken-brand" href="/">
-      <span class="vorken-brand-mark">V</span>
+      <span class="vorken-brand-mark"><img src="/vorken-logo.svg" alt=""></span>
       <span class="vorken-brand-copy">
         <strong>VORKEN</strong>
-        <small>ANTI CHEAT · SECURE SCAN SESSION</small>
+        <small>ANTI-CHEAT</small>
       </span>
     </a>
 
@@ -107,19 +108,33 @@
                 <div class="report-origin-line"><span>◉</span> Steam Profile <span class="muted">· relatório técnico auditável</span></div>
               </div>
               <div class="report-head-actions">
+                <button id="clientReportToggleBtn" class="button release-report-button" type="button">Liberar detalhes ao cliente</button>
                 <button id="exportReportBtn" class="button ghost" type="button">⇩ Exportar relatório</button>
-                <button id="rebuildFindingsBtn" class="button ghost" type="button">Recalcular com Gemini</button>
-                <button id="toggleAiViewBtn" class="button ghost" type="button">Ver resultado sem Gemini</button>
+                <button id="rebuildFindingsBtn" class="button ghost" type="button">Reprocessar análise</button>
+                <button id="toggleReviewViewBtn" class="button ghost" type="button">Ver resultado técnico</button>
                 <button id="closeReportBtn" class="button ghost" type="button">Fechar</button>
               </div>
             </div>
 
-            <div class="report-local-tabs">
-              <button class="active" data-report-anchor="reportOverview">Visão geral</button>
-              <button data-report-anchor="criticalSection">Evidências</button>
-              <button data-report-anchor="inventorySection">Artefatos</button>
-              <button data-report-anchor="timelineSection">Linha do tempo</button>
-              <button data-report-anchor="reportMetaSection">Notas</button>
+            <div class="report-category-grid">
+              <button class="report-category-card active" data-report-filter="overview">
+                <span>VISÃO GERAL</span><strong>Todos</strong>
+              </button>
+              <button class="report-category-card danger" data-report-filter="critical">
+                <span>CRÍTICO / ALTO</span><strong id="filterCriticalCount">0</strong>
+              </button>
+              <button class="report-category-card warning" data-report-filter="medium">
+                <span>REVISAR</span><strong id="filterMediumCount">0</strong>
+              </button>
+              <button class="report-category-card usb" data-report-filter="usb">
+                <span>PENDRIVES / USB</span><strong id="filterUsbCount">0</strong>
+              </button>
+              <button class="report-category-card board" data-report-filter="serial">
+                <span>PLACAS / SERIAIS</span><strong id="filterSerialCount">0</strong>
+              </button>
+              <button class="report-category-card inventory" data-report-filter="inventory">
+                <span>INVENTÁRIO</span><strong id="filterInventoryCount">0</strong>
+              </button>
             </div>
 
             <div id="analysisProcessingBanner" class="message hidden"></div>
@@ -128,12 +143,12 @@
               <div class="report-center-column">
                 <div id="reportMetrics" class="metric-grid report-summary-grid"></div>
 
-                <details id="reportMetaSection" class="report-section report-meta-details" open>
+                <details id="reportMetaSection" class="report-section report-meta-details" data-report-group="overview" open>
                   <summary>Resumo da sessão</summary>
                   <div id="reportMeta"></div>
                 </details>
 
-                <details id="criticalSection" class="report-section severity-group severity-critical" open>
+                <details id="criticalSection" class="report-section severity-group severity-critical" data-report-group="critical" open>
                   <summary>
                     <span>Itens críticos encontrados</span>
                     <span id="criticalCountBadge" class="summary-badge danger">0</span>
@@ -141,7 +156,7 @@
                   <div id="criticalFindingsList"></div>
                 </details>
 
-                <details class="report-section severity-group severity-medium" open>
+                <details id="mediumSection" class="report-section severity-group severity-medium" data-report-group="medium" open>
                   <summary>
                     <span>Itens para revisão</span>
                     <span id="mediumCountBadge" class="summary-badge warning">0</span>
@@ -149,7 +164,7 @@
                   <div id="mediumFindingsList"></div>
                 </details>
 
-                <details id="timelineSection" class="report-section history-section" open>
+                <details id="timelineSection" class="report-section history-section" data-report-group="critical medium" open>
                   <summary>
                     <span>Eventos correlacionados</span>
                     <span id="historyCountBadge" class="summary-badge danger">0</span>
@@ -186,29 +201,35 @@
             </section>
 
             <section class="report-deep-sections">
-              <details class="report-section info-inventory">
+              <details class="report-section info-inventory" data-report-group="inventory">
                 <summary>
-                  <span>Filtrados pelo Gemini · provável falso positivo</span>
-                  <span id="aiFilteredCountBadge" class="summary-badge info">0</span>
+                  <span>Filtrados automaticamente · provável falso positivo</span>
+                  <span id="filteredCountBadge" class="summary-badge info">0</span>
                 </summary>
-                <div id="aiReviewStatus" class="message"></div>
-                <div id="aiFilteredFindingsList"></div>
+                <div id="reviewStatusBox" class="message"></div>
+                <div id="filteredFindingsList"></div>
               </details>
 
-              <details class="report-section severity-group hardware-group">
+              <details id="usbSection" class="report-section severity-group hardware-group" data-report-group="usb">
                 <summary>
-                  <span>Pendrives / Arduino / MAKCU / seriais</span>
+                  <span>Pendrives / USB</span>
                   <span id="hardwareCountBadge" class="summary-badge info">0</span>
                 </summary>
-                <h3>Dispositivos encontrados</h3>
+                <h3>Resumo dos dispositivos</h3>
                 <div id="deviceOverviewList"></div>
                 <h3>Pendrives / USB desconectados</h3>
                 <div id="disconnectedUsbList"></div>
-                <h3>Arduino / MAKCU / dispositivos seriais</h3>
+              </details>
+
+              <details id="serialSection" class="report-section severity-group hardware-group" data-report-group="serial">
+                <summary>
+                  <span>Placas / Arduino / MAKCU / seriais</span>
+                  <span class="summary-badge info">HARDWARE</span>
+                </summary>
                 <div id="serialDeviceList"></div>
               </details>
 
-              <details class="report-section priority-section">
+              <details class="report-section priority-section" data-report-group="critical medium">
                 <summary>
                   <span>Arquivos prioritários</span>
                   <span id="priorityCountBadge" class="summary-badge warning">0</span>
@@ -216,7 +237,7 @@
                 <div id="priorityFilesList"></div>
               </details>
 
-              <details class="report-section severity-group severity-critical">
+              <details class="report-section severity-group severity-critical" data-report-group="critical">
                 <summary>
                   <span>Aplicativos desconhecidos / origem inválida</span>
                   <span id="unknownAppsCountBadge" class="summary-badge danger">0</span>
@@ -224,7 +245,7 @@
                 <div id="unknownAppsList"></div>
               </details>
 
-              <details class="report-section severity-group severity-critical">
+              <details class="report-section severity-group severity-critical" data-report-group="critical">
                 <summary>
                   <span>Histórico apagado recuperado</span>
                   <span id="recoveredHistoryCountBadge" class="summary-badge danger">0</span>
@@ -232,7 +253,7 @@
                 <div id="recoveredHistoryList"></div>
               </details>
 
-              <details class="report-section severity-group severity-medium">
+              <details class="report-section severity-group severity-medium" data-report-group="medium">
                 <summary>
                   <span>Arquivos apagados no NTFS / USN</span>
                   <span id="deletedUsnCountBadge" class="summary-badge warning">0</span>
@@ -240,7 +261,7 @@
                 <div id="deletedUsnList"></div>
               </details>
 
-              <details class="report-section severity-group severity-medium">
+              <details class="report-section severity-group severity-medium" data-report-group="medium">
                 <summary>
                   <span>Arquivos baixados do Discord / Telegram</span>
                   <span id="socialDownloadsCountBadge" class="summary-badge warning">0</span>
@@ -248,7 +269,7 @@
                 <div id="socialDownloadsList"></div>
               </details>
 
-              <details class="report-section severity-group severity-medium">
+              <details class="report-section severity-group severity-medium" data-report-group="medium">
                 <summary>
                   <span>Downloads sinalizados pelo navegador</span>
                   <span id="browserDangerCountBadge" class="summary-badge warning">0</span>
@@ -256,7 +277,7 @@
                 <div id="browserDangerDownloadsList"></div>
               </details>
 
-              <details class="report-section advanced-forensics">
+              <details class="report-section advanced-forensics" data-report-group="inventory">
                 <summary>
                   <span>Módulos forenses avançados</span>
                   <span id="advancedForensicsCountBadge" class="summary-badge info">0</span>
@@ -265,7 +286,7 @@
                 <div id="advancedForensicsList"></div>
               </details>
 
-              <details id="inventorySection" class="report-section info-inventory">
+              <details id="inventorySection" class="report-section info-inventory" data-report-group="inventory">
                 <summary>
                   <span>Inventário / arquivos informativos</span>
                   <span id="infoCountBadge" class="summary-badge info">0</span>
@@ -299,7 +320,7 @@
                 <div id="executionArtifactsList"></div>
               </details>
 
-              <details class="report-section">
+              <details class="report-section" data-report-group="inventory">
                 <summary>Dados brutos da análise</summary>
                 <pre id="rawReport" class="raw"></pre>
               </details>
@@ -429,6 +450,6 @@
     </section>
   </main>
 
-  <script src="/admin.js?v=20260924-report-open-fix"></script>
+  <script src="/admin.js?v=20260924-privacy-filters"></script>
 </body>
 </html>

@@ -1378,3 +1378,88 @@ pre.raw{max-height:420px;overflow:auto;background:#05080a;border:1px solid #1620
   .report-head-actions { justify-content: flex-start; margin-top: 12px; }
   .settings-grid { grid-template-columns: 1fr; }
 }
+
+
+/* 2026-09-24 · Vorken report privacy / category navigation */
+.vorken-brand-mark {
+  overflow: hidden;
+  padding: 0 !important;
+  background: transparent !important;
+  box-shadow: 0 0 28px rgba(43,239,201,.12);
+}
+.vorken-brand-mark img,
+.brand-mark img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+}
+.brand-mark {
+  overflow: hidden;
+}
+.report-category-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(112px, 1fr));
+  gap: 9px;
+  margin: 4px 0 16px;
+}
+.report-category-card {
+  min-height: 70px;
+  display: grid;
+  gap: 6px;
+  align-content: center;
+  padding: 10px 12px;
+  border: 1px solid #174653;
+  border-radius: 8px;
+  background: rgba(6, 25, 34, .94);
+  color: #8ca5ae;
+  text-align: left;
+  cursor: pointer;
+  transition: transform .16s ease, border-color .16s ease, background .16s ease;
+}
+.report-category-card:hover {
+  transform: translateY(-1px);
+  border-color: #2bf0c9;
+}
+.report-category-card.active {
+  border-color: #2bf0c9;
+  background: linear-gradient(180deg, rgba(43,240,201,.13), rgba(6,25,34,.95));
+  color: #2bf0c9;
+}
+.report-category-card span {
+  font: 700 8px "Consolas", monospace;
+  letter-spacing: .04em;
+}
+.report-category-card strong {
+  color: #eef8f8;
+  font-size: 19px;
+}
+.report-category-card.danger strong { color: #ff596d; }
+.report-category-card.warning strong { color: #f6bd39; }
+.report-category-card.usb strong,
+.report-category-card.board strong,
+.report-category-card.inventory strong { color: #43aaff; }
+.report-filter-hidden {
+  display: none !important;
+}
+.release-report-button {
+  border: 1px solid #1d6f65 !important;
+  background: rgba(10, 63, 56, .78) !important;
+  color: #51f3d2 !important;
+}
+.release-report-button.release-active {
+  border-color: #f1b43c !important;
+  background: rgba(78, 54, 12, .75) !important;
+  color: #ffd36c !important;
+}
+@media (max-width: 1250px) {
+  .report-category-grid {
+    grid-template-columns: repeat(3, minmax(130px, 1fr));
+  }
+}
+@media (max-width: 760px) {
+  .report-category-grid {
+    grid-template-columns: repeat(2, minmax(120px, 1fr));
+  }
+}
