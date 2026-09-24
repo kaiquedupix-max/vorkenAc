@@ -114,6 +114,681 @@ function loadCommonAppCatalog() {
 
 const commonAppCatalog = loadCommonAppCatalog();
 
+const AI_REVIEW_POLICY_VERSION = "v1";
+
+const aiReviewConfig = {
+  enabled:
+    String(process.env.AI_REVIEW_ENABLED || "false").toLowerCase() === "true",
+  apiKey:
+    String(process.env.AI_API_KEY || process.env.OPENAI_API_KEY || "").trim(),
+  baseUrl:
+    String(process.env.AI_BASE_URL || "https://api.openai.com/v1")
+      .replace(/\/$/, ""),
+  model:
+    String(process.env.AI_MODEL || "").trim(),
+  timeoutMs:
+    Math.max(
+      5000,
+      Math.min(
+        120000,
+        Number(process.env.AI_TIMEOUT_MS || 45000)
+      )
+    ),
+  batchSize:
+    Math.max(
+      1,
+      Math.min(
+        30,
+        Number(process.env.AI_REVIEW_BATCH_SIZE || 12)
+      )
+    ),
+  falsePositiveThreshold:
+    Math.max(
+      0.5,
+      Math.min(
+        0.99,
+        Number(process.env.AI_FALSE_POSITIVE_THRESHOLD || 0.85)
+      )
+    ),
+  maxFindings:
+    Math.max(
+      0,
+      Number(process.env.AI_REVIEW_MAX_FINDINGS || 0)
+    ),
+};
+
+function aiReviewAvailable() {
+  return Boolean(
+    aiReviewConfig.enabled &&
+    aiReviewConfig.apiKey &&
+    aiReviewConfig.model
+  );
+}
+
+function trimAiString(value, max = 700) {
+  return String(value ?? "")
+    .replace(/\u0000/g, "")
+    .trim()
+    .slice(0, max);
+}
+
+function redactTechnicalValueForAi(value) {
+  let text = trimAiString(value, 900);
+
+  text = text.replace(
+    /([A-Za-z]:\\Users\\)[^\\]+/gi,
+    "$1<USER>"
+  );
+
+  text = text.replace(
+    /(\\Users\\)[^\\]+/gi,
+    "$1<USER>"
+  );
+
+  try {
+    const url = new URL(text);
+    url.search = "";
+    url.hash = "";
+    return url.toString().slice(0, 900);
+  } catch {
+    return text;
+  }
+}
+
+function aiEvidenceSubset(evidence = {}) {
+  const catalogMatch = evidence?.catalogMatch
+    ? {
+        name: trimAiString(evidence.catalogMatch.name, 160),
+        matchedBy: trimAiString(evidence.catalogMatch.matchedBy, 240),
+      }
+    : null;
+
+  const values = {
+    catalogMatch,
+    priorityMaximum: evidence?.priorityMaximum === true,
+    executionConfirmed: evidence?.executionConfirmed === true,
+    executablePresent: evidence?.executablePresent,
+    fileExists: evidence?.fileExists,
+    signed: evidence?.signed,
+    signerSubject: trimAiString(evidence?.signerSubject, 240),
+    publisher: trimAiString(evidence?.publisher, 240),
+    expectedApplication: trimAiString(evidence?.expectedApplication, 180),
+    signatureMatched: evidence?.signatureMatched,
+    officialDownloadMatched: evidence?.officialDownloadMatched,
+    randomLikeName: evidence?.randomLikeName,
+    deceptiveDoubleExtension: evidence?.deceptiveDoubleExtension,
+    entropy: evidence?.entropy,
+    runCount: evidence?.runCount,
+    lastRunUtc: evidence?.lastRunUtc,
+    startTimeUtc: evidence?.startTimeUtc,
+    timestampUtc: evidence?.timestampUtc,
+    driveType: trimAiString(evidence?.driveType, 80),
+    currentRemovable: evidence?.currentRemovable,
+    volumeNotMounted: evidence?.volumeNotMounted,
+    nonSystemVolume: evidence?.nonSystemVolume,
+    originKind: trimAiString(evidence?.originKind, 80),
+    discordAttachment: evidence?.discordAttachment,
+    officialDiscordUpdate: evidence?.officialDiscordUpdate,
+    sourceUrl: redactTechnicalValueForAi(evidence?.sourceUrl),
+    finalUrl: redactTechnicalValueForAi(evidence?.finalUrl),
+    pageUrl: redactTechnicalValueForAi(evidence?.pageUrl),
+    siteUrl: redactTechnicalValueForAi(evidence?.siteUrl),
+    referrerUrl: redactTechnicalValueForAi(evidence?.referrerUrl),
+    recoveredUrl: redactTechnicalValueForAi(evidence?.recoveredUrl),
+    sha256: trimAiString(evidence?.sha256, 80),
+    extension: trimAiString(evidence?.extension, 20),
+    note: trimAiString(evidence?.note, 700),
+    ruleDescription: trimAiString(evidence?.ruleDescription, 500),
+    suspiciousApis: Array.isArray(evidence?.suspiciousApis)
+      ? evidence.suspiciousApis.slice(0, 12).map((item) => trimAiString(item, 100))
+      : [],
+    matchedTerms: Array.isArray(evidence?.matchedTerms)
+      ? evidence.matchedTerms.slice(0, 12).map((item) => trimAiString(item, 100))
+      : [],
+  };
+
+  return Object.fromEntries(
+    Object.entries(values).filter(([, value]) =>
+      value !== "" &&
+      value !== null &&
+      value !== undefined &&
+      !(Array.isArray(value) && value.length === 0)
+    )
+  );
+}
+
+function isAiProtectedFinding(finding) {
+  const evidence = finding?.evidence || {};
+
+  return (
+    evidence.priorityMaximum === true ||
+    String(finding?.title || "")
+      .toLowerCase()
+      .includes("prioridade máxima")
+  );
+}
+
+function buildAiReviewCase(finding) {
+  const value =
+    redactTechnicalValueForAi(
+      finding?.artifact_value
+    );
+
+  const caseData = {
+    title: trimAiString(finding?.title, 220),
+    severity: trimAiString(finding?.severity, 30),
+    artifactType: trimAiString(finding?.artifact_type, 80),
+    artifactValue: value,
+    evidence: aiEvidenceSubset(finding?.evidence || {}),
+  };
+
+  const fingerprint =
+    crypto
+      .createHash("sha256")
+      .update(
+        AI_REVIEW_POLICY_VERSION +
+        "|" +
+        JSON.stringify(caseData)
+      )
+      .digest("hex");
+
+  return {
+    fingerprint,
+    caseData,
+  };
+}
+
+function normalizeAiVerdict(value) {
+  const verdict =
+    String(value || "")
+      .trim()
+      .toLowerCase();
+
+  return [
+    "likely_cheat",
+    "likely_false_positive",
+    "needs_review",
+  ].includes(verdict)
+    ? verdict
+    : "needs_review";
+}
+
+function normalizeAiConfidence(value) {
+  const number = Number(value);
+
+  if (!Number.isFinite(number))
+    return 0;
+
+  return Math.max(0, Math.min(1, number));
+}
+
+async function callAiReviewBatch(cases) {
+  const controller =
+    new AbortController();
+
+  const timeout =
+    setTimeout(
+      () => controller.abort(),
+      aiReviewConfig.timeoutMs
+    );
+
+  const schema = {
+    type: "object",
+    properties: {
+      reviews: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            fingerprint: { type: "string" },
+            verdict: {
+              type: "string",
+              enum: [
+                "likely_cheat",
+                "likely_false_positive",
+                "needs_review",
+              ],
+            },
+            confidence: {
+              type: "number",
+              minimum: 0,
+              maximum: 1,
+            },
+            reason: { type: "string" },
+          },
+          required: [
+            "fingerprint",
+            "verdict",
+            "confidence",
+            "reason",
+          ],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ["reviews"],
+    additionalProperties: false,
+  };
+
+  const systemPrompt = [
+    "Você é a segunda camada de revisão de um sistema anti-cheat.",
+    "A primeira camada já gerou achados técnicos. Sua tarefa é SOMENTE reduzir falsos positivos.",
+    "Classifique cada caso como likely_cheat, likely_false_positive ou needs_review.",
+    "Se faltar evidência, use needs_review.",
+    "Não invente fatos, arquivos, assinaturas, origem ou execução que não estejam no JSON.",
+    "Dê peso alto a execução confirmada, origem de download, assinatura/publisher, catálogo conhecido, mídia removível e correlação entre fontes.",
+    "Instaladores, updaters, WindowsApps, Program Files e software conhecido podem ser falsos positivos quando o restante do contexto é benigno.",
+    "Nome estranho sozinho, caminho Temp sozinho, arquivo apagado sozinho, ausência de assinatura sozinha e ZIP sozinho não provam cheat.",
+    "Responda exclusivamente no JSON solicitado.",
+  ].join(" ");
+
+  try {
+    const response =
+      await fetch(
+        aiReviewConfig.baseUrl + "/chat/completions",
+        {
+          method: "POST",
+          headers: {
+            Authorization:
+              "Bearer " + aiReviewConfig.apiKey,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: aiReviewConfig.model,
+            temperature: 0,
+            messages: [
+              {
+                role: "system",
+                content: systemPrompt,
+              },
+              {
+                role: "user",
+                content:
+                  "Revise estes casos técnicos:\n" +
+                  JSON.stringify(
+                    cases.map((item) => ({
+                      fingerprint: item.fingerprint,
+                      ...item.caseData,
+                    }))
+                  ),
+              },
+            ],
+            response_format: {
+              type: "json_schema",
+              json_schema: {
+                name: "vorken_ai_reviews",
+                strict: true,
+                schema,
+              },
+            },
+          }),
+          signal: controller.signal,
+        }
+      );
+
+    const bodyText =
+      await response.text();
+
+    if (!response.ok) {
+      throw new Error(
+        "AI HTTP " +
+        response.status +
+        ": " +
+        bodyText.slice(0, 500)
+      );
+    }
+
+    const payload =
+      JSON.parse(bodyText);
+
+    const content =
+      payload?.choices?.[0]?.message?.content;
+
+    if (!content) {
+      throw new Error(
+        "A IA não retornou conteúdo estruturado."
+      );
+    }
+
+    const parsed =
+      typeof content === "string"
+        ? JSON.parse(content)
+        : content;
+
+    return Array.isArray(parsed?.reviews)
+      ? parsed.reviews
+      : [];
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function reviewFindingsWithAi(analysisId) {
+  if (!aiReviewAvailable()) {
+    await pool.query(
+      `UPDATE analyses
+       SET ai_review_status = $2,
+           ai_review_error = NULL,
+           ai_reviewed_at = NULL
+       WHERE id = $1`,
+      [
+        analysisId,
+        aiReviewConfig.enabled
+          ? "not_configured"
+          : "disabled",
+      ]
+    );
+
+    return {
+      status:
+        aiReviewConfig.enabled
+          ? "not_configured"
+          : "disabled",
+      reviewed: 0,
+      filtered: 0,
+    };
+  }
+
+  await pool.query(
+    `UPDATE analyses
+     SET ai_review_status = 'running',
+         ai_review_error = NULL
+     WHERE id = $1`,
+    [analysisId]
+  );
+
+  try {
+    const findingsResult =
+      await pool.query(
+        `SELECT
+           id,
+           title,
+           severity,
+           artifact_type,
+           artifact_value,
+           evidence
+         FROM scan_findings
+         WHERE analysis_id = $1
+           AND severity IN ('medium','high','critical')
+         ORDER BY
+           CASE severity
+             WHEN 'critical' THEN 3
+             WHEN 'high' THEN 2
+             ELSE 1
+           END DESC,
+           id ASC`,
+        [analysisId]
+      );
+
+    let findings =
+      findingsResult.rows.filter(
+        (finding) =>
+          !isAiProtectedFinding(finding)
+      );
+
+    if (
+      aiReviewConfig.maxFindings > 0 &&
+      findings.length > aiReviewConfig.maxFindings
+    ) {
+      findings =
+        findings.slice(
+          0,
+          aiReviewConfig.maxFindings
+        );
+    }
+
+    const grouped = new Map();
+
+    for (const finding of findings) {
+      const built =
+        buildAiReviewCase(finding);
+
+      if (!grouped.has(built.fingerprint)) {
+        grouped.set(
+          built.fingerprint,
+          {
+            ...built,
+            findings: [],
+          }
+        );
+      }
+
+      grouped.get(
+        built.fingerprint
+      ).findings.push(finding);
+    }
+
+    const pending = [];
+    let reused = 0;
+
+    for (const group of grouped.values()) {
+      const cached =
+        await pool.query(
+          `SELECT verdict, confidence, reason
+           FROM ai_finding_reviews
+           WHERE fingerprint = $1
+             AND model = $2
+           ORDER BY id DESC
+           LIMIT 1`,
+          [
+            group.fingerprint,
+            aiReviewConfig.model,
+          ]
+        );
+
+      const cacheRow =
+        cached.rows[0];
+
+      if (!cacheRow) {
+        pending.push(group);
+        continue;
+      }
+
+      for (const finding of group.findings) {
+        await pool.query(
+          `INSERT INTO ai_finding_reviews(
+             analysis_id,
+             finding_id,
+             fingerprint,
+             verdict,
+             confidence,
+             reason,
+             model,
+             cached
+           )
+           VALUES ($1,$2,$3,$4,$5,$6,$7,TRUE)
+           ON CONFLICT (analysis_id, finding_id)
+           DO UPDATE SET
+             fingerprint=EXCLUDED.fingerprint,
+             verdict=EXCLUDED.verdict,
+             confidence=EXCLUDED.confidence,
+             reason=EXCLUDED.reason,
+             model=EXCLUDED.model,
+             cached=TRUE,
+             updated_at=NOW()`,
+          [
+            analysisId,
+            finding.id,
+            group.fingerprint,
+            cacheRow.verdict,
+            cacheRow.confidence,
+            cacheRow.reason,
+            aiReviewConfig.model,
+          ]
+        );
+      }
+
+      reused += group.findings.length;
+    }
+
+    for (
+      let index = 0;
+      index < pending.length;
+      index += aiReviewConfig.batchSize
+    ) {
+      const batch =
+        pending.slice(
+          index,
+          index + aiReviewConfig.batchSize
+        );
+
+      let reviews;
+
+      try {
+        reviews =
+          await callAiReviewBatch(batch);
+      } catch (error) {
+        console.error(
+          "Falha na revisão por IA; mantendo filtro normal:",
+          {
+            analysisId,
+            message: error?.message,
+          }
+        );
+
+        reviews = [];
+      }
+
+      const byFingerprint =
+        new Map(
+          reviews.map((review) => [
+            String(review?.fingerprint || ""),
+            review,
+          ])
+        );
+
+      for (const group of batch) {
+        const raw =
+          byFingerprint.get(
+            group.fingerprint
+          );
+
+        let verdict =
+          normalizeAiVerdict(
+            raw?.verdict
+          );
+
+        const confidence =
+          normalizeAiConfidence(
+            raw?.confidence
+          );
+
+        if (
+          verdict === "likely_false_positive" &&
+          confidence <
+            aiReviewConfig.falsePositiveThreshold
+        ) {
+          verdict = "needs_review";
+        }
+
+        const reason =
+          trimAiString(
+            raw?.reason ||
+            "A IA não retornou revisão confiável; mantido para revisão humana.",
+            1200
+          );
+
+        for (const finding of group.findings) {
+          await pool.query(
+            `INSERT INTO ai_finding_reviews(
+               analysis_id,
+               finding_id,
+               fingerprint,
+               verdict,
+               confidence,
+               reason,
+               model,
+               cached
+             )
+             VALUES ($1,$2,$3,$4,$5,$6,$7,FALSE)
+             ON CONFLICT (analysis_id, finding_id)
+             DO UPDATE SET
+               fingerprint=EXCLUDED.fingerprint,
+               verdict=EXCLUDED.verdict,
+               confidence=EXCLUDED.confidence,
+               reason=EXCLUDED.reason,
+               model=EXCLUDED.model,
+               cached=FALSE,
+               updated_at=NOW()`,
+            [
+              analysisId,
+              finding.id,
+              group.fingerprint,
+              verdict,
+              confidence,
+              reason,
+              aiReviewConfig.model,
+            ]
+          );
+        }
+      }
+    }
+
+    const summary =
+      await pool.query(
+        `SELECT
+           COUNT(*)::int AS reviewed,
+           COUNT(*) FILTER (
+             WHERE verdict='likely_false_positive'
+           )::int AS filtered,
+           COUNT(*) FILTER (
+             WHERE verdict='likely_cheat'
+           )::int AS likely_cheat,
+           COUNT(*) FILTER (
+             WHERE verdict='needs_review'
+           )::int AS needs_review
+         FROM ai_finding_reviews
+         WHERE analysis_id=$1`,
+        [analysisId]
+      );
+
+    await pool.query(
+      `UPDATE analyses
+       SET ai_review_status = 'completed',
+           ai_review_error = NULL,
+           ai_reviewed_at = NOW()
+       WHERE id = $1`,
+      [analysisId]
+    );
+
+    return {
+      status: "completed",
+      reused,
+      ...(summary.rows[0] || {}),
+    };
+  } catch (error) {
+    console.error(
+      "Revisão por IA falhou; resultado normal será mantido:",
+      {
+        analysisId,
+        message: error?.message,
+        stack: error?.stack,
+      }
+    );
+
+    await pool.query(
+      `UPDATE analyses
+       SET ai_review_status = 'error',
+           ai_review_error = $2,
+           ai_reviewed_at = NOW()
+       WHERE id = $1`,
+      [
+        analysisId,
+        trimAiString(
+          error?.message || "Erro desconhecido",
+          1000
+        ),
+      ]
+    );
+
+    return {
+      status: "error",
+      reviewed: 0,
+      filtered: 0,
+    };
+  }
+}
+
 
 app.disable("x-powered-by");
 app.use(express.json({ limit: "64mb" }));
@@ -1084,8 +1759,32 @@ async function initDb() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS ai_finding_reviews (
+      id BIGSERIAL PRIMARY KEY,
+      analysis_id BIGINT NOT NULL REFERENCES analyses(id) ON DELETE CASCADE,
+      finding_id BIGINT NOT NULL REFERENCES scan_findings(id) ON DELETE CASCADE,
+      fingerprint TEXT NOT NULL,
+      verdict TEXT NOT NULL,
+      confidence DOUBLE PRECISION NOT NULL DEFAULT 0,
+      reason TEXT NOT NULL DEFAULT '',
+      model TEXT NOT NULL DEFAULT '',
+      cached BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(analysis_id, finding_id)
+    );
+
     ALTER TABLE analyses
       ADD COLUMN IF NOT EXISTS machine_fingerprint TEXT NULL;
+
+    ALTER TABLE analyses
+      ADD COLUMN IF NOT EXISTS ai_review_status TEXT NOT NULL DEFAULT 'pending';
+
+    ALTER TABLE analyses
+      ADD COLUMN IF NOT EXISTS ai_review_error TEXT NULL;
+
+    ALTER TABLE analyses
+      ADD COLUMN IF NOT EXISTS ai_reviewed_at TIMESTAMPTZ NULL;
 
     ALTER TABLE scan_reports
       ADD COLUMN IF NOT EXISTS payload_raw BYTEA NULL;
@@ -1097,6 +1796,8 @@ async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_analyses_fingerprint ON analyses(machine_fingerprint);
     CREATE INDEX IF NOT EXISTS idx_findings_analysis ON scan_findings(analysis_id, id);
     CREATE INDEX IF NOT EXISTS idx_reports_analysis ON scan_reports(analysis_id, id DESC);
+    CREATE INDEX IF NOT EXISTS idx_ai_reviews_analysis ON ai_finding_reviews(analysis_id, finding_id);
+    CREATE INDEX IF NOT EXISTS idx_ai_reviews_fingerprint ON ai_finding_reviews(fingerprint, model, id DESC);
 
     INSERT INTO detection_rules(name, type, pattern, severity, description)
     SELECT 'Nome contendo loader', 'filename_contains', 'loader', 'medium',
@@ -1641,6 +2342,7 @@ async function rebuildFindings(analysisId, report) {
 
   await addBuiltInReviewFindings(analysisId, report);
   await downgradeUnexecutedExeFindings(analysisId, report);
+  await reviewFindingsWithAi(analysisId);
 }
 
 async function insertReviewFinding(
@@ -4110,13 +4812,28 @@ app.get("/api/admin/analyses", requireAdmin, async (_req, res) => {
     FROM analyses a
     LEFT JOIN (
       SELECT
-        analysis_id,
-        COUNT(DISTINCT LOWER(artifact_type) || '|' || LOWER(TRIM(artifact_value)))
-          FILTER (WHERE severity IN ('high','critical')) AS total_findings,
-        COUNT(DISTINCT LOWER(artifact_type) || '|' || LOWER(TRIM(artifact_value)))
-          FILTER (WHERE severity IN ('high','critical')) AS high_findings
-      FROM scan_findings
-      GROUP BY analysis_id
+        sf.analysis_id,
+        COUNT(DISTINCT LOWER(sf.artifact_type) || '|' || LOWER(TRIM(sf.artifact_value)))
+          FILTER (
+            WHERE sf.severity IN ('high','critical')
+              AND (
+                sf.evidence->>'priorityMaximum' = 'true'
+                OR ar.verdict IS DISTINCT FROM 'likely_false_positive'
+              )
+          ) AS total_findings,
+        COUNT(DISTINCT LOWER(sf.artifact_type) || '|' || LOWER(TRIM(sf.artifact_value)))
+          FILTER (
+            WHERE sf.severity IN ('high','critical')
+              AND (
+                sf.evidence->>'priorityMaximum' = 'true'
+                OR ar.verdict IS DISTINCT FROM 'likely_false_positive'
+              )
+          ) AS high_findings
+      FROM scan_findings sf
+      LEFT JOIN ai_finding_reviews ar
+        ON ar.analysis_id = sf.analysis_id
+       AND ar.finding_id = sf.id
+      GROUP BY sf.analysis_id
     ) f ON f.analysis_id = a.id
     ORDER BY a.id DESC
     LIMIT 500
@@ -4170,18 +4887,71 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
   }
 
   const findingsResult = await pool.query(
-    `SELECT id, rule_id, title, severity, artifact_type, artifact_value, evidence, created_at
-     FROM scan_findings
-     WHERE analysis_id = $1
+    `SELECT
+       sf.id,
+       sf.rule_id,
+       sf.title,
+       sf.severity,
+       sf.artifact_type,
+       sf.artifact_value,
+       sf.evidence,
+       sf.created_at,
+       CASE
+         WHEN ar.id IS NULL THEN NULL
+         ELSE json_build_object(
+           'verdict', ar.verdict,
+           'confidence', ar.confidence,
+           'reason', ar.reason,
+           'model', ar.model,
+           'cached', ar.cached
+         )
+       END AS ai_review
+     FROM scan_findings sf
+     LEFT JOIN ai_finding_reviews ar
+       ON ar.analysis_id = sf.analysis_id
+      AND ar.finding_id = sf.id
+     WHERE sf.analysis_id = $1
+       AND (
+         sf.evidence->>'priorityMaximum' = 'true'
+         OR ar.verdict IS DISTINCT FROM 'likely_false_positive'
+       )
      ORDER BY
-       CASE severity
+       CASE sf.severity
          WHEN 'critical' THEN 5
          WHEN 'high' THEN 4
          WHEN 'medium' THEN 3
          WHEN 'low' THEN 2
          ELSE 1
        END DESC,
-       id ASC`,
+       sf.id ASC`,
+    [id]
+  );
+
+  const aiFilteredResult = await pool.query(
+    `SELECT
+       sf.id,
+       sf.rule_id,
+       sf.title,
+       sf.severity,
+       sf.artifact_type,
+       sf.artifact_value,
+       sf.evidence,
+       sf.created_at,
+       json_build_object(
+         'verdict', ar.verdict,
+         'confidence', ar.confidence,
+         'reason', ar.reason,
+         'model', ar.model,
+         'cached', ar.cached
+       ) AS ai_review
+     FROM scan_findings sf
+     JOIN ai_finding_reviews ar
+       ON ar.analysis_id = sf.analysis_id
+      AND ar.finding_id = sf.id
+     WHERE sf.analysis_id = $1
+       AND ar.verdict = 'likely_false_positive'
+       AND COALESCE(sf.evidence->>'priorityMaximum', 'false') <> 'true'
+     ORDER BY sf.id ASC`,
     [id]
   );
 
@@ -4213,6 +4983,13 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
     analysis,
     report: reportResult.rows[0] || null,
     findings: findingsResult.rows,
+    aiFilteredFindings: aiFilteredResult.rows,
+    aiReview: {
+      status: analysis.ai_review_status || "pending",
+      error: analysis.ai_review_error || null,
+      reviewedAt: analysis.ai_reviewed_at || null,
+      configured: aiReviewAvailable(),
+    },
     relatedAnalyses,
   });
 });
@@ -4251,19 +5028,46 @@ app.post("/api/admin/analyses/:id/rebuild", requireAdmin, async (req, res) => {
 
   const countResult = await pool.query(
     `SELECT
-       COUNT(DISTINCT LOWER(artifact_type) || '|' || LOWER(TRIM(artifact_value)))
-         FILTER (WHERE severity IN ('high','critical'))::int AS total,
-       COUNT(DISTINCT LOWER(artifact_type) || '|' || LOWER(TRIM(artifact_value)))
-         FILTER (WHERE severity IN ('high','critical'))::int AS high
-     FROM scan_findings
-     WHERE analysis_id=$1`,
+       COUNT(DISTINCT LOWER(sf.artifact_type) || '|' || LOWER(TRIM(sf.artifact_value)))
+         FILTER (
+           WHERE sf.severity IN ('high','critical')
+             AND (
+               sf.evidence->>'priorityMaximum' = 'true'
+               OR ar.verdict IS DISTINCT FROM 'likely_false_positive'
+             )
+         )::int AS total,
+       COUNT(DISTINCT LOWER(sf.artifact_type) || '|' || LOWER(TRIM(sf.artifact_value)))
+         FILTER (
+           WHERE sf.severity IN ('high','critical')
+             AND (
+               sf.evidence->>'priorityMaximum' = 'true'
+               OR ar.verdict IS DISTINCT FROM 'likely_false_positive'
+             )
+         )::int AS high,
+       COUNT(*) FILTER (
+         WHERE ar.verdict='likely_false_positive'
+           AND COALESCE(sf.evidence->>'priorityMaximum','false') <> 'true'
+       )::int AS ai_filtered
+     FROM scan_findings sf
+     LEFT JOIN ai_finding_reviews ar
+       ON ar.analysis_id=sf.analysis_id
+      AND ar.finding_id=sf.id
+     WHERE sf.analysis_id=$1`,
     [id]
   );
 
   res.json({
     ok: true,
     findings: Number(countResult.rows[0]?.total || 0),
-    highFindings: Number(countResult.rows[0]?.high || 0)
+    highFindings: Number(countResult.rows[0]?.high || 0),
+    aiFiltered: Number(countResult.rows[0]?.ai_filtered || 0),
+    aiReviewStatus:
+      (
+        await pool.query(
+          "SELECT ai_review_status FROM analyses WHERE id=$1",
+          [id]
+        )
+      ).rows[0]?.ai_review_status || "pending"
   });
 });
 
