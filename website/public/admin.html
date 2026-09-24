@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#061018">
   <title>Vorken Anti-Cheat</title>
   <link rel="icon" type="image/svg+xml" href="/vorken-logo.svg">
-  <link rel="stylesheet" href="/styles.css?v=20260924-privacy-filters">
+  <link rel="stylesheet" href="/styles.css?v=20260924-gf-vorken">
 </head>
 <body class="vorken-admin">
   <header class="vorken-shell-header">
@@ -108,6 +108,11 @@
                 <div class="report-origin-line"><span>◉</span> Steam Profile <span class="muted">· relatório técnico auditável</span></div>
               </div>
               <div class="report-head-actions">
+                <div id="gfIntegrationActions" class="gf-integration-actions hidden">
+                  <span id="gfDecisionBadge" class="gf-decision-badge">GUERRA FRIA</span>
+                  <button id="gfReleaseBtn" class="button gf-release-button" type="button">✓ Liberar jogador</button>
+                  <button id="gfBanBtn" class="button gf-ban-button" type="button">⚠ Banir jogador</button>
+                </div>
                 <button id="clientReportToggleBtn" class="button release-report-button" type="button">Liberar detalhes ao cliente</button>
                 <button id="exportReportBtn" class="button ghost" type="button">⇩ Exportar relatório</button>
                 <button id="rebuildFindingsBtn" class="button ghost" type="button">Reprocessar análise</button>
@@ -450,6 +455,6 @@
     </section>
   </main>
 
-  <script src="/admin.js?v=20260924-privacy-filters"></script>
+  <script src="/admin.js?v=20260924-gf-vorken"></script>
 </body>
 </html>
