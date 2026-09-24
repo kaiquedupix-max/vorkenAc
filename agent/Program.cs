@@ -11,7 +11,7 @@ namespace Vorken.Agent;
 
 internal static class Program
 {
-    private const string AgentVersion = "0.7.0";
+    private const string AgentVersion = "0.8.0";
 
     private static readonly JsonSerializerOptions JsonOptions =
         new(JsonSerializerDefaults.Web)
@@ -706,7 +706,7 @@ internal static class Program
         AddRoot(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
         AddRoot(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData));
 
-        string[] extensions = { ".exe", ".dll", ".sys", ".bat", ".cmd", ".ps1", ".com", ".scr" };
+        string[] extensions = { ".exe", ".dll", ".sys", ".bat", ".cmd", ".ps1", ".com", ".scr", ".zip", ".rar", ".7z" };
         var files = new List<FileRecord>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -762,6 +762,10 @@ internal static class Program
                         SignerSubject = signer,
                         PrefetchEvidenceUtc = executionEvidence,
                         CompilationTimeUtc = TryPeCompileTimeUtc(info.FullName),
+                        RandomLikeName = LooksRandomFileName(info.Name),
+                        ArchiveEntries = info.Extension.Equals(".zip", StringComparison.OrdinalIgnoreCase)
+                            ? TryListZipEntries(info.FullName)
+                            : new List<string>(),
                         DriveType = GetDriveType(info.FullName)
                     });
                 }
@@ -1045,6 +1049,70 @@ internal static class Program
         }
     }
 
+    private static bool LooksRandomFileName(string fileName)
+    {
+        try
+        {
+            string stem = Path.GetFileNameWithoutExtension(fileName);
+            if (stem.Length < 7 || stem.Length > 28)
+                return false;
+
+            if (!stem.All(char.IsLetterOrDigit))
+                return false;
+
+            int letters = stem.Count(char.IsLetter);
+            int digits = stem.Count(char.IsDigit);
+            int vowels = stem.Count(ch => "aeiouAEIOU".Contains(ch));
+            int distinct = stem.ToUpperInvariant().Distinct().Count();
+            bool allUpperOrDigits = stem.All(ch => !char.IsLetter(ch) || char.IsUpper(ch));
+            double vowelRatio = letters == 0 ? 0 : (double)vowels / letters;
+
+            if (allUpperOrDigits &&
+                letters >= 6 &&
+                distinct >= Math.Min(6, stem.Length - 1) &&
+                vowelRatio <= 0.35)
+            {
+                return true;
+            }
+
+            if (stem.Length >= 10 &&
+                letters >= 6 &&
+                digits >= 2 &&
+                distinct >= 8)
+            {
+                return true;
+            }
+
+            return false;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static List<string> TryListZipEntries(string path)
+    {
+        var result = new List<string>();
+
+        try
+        {
+            using var archive = System.IO.Compression.ZipFile.OpenRead(path);
+
+            foreach (var entry in archive.Entries.Take(400))
+            {
+                string name = entry.FullName?.Trim() ?? "";
+                if (!string.IsNullOrWhiteSpace(name))
+                    result.Add(name);
+            }
+        }
+        catch
+        {
+        }
+
+        return result;
+    }
+
     private static DateTime? TryPeCompileTimeUtc(string path)
     {
         try
@@ -1270,6 +1338,8 @@ internal sealed class FileRecord
     public string? SignerSubject { get; set; }
     public DateTime? PrefetchEvidenceUtc { get; set; }
     public DateTime? CompilationTimeUtc { get; set; }
+    public bool RandomLikeName { get; set; }
+    public List<string> ArchiveEntries { get; set; } = new();
     public string DriveType { get; set; } = "";
 }
 
