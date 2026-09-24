@@ -1463,3 +1463,53 @@ pre.raw{max-height:420px;overflow:auto;background:#05080a;border:1px solid #1620
     grid-template-columns: repeat(2, minmax(120px, 1fr));
   }
 }
+
+
+/* Guerra Fria <-> Vorken verification actions */
+.gf-integration-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+.gf-integration-actions.hidden {
+  display: none !important;
+}
+.gf-decision-badge {
+  border: 1px solid #246455;
+  background: rgba(12, 58, 50, .8);
+  color: #55efd0;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: 700 8px "Consolas", monospace;
+  letter-spacing: .04em;
+}
+.gf-decision-badge.pending {
+  color: #ffd56d;
+  border-color: #8a6725;
+  background: rgba(71, 49, 10, .8);
+}
+.gf-decision-badge.complete {
+  color: #55efd0;
+  border-color: #246455;
+}
+.gf-decision-badge.failed {
+  color: #ff7382;
+  border-color: #8d303e;
+  background: rgba(79, 18, 28, .82);
+}
+.gf-release-button {
+  border: 1px solid #1e8c71 !important;
+  background: rgba(12, 89, 70, .85) !important;
+  color: #6dffdc !important;
+}
+.gf-ban-button {
+  border: 1px solid #9f3542 !important;
+  background: rgba(108, 22, 34, .88) !important;
+  color: #ff8290 !important;
+}
+.gf-release-button:disabled,
+.gf-ban-button:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
