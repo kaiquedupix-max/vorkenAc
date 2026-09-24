@@ -899,17 +899,14 @@ async function openReport(id) {
             : "GEMINI · REVISAR"
         : "";
 
-      const aiConfidence = ai
-        ? Math.round(Number(ai.confidence || 0) * 100)
-        : 0;
-
-      const aiBlock = ai
-        ? '<div class="kv"><span>' + escapeHtml(aiLabel) + '</span><span>' +
-            escapeHtml(String(aiConfidence) + "% · " + (ai.reason || "Sem justificativa.")) +
-          '</span></div>'
-        : evidence.priorityMaximum === true
-          ? '<div class="kv"><span>Gemini</span><span>Prioridade máxima protegida · não pode ser rebaixada</span></div>'
-          : "";
+      const aiBlock = evidence.priorityMaximum === true ||
+        evidence.protectedByTechnicalEngine === true
+        ? '<div class="kv"><span>Motor técnico</span><span>PROTEGIDO · execução/evidência forte confirmada · Gemini não pode remover nem rebaixar</span></div>'
+        : ai
+          ? '<div class="kv"><span>' + escapeHtml(aiLabel) + '</span><span>' +
+              escapeHtml(ai.reason || "Sem justificativa.") +
+            '</span></div>'
+          : '<div class="kv"><span>Revisão</span><span>Revisão necessária / aguardando Gemini</span></div>';
 
       element.innerHTML = `
         <div class="finding-head">
