@@ -9,6 +9,7 @@ let showTechnicalResult = false;
 let currentClientReportReleased = false;
 let currentGuerraFriaLinked = false;
 let currentIntegrationDecision = null;
+let selectedBanEvidenceIds = new Set();
 let dashboardPollTimer = null;
 let lastOpenReportProcessing = null;
 
@@ -561,6 +562,7 @@ document.getElementById("closeReportBtn").addEventListener("click", () => {
   currentClientReportReleased = false;
   currentGuerraFriaLinked = false;
   currentIntegrationDecision = null;
+  selectedBanEvidenceIds.clear();
   showTechnicalResult = false;
   lastOpenReportProcessing = null;
 });
@@ -591,10 +593,17 @@ async function queueGuerraFriaDecision(action) {
     return;
   }
 
+  const evidenceIds = isBan ? [...selectedBanEvidenceIds] : [];
+
+  if (isBan && evidenceIds.length === 0) {
+    alert("Selecione pelo menos uma evidência que justifique o banimento.");
+    return;
+  }
+
   const confirmed =
     window.confirm(
       isBan
-        ? "Confirmar BANIMENTO PERMANENTE deste jogador?"
+        ? "Confirmar BANIMENTO PERMANENTE com " + evidenceIds.length + " evidência(s) selecionada(s)?"
         : "Confirmar LIBERAÇÃO deste jogador no servidor?"
     );
 
@@ -622,6 +631,7 @@ async function queueGuerraFriaDecision(action) {
               ? "deny"
               : "approve",
           reason,
+          evidenceIds,
         }),
       }
     );
@@ -852,6 +862,9 @@ async function loadAnalyses() {
 }
 
 async function openReport(id) {
+  if (String(currentReportId || "") !== String(id || ""))
+    selectedBanEvidenceIds.clear();
+
   currentReportId = id;
   document.querySelector('[data-report-filter="overview"]')?.click();
 
@@ -993,6 +1006,7 @@ async function openReport(id) {
     usbCurrent: safeArray(payload.usbCurrent),
     usbHistory: safeArray(payload.usbHistory),
     usbTimeline: safeArray(payload.usbTimeline),
+    usbFiles: safeArray(payload.usbFiles),
     serialDevices: safeArray(payload.serialDevices),
     processes: safeArray(payload.processes),
     prefetch: safeArray(payload.prefetch),
