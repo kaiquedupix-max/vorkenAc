@@ -2012,6 +2012,15 @@ async function initDb() {
     ALTER TABLE analyses
       ADD COLUMN IF NOT EXISTS external_verification_code TEXT NULL;
 
+    ALTER TABLE analyses
+      ADD COLUMN IF NOT EXISTS external_decision TEXT NULL;
+
+    ALTER TABLE analyses
+      ADD COLUMN IF NOT EXISTS external_decision_at TIMESTAMPTZ NULL;
+
+    ALTER TABLE analyses
+      ADD COLUMN IF NOT EXISTS external_decision_result TEXT NULL;
+
     CREATE TABLE IF NOT EXISTS guerra_fria_verifications (
       id BIGSERIAL PRIMARY KEY,
       verification_code TEXT NOT NULL UNIQUE,
@@ -5633,6 +5642,9 @@ app.get("/api/admin/analyses", requireAdmin, async (_req, res) => {
       a.external_discord_user_id,
       a.external_ticket_channel_id,
       a.external_verification_code,
+      a.external_decision,
+      a.external_decision_at,
+      a.external_decision_result,
       COALESCE(f.total_findings, 0)::int AS total_findings,
       COALESCE(f.high_findings, 0)::int AS high_findings
     FROM analyses a
@@ -5721,7 +5733,10 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
        external_player_id,
        external_discord_user_id,
        external_ticket_channel_id,
-       external_verification_code
+       external_verification_code,
+       external_decision,
+       external_decision_at,
+       external_decision_result
      FROM analyses
      WHERE id = $1
      LIMIT 1`,
