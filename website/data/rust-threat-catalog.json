@@ -1,5 +1,5 @@
 {
-  "version": "2026-09-24.2",
+  "version": "2026-09-24.3",
   "notes": "Catálogo defensivo de nomes/domínios publicamente associados a cheats/scripts de Rust. Correspondência de nome isolado não deve ser tratada como prova sem contexto.",
   "brands": [
     {
@@ -416,6 +416,137 @@
       "discordInvites": [],
       "severity": "critical",
       "source": "public_marketplace"
+    },
+    {
+      "name": "UnnamedCheats",
+      "aliases": [
+        "unnamedcheats",
+        "unnamed cheats rust",
+        "unnamed rust external"
+      ],
+      "domains": [
+        "linktr.ee"
+      ],
+      "discordInvites": [],
+      "severity": "high",
+      "source": "public_web"
+    },
+    {
+      "name": "RagePros",
+      "aliases": [
+        "ragepros",
+        "ragepros rust external"
+      ],
+      "domains": [
+        "ragepros.com"
+      ],
+      "discordInvites": [],
+      "severity": "critical",
+      "source": "public_web"
+    },
+    {
+      "name": "Matrix External",
+      "aliases": [
+        "matrix external",
+        "matrix rust external"
+      ],
+      "domains": [
+        "elitehacks.ru"
+      ],
+      "discordInvites": [],
+      "severity": "high",
+      "source": "public_web"
+    },
+    {
+      "name": "Beamware",
+      "aliases": [
+        "beamware",
+        "beamware rust"
+      ],
+      "domains": [
+        "beamware.net"
+      ],
+      "discordInvites": [],
+      "severity": "critical",
+      "source": "public_web"
+    },
+    {
+      "name": "Havolith",
+      "aliases": [
+        "havolith",
+        "havolith rust"
+      ],
+      "domains": [
+        "havolith.com"
+      ],
+      "discordInvites": [],
+      "severity": "critical",
+      "source": "public_web"
+    },
+    {
+      "name": "Opticware",
+      "aliases": [
+        "opticware",
+        "opticware rust"
+      ],
+      "domains": [
+        "opticware.net"
+      ],
+      "discordInvites": [],
+      "severity": "critical",
+      "source": "public_web"
+    },
+    {
+      "name": "Demonity",
+      "aliases": [
+        "demonity",
+        "demonity rust"
+      ],
+      "domains": [
+        "demonity.cc"
+      ],
+      "discordInvites": [],
+      "severity": "critical",
+      "source": "public_web"
+    },
+    {
+      "name": "Fame Scripts",
+      "aliases": [
+        "fame scripts",
+        "fame rust scripts",
+        "rustscripts.com"
+      ],
+      "domains": [
+        "rustscripts.com"
+      ],
+      "discordInvites": [],
+      "severity": "critical",
+      "source": "public_web"
+    },
+    {
+      "name": "AimMaster",
+      "aliases": [
+        "aimmaster",
+        "aimmaster rust"
+      ],
+      "domains": [
+        "aimmaster.cc"
+      ],
+      "discordInvites": [],
+      "severity": "high",
+      "source": "public_forum"
+    },
+    {
+      "name": "HennyCheats / Calamari",
+      "aliases": [
+        "hennycheats",
+        "calamari rust",
+        "calamari cheat"
+      ],
+      "domains": [],
+      "discordInvites": [],
+      "severity": "high",
+      "source": "public_forum"
     }
   ]
 }
