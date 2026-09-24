@@ -116,24 +116,31 @@ const commonAppCatalog = loadCommonAppCatalog();
 
 const activeRebuilds = new Set();
 
-const AI_REVIEW_POLICY_VERSION = "v1";
+const AI_REVIEW_POLICY_VERSION = "v2-gemini";
 
 const aiReviewConfig = {
+  provider: "gemini",
   enabled:
     String(process.env.AI_REVIEW_ENABLED || "true").toLowerCase() !== "false",
   apiKey:
-    String(process.env.AI_API_KEY || process.env.OPENAI_API_KEY || "").trim(),
+    String(process.env.GEMINI_API_KEY || process.env.AI_API_KEY || "").trim(),
   baseUrl:
-    String(process.env.AI_BASE_URL || "https://api.openai.com/v1")
-      .replace(/\/$/, ""),
+    String(
+      process.env.GEMINI_BASE_URL ||
+      "https://generativelanguage.googleapis.com/v1beta"
+    ).replace(/\/$/, ""),
   model:
-    String(process.env.AI_MODEL || "gpt-4o-mini").trim(),
+    String(
+      process.env.GEMINI_MODEL ||
+      process.env.AI_MODEL ||
+      "gemini-3.5-flash-lite"
+    ).trim(),
   timeoutMs:
     Math.max(
       5000,
       Math.min(
         120000,
-        Number(process.env.AI_TIMEOUT_MS || 45000)
+        Number(process.env.AI_TIMEOUT_MS || 60000)
       )
     ),
   batchSize:
@@ -141,7 +148,7 @@ const aiReviewConfig = {
       1,
       Math.min(
         30,
-        Number(process.env.AI_REVIEW_BATCH_SIZE || 12)
+        Number(process.env.AI_REVIEW_BATCH_SIZE || 20)
       )
     ),
   falsePositiveThreshold:
@@ -342,7 +349,10 @@ async function callAiReviewBatch(cases) {
         items: {
           type: "object",
           properties: {
-            fingerprint: { type: "string" },
+            fingerprint: {
+              type: "string",
+              description: "Fingerprint exato recebido no caso."
+            },
             verdict: {
               type: "string",
               enum: [
@@ -350,13 +360,18 @@ async function callAiReviewBatch(cases) {
                 "likely_false_positive",
                 "needs_review",
               ],
+              description: "Classificação conservadora do achado."
             },
             confidence: {
               type: "number",
               minimum: 0,
               maximum: 1,
+              description: "Confiança da classificação entre 0 e 1."
             },
-            reason: { type: "string" },
+            reason: {
+              type: "string",
+              description: "Justificativa técnica curta baseada somente nas evidências fornecidas."
+            },
           },
           required: [
             "fingerprint",
@@ -381,46 +396,60 @@ async function callAiReviewBatch(cases) {
     "Dê peso alto a execução confirmada, origem de download, assinatura/publisher, catálogo conhecido, mídia removível e correlação entre fontes.",
     "Instaladores, updaters, WindowsApps, Program Files e software conhecido podem ser falsos positivos quando o restante do contexto é benigno.",
     "Nome estranho sozinho, caminho Temp sozinho, arquivo apagado sozinho, ausência de assinatura sozinha e ZIP sozinho não provam cheat.",
+    "Nunca rebaixe um caso somente porque o nome do arquivo parece comum.",
+    "Retorne uma revisão para cada fingerprint recebido.",
     "Responda exclusivamente no JSON solicitado.",
   ].join(" ");
 
+  const prompt =
+    "Revise estes casos técnicos:\n" +
+    JSON.stringify(
+      cases.map((item) => ({
+        fingerprint: item.fingerprint,
+        ...item.caseData,
+      }))
+    );
+
   try {
+    const endpoint =
+      aiReviewConfig.baseUrl +
+      "/models/" +
+      encodeURIComponent(aiReviewConfig.model) +
+      ":generateContent";
+
     const response =
       await fetch(
-        aiReviewConfig.baseUrl + "/chat/completions",
+        endpoint,
         {
           method: "POST",
           headers: {
-            Authorization:
-              "Bearer " + aiReviewConfig.apiKey,
+            "x-goog-api-key": aiReviewConfig.apiKey,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            model: aiReviewConfig.model,
-            temperature: 0,
-            messages: [
-              {
-                role: "system",
-                content: systemPrompt,
-              },
+            systemInstruction: {
+              parts: [
+                {
+                  text: systemPrompt,
+                },
+              ],
+            },
+            contents: [
               {
                 role: "user",
-                content:
-                  "Revise estes casos técnicos:\n" +
-                  JSON.stringify(
-                    cases.map((item) => ({
-                      fingerprint: item.fingerprint,
-                      ...item.caseData,
-                    }))
-                  ),
+                parts: [
+                  {
+                    text: prompt,
+                  },
+                ],
               },
             ],
-            response_format: {
-              type: "json_schema",
-              json_schema: {
-                name: "vorken_ai_reviews",
-                strict: true,
-                schema,
+            generationConfig: {
+              responseFormat: {
+                text: {
+                  mimeType: "application/json",
+                  schema,
+                },
               },
             },
           }),
@@ -432,39 +461,60 @@ async function callAiReviewBatch(cases) {
       await response.text();
 
     if (!response.ok) {
-      throw new Error(
-        "AI HTTP " +
-        response.status +
-        ": " +
-        bodyText.slice(0, 500)
-      );
+      const error =
+        new Error(
+          "Gemini HTTP " +
+          response.status +
+          ": " +
+          bodyText.slice(0, 700)
+        );
+
+      error.status = response.status;
+      error.responseBody = bodyText.slice(0, 2000);
+      throw error;
     }
 
     const payload =
       JSON.parse(bodyText);
 
     const content =
-      payload?.choices?.[0]?.message?.content;
+      (payload?.candidates?.[0]?.content?.parts || [])
+        .map((part) => part?.text || "")
+        .join("")
+        .trim();
 
     if (!content) {
+      const finishReason =
+        payload?.candidates?.[0]?.finishReason ||
+        payload?.promptFeedback?.blockReason ||
+        "sem conteúdo";
+
       throw new Error(
-        "A IA não retornou conteúdo estruturado."
+        "O Gemini não retornou conteúdo estruturado (" +
+        finishReason +
+        ")."
       );
     }
 
     const parsed =
-      typeof content === "string"
-        ? JSON.parse(content)
-        : content;
+      JSON.parse(content);
 
-    return Array.isArray(parsed?.reviews)
-      ? parsed.reviews
-      : [];
+    const reviews =
+      Array.isArray(parsed?.reviews)
+        ? parsed.reviews
+        : [];
+
+    if (!reviews.length && cases.length > 0) {
+      throw new Error(
+        "O Gemini retornou JSON válido, mas sem revisões."
+      );
+    }
+
+    return reviews;
   } finally {
     clearTimeout(timeout);
   }
 }
-
 async function reviewFindingsWithAi(analysisId) {
   if (!aiReviewAvailable()) {
     await pool.query(
@@ -643,9 +693,10 @@ async function reviewFindingsWithAi(analysisId) {
           await callAiReviewBatch(batch);
       } catch (error) {
         console.error(
-          "Falha na revisão por IA; mantendo filtro normal:",
+          "Falha na revisão pelo Gemini; mantendo filtro normal:",
           {
             analysisId,
+            status: error?.status,
             message: error?.message,
           }
         );
@@ -653,12 +704,22 @@ async function reviewFindingsWithAi(analysisId) {
         batchFailures++;
         batchFailureMessages.push(
           trimAiString(
-            error?.message || "Falha desconhecida na API de IA.",
-            300
+            error?.message || "Falha desconhecida na API Gemini.",
+            500
           )
         );
 
-        reviews = [];
+        // Não grave uma revisão falsa quando a API falhar. Assim o lote
+        // continua elegível para uma nova tentativa no próximo recálculo.
+        if (
+          [400, 401, 403, 404, 429].includes(
+            Number(error?.status || 0)
+          )
+        ) {
+          break;
+        }
+
+        continue;
       }
 
       const byFingerprint =
@@ -669,11 +730,18 @@ async function reviewFindingsWithAi(analysisId) {
           ])
         );
 
+      let missingReviews = 0;
+
       for (const group of batch) {
         const raw =
           byFingerprint.get(
             group.fingerprint
           );
+
+        if (!raw) {
+          missingReviews++;
+          continue;
+        }
 
         let verdict =
           normalizeAiVerdict(
@@ -696,7 +764,7 @@ async function reviewFindingsWithAi(analysisId) {
         const reason =
           trimAiString(
             raw?.reason ||
-            "A IA não retornou revisão confiável; mantido para revisão humana.",
+            "O Gemini não retornou justificativa; mantido para revisão humana.",
             1200
           );
 
@@ -734,6 +802,14 @@ async function reviewFindingsWithAi(analysisId) {
           );
         }
       }
+
+      if (missingReviews > 0) {
+        batchFailures++;
+        batchFailureMessages.push(
+          missingReviews +
+          " caso(s) ficaram sem resposta estruturada do Gemini."
+        );
+      }
     }
 
     const summary =
@@ -754,9 +830,14 @@ async function reviewFindingsWithAi(analysisId) {
         [analysisId]
       );
 
+    const reviewedCount =
+      Number(summary.rows[0]?.reviewed || 0);
+
     const finalAiStatus =
       batchFailures > 0
-        ? "partial_error"
+        ? reviewedCount > 0
+          ? "partial_error"
+          : "error"
         : "completed";
 
     const finalAiError =
@@ -788,7 +869,7 @@ async function reviewFindingsWithAi(analysisId) {
     };
   } catch (error) {
     console.error(
-      "Revisão por IA falhou; resultado normal será mantido:",
+      "Revisão pelo Gemini falhou; resultado normal será mantido:",
       {
         analysisId,
         message: error?.message,
@@ -5100,6 +5181,8 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
       error: analysis.ai_review_error || null,
       reviewedAt: analysis.ai_reviewed_at || null,
       configured: aiReviewAvailable(),
+      provider: aiReviewConfig.provider,
+      model: aiReviewConfig.model,
     },
     relatedAnalyses,
   });
