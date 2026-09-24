@@ -1745,8 +1745,6 @@ function isKnownBenignPeNoise(value) {
     name === "librehardwaremonitorlib.dll" ||
     name === "dnsjumper.exe" ||
     name === "vorken.agent.exe" ||
-    name === "helpsystem.dll" ||
-    name === "help.system.dll" ||
     /^vorken[-_.].*\.exe$/i.test(name)
   );
 }
@@ -3073,6 +3071,12 @@ async function addBuiltInReviewFindings(analysisId, report) {
           ...evidence,
           catalogMatch: match,
           priorityMaximum: directCatalogPriority,
+          protectedByTechnicalEngine:
+            directCatalogPriority ||
+            ["prefetch_execution", "process_history", "bam"].includes(artifactType),
+          executionConfirmed:
+            ["prefetch_execution", "process_history", "bam"].includes(artifactType),
+          directCatalogPriority,
           confidence:
             catalogSeverity === "info"
               ? "info"
