@@ -144,34 +144,47 @@
         </div>
         <div id="reportMetrics" class="metric-grid"></div>
         <div id="reportMeta"></div>
-        <section class="report-section">
+        <section class="report-section severity-overview">
+          <h3>Resumo dos achados</h3>
+          <div id="severityOverview" class="metric-grid"></div>
+        </section>
+
+        <details class="report-section severity-group severity-critical" open>
+          <summary>
+            <span>Críticos / altos</span>
+            <span id="criticalCountBadge" class="summary-badge danger">0</span>
+          </summary>
+          <div id="criticalFindingsList"></div>
+        </details>
+
+        <details class="report-section severity-group severity-medium" open>
+          <summary>
+            <span>Médios / revisar</span>
+            <span id="mediumCountBadge" class="summary-badge warning">0</span>
+          </summary>
+          <div id="mediumFindingsList"></div>
+        </details>
+
+        <details class="report-section severity-group hardware-group">
+          <summary>
+            <span>Pendrives / Arduino / MAKCU / seriais</span>
+            <span id="hardwareCountBadge" class="summary-badge info">0</span>
+          </summary>
+
           <h3>Dispositivos encontrados</h3>
           <div id="deviceOverviewList"></div>
-        </section>
 
-        <section class="report-section">
           <h3>Pendrives / USB desconectados</h3>
           <div id="disconnectedUsbList"></div>
-        </section>
 
-        <section class="report-section">
           <h3>Arduino / MAKCU / dispositivos seriais</h3>
           <div id="serialDeviceList"></div>
-        </section>
+        </details>
 
-        <section class="report-section">
+        <section class="report-section priority-section">
           <h3>Arquivos prioritários</h3>
+          <div class="message">Somente arquivos que merecem atenção aparecem aqui: apagados/executados, ZIPs suspeitos, nomes aleatórios e correspondências do catálogo Rust.</div>
           <div id="priorityFilesList"></div>
-        </section>
-
-        <section class="report-section">
-          <h3>Downloads apagados / não localizados</h3>
-          <div id="browserDownloadsList"></div>
-        </section>
-
-        <section class="report-section">
-          <h3>Lixeira / arquivos excluídos</h3>
-          <div id="recycleBinList"></div>
         </section>
 
         <section class="report-section">
@@ -179,60 +192,52 @@
           <div id="browserHistorySignalsList"></div>
         </section>
 
-        <section class="report-section">
-          <h3>Achados</h3>
-          <div id="findingsList"></div>
-        </section>
+        <details class="report-section info-inventory">
+          <summary>
+            <span>Inventário / arquivos informativos</span>
+            <span id="infoCountBadge" class="summary-badge info">0</span>
+          </summary>
+          <div class="message">Itens azuis e contexto técnico ficam recolhidos aqui para não misturar arquivos normais com detecções reais.</div>
 
-        <section class="report-section">
+          <h3>Achados informativos / baixos</h3>
+          <div id="infoFindingsList"></div>
+
+          <h3>Downloads apagados / não localizados</h3>
+          <div id="browserDownloadsList"></div>
+
+          <h3>Lixeira / arquivos excluídos</h3>
+          <div id="recycleBinList"></div>
+
           <h3>Linha do tempo forense</h3>
           <div id="forensicTimelineList"></div>
-        </section>
 
-        <section class="report-section">
           <h3>Resumo técnico</h3>
           <div id="artifactSummary"></div>
-        </section>
 
-        <section class="report-section">
           <h3>Análises anteriores neste PC</h3>
           <div id="relatedAnalysesList"></div>
-        </section>
 
-        <section class="report-section">
           <h3>Execuções suspeitas / mídia removível</h3>
           <div id="recentExecutionList"></div>
-        </section>
 
-        <section class="report-section">
           <h3>Inventário de arquivos candidatos</h3>
           <div id="candidateFilesList"></div>
-        </section>
 
-        <section class="report-section">
           <h3>Processos e horários de início</h3>
           <div id="processStartList"></div>
-        </section>
 
-        <section class="report-section">
           <h3>Timestamps de compilação PE</h3>
           <div id="compilationTimesList"></div>
-        </section>
 
-        <section class="report-section">
           <h3>Contexto técnico / anti-forense</h3>
           <div id="integritySignalsList"></div>
-        </section>
 
-        <section class="report-section">
           <h3>Módulos suspeitos carregados no Rust</h3>
           <div id="rustModulesList"></div>
-        </section>
 
-        <section class="report-section">
           <h3>Artefatos de execução do Windows</h3>
           <div id="executionArtifactsList"></div>
-        </section>
+        </details>
 
         <details class="report-section">
           <summary>Dados brutos da análise</summary>
@@ -249,6 +254,6 @@
     </section>
   </main>
 
-  <script src="/admin.js?v=20260924-2"></script>
+  <script src="/admin.js?v=20260924-3"></script>
 </body>
 </html>
