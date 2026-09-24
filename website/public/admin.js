@@ -949,6 +949,7 @@ async function openReport(id) {
   }
 
   const decisionLocked =
+    analysis.status !== "completed" ||
     Boolean(
       currentIntegrationDecision &&
       ["pending","processing","completed"]
