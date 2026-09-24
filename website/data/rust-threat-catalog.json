@@ -1,0 +1,327 @@
+{
+  "version": "2026-09-24",
+  "notes": "Catálogo defensivo de nomes/domínios publicamente associados a cheats/scripts de Rust. Correspondência de nome isolado não deve ser tratada como prova sem contexto.",
+  "brands": [
+    {
+      "name": "Lethality",
+      "aliases": [
+        "lethality",
+        "lethality club",
+        "lethality rust",
+        "lethality script",
+        "lethality loader"
+      ],
+      "domains": [
+        "lethality.club"
+      ],
+      "severity": "critical",
+      "source": "public_web"
+    },
+    {
+      "name": "Revolex",
+      "aliases": [
+        "revolex",
+        "revolex script",
+        "revolex cheats",
+        "revolex rust"
+      ],
+      "domains": [
+        "revolexscript.com"
+      ],
+      "severity": "critical",
+      "source": "public_web"
+    },
+    {
+      "name": "Purge Recoil",
+      "aliases": [
+        "purge recoil",
+        "purge rust",
+        "purge script",
+        "purgerecoil"
+      ],
+      "domains": [
+        "purgerecoil.club"
+      ],
+      "severity": "critical",
+      "source": "public_web"
+    },
+    {
+      "name": "Zaza Cheats",
+      "aliases": [
+        "zaza cheats",
+        "zazacheats",
+        "zaza private"
+      ],
+      "domains": [
+        "zazacheats.net"
+      ],
+      "severity": "critical",
+      "source": "public_web"
+    },
+    {
+      "name": "Slayer Private",
+      "aliases": [
+        "slayer private",
+        "slayer rust",
+        "slayer cheat"
+      ],
+      "domains": [
+        "slayer.club"
+      ],
+      "severity": "critical",
+      "source": "public_web"
+    },
+    {
+      "name": "Disconnect Cheats",
+      "aliases": [
+        "disconnect cheats",
+        "disconnect rust"
+      ],
+      "domains": [
+        "disconnectcheats.com"
+      ],
+      "severity": "critical",
+      "source": "public_web"
+    },
+    {
+      "name": "Beazt Private",
+      "aliases": [
+        "beazt private",
+        "beazt rust",
+        "beazt cheat"
+      ],
+      "domains": [],
+      "severity": "critical",
+      "source": "public_web"
+    },
+    {
+      "name": "Agera",
+      "aliases": [
+        "agera rust",
+        "agera cheat",
+        "agera aimbot"
+      ],
+      "domains": [
+        "discord.me"
+      ],
+      "severity": "high",
+      "source": "public_web"
+    },
+    {
+      "name": "PureDMA",
+      "aliases": [
+        "puredma",
+        "pure dma rust",
+        "pure dma"
+      ],
+      "domains": [],
+      "severity": "critical",
+      "source": "public_web"
+    },
+    {
+      "name": "LordCheat",
+      "aliases": [
+        "lordcheat",
+        "lord cheat",
+        "rust external cheat"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_web"
+    },
+    {
+      "name": "AimSync",
+      "aliases": [
+        "aimsync",
+        "aimsync.ai",
+        "aimsync rust"
+      ],
+      "domains": [
+        "aimsync.ai"
+      ],
+      "severity": "critical",
+      "source": "public_web"
+    },
+    {
+      "name": "SmartAI",
+      "aliases": [
+        "rust smartai",
+        "smartai rust",
+        "smartai aimbot"
+      ],
+      "domains": [
+        "aptitude.pub"
+      ],
+      "severity": "high",
+      "source": "public_web"
+    },
+    {
+      "name": "Nowax Cheats",
+      "aliases": [
+        "nowax",
+        "nowax cheats",
+        "nowaxcheats"
+      ],
+      "domains": [
+        "nowaxcheats.com"
+      ],
+      "severity": "critical",
+      "source": "public_web"
+    },
+    {
+      "name": "FCheats",
+      "aliases": [
+        "fcheats",
+        "fcheats rust",
+        "memez macros",
+        "memez internalx",
+        "memez external",
+        "ancient rust cheat",
+        "mason internal"
+      ],
+      "domains": [
+        "fcheats.com"
+      ],
+      "severity": "critical",
+      "source": "public_web"
+    },
+    {
+      "name": "GameVantage",
+      "aliases": [
+        "gamevantage",
+        "gamevantage rust external"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_web"
+    },
+    {
+      "name": "BlastAim",
+      "aliases": [
+        "blastaim",
+        "blastaim rust"
+      ],
+      "domains": [],
+      "severity": "critical",
+      "source": "public_web"
+    },
+    {
+      "name": "Aegis",
+      "aliases": [
+        "aegis rust cheat",
+        "aegis rust"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_web"
+    },
+    {
+      "name": "AuroraCheats",
+      "aliases": [
+        "auroracheats",
+        "aurora cheats rust"
+      ],
+      "domains": [],
+      "severity": "critical",
+      "source": "public_web"
+    },
+    {
+      "name": "Mirage",
+      "aliases": [
+        "mirage rust external",
+        "mirage rust cheat"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_web"
+    },
+    {
+      "name": "The Darkest Magic",
+      "aliases": [
+        "the darkest magic",
+        "darkest magic rust"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_web"
+    },
+    {
+      "name": "AI Aimbot",
+      "aliases": [
+        "ai aimbot rust",
+        "rust ai aimbot",
+        "ai aimbot",
+        "computer vision aimbot"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_web"
+    },
+    {
+      "name": "Aimmy",
+      "aliases": [
+        "aimmy",
+        "aimmy aimbot",
+        "aimmy rust"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_web"
+    },
+    {
+      "name": "Kosmos AI",
+      "aliases": [
+        "kosmos ai",
+        "kosmos aimbot",
+        "kosmos cheat"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_web"
+    },
+    {
+      "name": "Synthar AI",
+      "aliases": [
+        "synthar",
+        "synthar ai",
+        "synthar aimbot"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_web"
+    },
+    {
+      "name": "Moonlight",
+      "aliases": [
+        "moonlight rust",
+        "moonlight script",
+        "moonlights rust"
+      ],
+      "domains": [],
+      "severity": "critical",
+      "source": "public_mentions"
+    },
+    {
+      "name": "Poak",
+      "aliases": [
+        "poak rust",
+        "poak script",
+        "poak cheat"
+      ],
+      "domains": [],
+      "severity": "critical",
+      "source": "admin_seed"
+    },
+    {
+      "name": "RevelX",
+      "aliases": [
+        "revelx",
+        "revelx rust",
+        "revelx script"
+      ],
+      "domains": [],
+      "severity": "critical",
+      "source": "admin_seed"
+    }
+  ]
+}
