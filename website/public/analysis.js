@@ -41,6 +41,21 @@ async function load() {
     button.href = data.downloadUrl || data.packageUrl;
     button.textContent = "Baixar Vorken.exe";
 
+    const verification = document.getElementById("agentVerification");
+    const sha256 = String(data.agentVerification?.sha256 || "");
+    const sizeBytes = Number(data.agentVerification?.sizeBytes || 0);
+
+    if (sha256) {
+      verification.classList.remove("hidden");
+      verification.innerHTML =
+        "<strong>Verificação do executável</strong><br>" +
+        "SHA-256: <code>" + sha256 + "</code>" +
+        (sizeBytes ? "<br>Tamanho: " + (sizeBytes / 1024 / 1024).toFixed(1) + " MB" : "");
+    } else {
+      verification.classList.add("hidden");
+      verification.textContent = "";
+    }
+
     const status = document.getElementById("analysisStatus");
     status.textContent = statusText(data.analysis.status);
     status.className =
