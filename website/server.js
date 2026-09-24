@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { gzipSync, gunzipSync } from "node:zlib";
 import pg from "pg";
 
 const { Pool } = pg;
@@ -323,6 +324,128 @@ function normalizeSeverity(value) {
 
 function cleanText(value, max = 250) {
   return String(value || "").trim().slice(0, max);
+}
+
+function sanitizePostgresString(value) {
+  const input = String(value ?? "");
+  let output = "";
+
+  for (let index = 0; index < input.length; index++) {
+    const code = input.charCodeAt(index);
+
+    if (code === 0) {
+      continue;
+    }
+
+    if (code >= 0xD800 && code <= 0xDBFF) {
+      const next =
+        index + 1 < input.length
+          ? input.charCodeAt(index + 1)
+          : -1;
+
+      if (next >= 0xDC00 && next <= 0xDFFF) {
+        output += input[index] + input[index + 1];
+        index++;
+      } else {
+        output += "\uFFFD";
+      }
+
+      continue;
+    }
+
+    if (code >= 0xDC00 && code <= 0xDFFF) {
+      output += "\uFFFD";
+      continue;
+    }
+
+    output += input[index];
+  }
+
+  return output;
+}
+
+function sanitizeJsonForPostgres(value, seen = new WeakSet()) {
+  if (value === null || value === undefined)
+    return value;
+
+  if (typeof value === "string")
+    return sanitizePostgresString(value);
+
+  if (
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) =>
+      sanitizeJsonForPostgres(item, seen));
+  }
+
+  if (typeof value === "object") {
+    if (seen.has(value))
+      return "[circular]";
+
+    seen.add(value);
+
+    const clean = {};
+
+    for (const [rawKey, rawValue] of Object.entries(value)) {
+      const key = sanitizePostgresString(rawKey);
+      clean[key] = sanitizeJsonForPostgres(rawValue, seen);
+    }
+
+    seen.delete(value);
+    return clean;
+  }
+
+  return sanitizePostgresString(value);
+}
+
+function encodeRawReport(value) {
+  const json =
+    JSON.stringify(value);
+
+  return gzipSync(
+    Buffer.from(json, "utf8"),
+    { level: 6 }
+  );
+}
+
+function decodeStoredRawReport(row) {
+  if (
+    row?.payload &&
+    row.payload?.storageFallback !== true
+  ) {
+    return row.payload;
+  }
+
+  if (!row?.payload_raw)
+    return row?.payload ?? null;
+
+  try {
+    const buffer =
+      Buffer.isBuffer(row.payload_raw)
+        ? row.payload_raw
+        : Buffer.from(row.payload_raw);
+
+    const raw =
+      row.payload_encoding === "gzip-json"
+        ? gunzipSync(buffer)
+        : buffer;
+
+    return sanitizeJsonForPostgres(
+      JSON.parse(
+        raw.toString("utf8")));
+  } catch (error) {
+    console.error(
+      "Falha ao decodificar payload_raw do relatório:",
+      error?.message || error
+    );
+
+    return row?.payload ?? null;
+  }
 }
 
 function findCommonAppByFileName(value) {
@@ -828,6 +951,8 @@ async function initDb() {
       id BIGSERIAL PRIMARY KEY,
       analysis_id BIGINT NOT NULL REFERENCES analyses(id) ON DELETE CASCADE,
       payload JSONB NOT NULL,
+      payload_raw BYTEA NULL,
+      payload_encoding TEXT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
@@ -845,6 +970,12 @@ async function initDb() {
 
     ALTER TABLE analyses
       ADD COLUMN IF NOT EXISTS machine_fingerprint TEXT NULL;
+
+    ALTER TABLE scan_reports
+      ADD COLUMN IF NOT EXISTS payload_raw BYTEA NULL;
+
+    ALTER TABLE scan_reports
+      ADD COLUMN IF NOT EXISTS payload_encoding TEXT NULL;
 
     CREATE INDEX IF NOT EXISTS idx_analyses_created ON analyses(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_analyses_fingerprint ON analyses(machine_fingerprint);
@@ -3881,9 +4012,17 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
   if (!analysis) return res.status(404).json({ error: "analysis_not_found" });
 
   const reportResult = await pool.query(
-    "SELECT payload, created_at FROM scan_reports WHERE analysis_id = $1 ORDER BY id DESC LIMIT 1",
+    "SELECT payload, payload_raw, payload_encoding, created_at FROM scan_reports WHERE analysis_id = $1 ORDER BY id DESC LIMIT 1",
     [id]
   );
+
+  if (reportResult.rows[0]) {
+    reportResult.rows[0].payload =
+      decodeStoredRawReport(reportResult.rows[0]);
+
+    delete reportResult.rows[0].payload_raw;
+    delete reportResult.rows[0].payload_encoding;
+  }
 
   const findingsResult = await pool.query(
     `SELECT id, rule_id, title, severity, artifact_type, artifact_value, evidence, created_at
@@ -3949,11 +4088,13 @@ app.post("/api/admin/analyses/:id/rebuild", requireAdmin, async (req, res) => {
   }
 
   const reportResult = await pool.query(
-    "SELECT payload FROM scan_reports WHERE analysis_id=$1 ORDER BY id DESC LIMIT 1",
+    "SELECT payload, payload_raw, payload_encoding FROM scan_reports WHERE analysis_id=$1 ORDER BY id DESC LIMIT 1",
     [id]
   );
 
-  const report = reportResult.rows[0]?.payload;
+  const report =
+    decodeStoredRawReport(
+      reportResult.rows[0]);
   if (!report) {
     return res.status(404).json({
       error: "report_not_found",
@@ -4198,16 +4339,74 @@ app.post("/api/agent/:token/report", async (req, res) => {
       return res.status(400).json({ error: "invalid_report" });
     }
 
-    const report = req.body;
+    const originalReport = req.body;
+    const report =
+      sanitizeJsonForPostgres(originalReport);
 
-    // Persist the complete report first. Large USN/JournalTrace collections can
-    // legitimately contain thousands of rows on some PCs. Rebuilding every
-    // finding synchronously before replying kept the reverse proxy waiting and
-    // could surface as a 502 even though the upload itself was valid.
-    await pool.query(
-      "INSERT INTO scan_reports(analysis_id, payload) VALUES ($1,$2::jsonb)",
-      [analysis.id, JSON.stringify(report)]
-    );
+    const rawPayload =
+      encodeRawReport(originalReport);
+
+    const safeJson =
+      JSON.stringify(report);
+
+    try {
+      await pool.query(
+        `INSERT INTO scan_reports(
+           analysis_id,
+           payload,
+           payload_raw,
+           payload_encoding
+         )
+         VALUES ($1,$2::jsonb,$3,$4)`,
+        [
+          analysis.id,
+          safeJson,
+          rawPayload,
+          "gzip-json",
+        ]
+      );
+    } catch (storeError) {
+      console.error(
+        "Falha no armazenamento JSONB completo; usando fallback bruto:",
+        {
+          analysisId: analysis.id,
+          message: storeError?.message,
+          code: storeError?.code,
+          detail: storeError?.detail,
+          hint: storeError?.hint,
+          where: storeError?.where,
+        }
+      );
+
+      await pool.query(
+        `INSERT INTO scan_reports(
+           analysis_id,
+           payload,
+           payload_raw,
+           payload_encoding
+         )
+         VALUES (
+           $1,
+           $2::jsonb,
+           $3,
+           $4
+         )`,
+        [
+          analysis.id,
+          JSON.stringify({
+            storageFallback: true,
+            agentVersion:
+              cleanText(report.agentVersion, 80),
+            collectedAtUtc:
+              report.collectedAtUtc || null,
+            machine:
+              report.machine || {},
+          }),
+          rawPayload,
+          "gzip-json",
+        ]
+      );
+    }
 
     await pool.query(
       `UPDATE analyses
@@ -4226,8 +4425,6 @@ app.post("/api/agent/:token/report", async (req, res) => {
       ]
     );
 
-    // Acknowledge the upload immediately. Finding generation continues after
-    // the response so a large local history cannot trigger proxy timeouts.
     res.status(202).json({
       ok: true,
       accepted: true,
@@ -4236,7 +4433,9 @@ app.post("/api/agent/:token/report", async (req, res) => {
 
     setImmediate(async () => {
       try {
-        await rebuildFindings(analysis.id, report);
+        await rebuildFindings(
+          analysis.id,
+          report);
 
         await pool.query(
           `UPDATE analyses
@@ -4247,14 +4446,17 @@ app.post("/api/agent/:token/report", async (req, res) => {
         );
       } catch (error) {
         console.error(
-          "Failed to process report findings for analysis",
-          analysis.id,
-          error
+          "Falha ao processar findings do relatório:",
+          {
+            analysisId: analysis.id,
+            message: error?.message,
+            code: error?.code,
+            detail: error?.detail,
+            hint: error?.hint,
+            where: error?.where,
+          }
         );
 
-        // The raw report is already safely stored. Mark the upload itself as
-        // completed so the administrator can still open it and use the manual
-        // "Recalcular achados" action instead of leaving the analysis stuck.
         try {
           await pool.query(
             `UPDATE analyses
@@ -4265,15 +4467,28 @@ app.post("/api/agent/:token/report", async (req, res) => {
           );
         } catch (statusError) {
           console.error(
-            "Failed to finalize report status for analysis",
-            analysis.id,
-            statusError
+            "Falha ao finalizar status da análise:",
+            {
+              analysisId: analysis.id,
+              message: statusError?.message,
+              code: statusError?.code,
+            }
           );
         }
       }
     });
   } catch (error) {
-    console.error("Failed to accept agent report", error);
+    console.error(
+      "Falha ao aceitar/armazenar relatório do agente:",
+      {
+        message: error?.message,
+        code: error?.code,
+        detail: error?.detail,
+        hint: error?.hint,
+        where: error?.where,
+        stack: error?.stack,
+      }
+    );
 
     if (!res.headersSent) {
       res.status(500).json({
