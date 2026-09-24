@@ -1682,6 +1682,7 @@ async function openReport(id) {
     <div class="metric-grid">
       <div class="metric"><small>PENDRIVES CONECTADOS</small><strong>${connectedStorage}</strong></div>
       <div class="metric"><small>USB DESCONECTADOS</small><strong>${disconnectedUsb}</strong></div>
+      <div class="metric"><small>ARQUIVOS EM USB CONECTADO</small><strong>${arrays.usbFiles.length}</strong></div>
       <div class="metric"><small>ARDUINO</small><strong>${Number(hw.arduinoCount ?? 0)}</strong></div>
       <div class="metric"><small>MAKCU / MOKU</small><strong>${Number(hw.makcuCount ?? 0)}</strong></div>
       <div class="metric"><small>CH34X</small><strong>${Number(hw.ch34xCount ?? 0)}</strong></div>
@@ -1720,6 +1721,28 @@ async function openReport(id) {
       .sort((a, b) => b - a);
     return values[0] || null;
   };
+
+  const connectedUsbFilesList =
+    document.getElementById("connectedUsbFilesList");
+
+  if (connectedUsbFilesList) {
+    connectedUsbFilesList.innerHTML = arrays.usbFiles.length
+      ? arrays.usbFiles.map((item) => `
+          <div class="usb-file-row">
+            <div>
+              <strong>${escapeHtml(item.name || item.relativePath || "Arquivo")}</strong>
+              <code>${escapeHtml(item.path || "—")}</code>
+            </div>
+            <div class="usb-file-meta">
+              <span>${escapeHtml(item.volumeLabel || item.drive || "USB")}</span>
+              <span>${escapeHtml(item.extension || "sem extensão")}</span>
+              <span>${escapeHtml(String(item.size ?? 0))} bytes</span>
+              <span>${escapeHtml(formatDate(item.lastWriteUtc))}</span>
+            </div>
+          </div>
+        `).join("")
+      : '<div class="message ok">Nenhum arquivo de pendrive conectado foi encontrado nesta análise.</div>';
+  }
 
   const disconnected = arrays.usbHistory.filter((item) => item.present === false);
   document.getElementById("disconnectedUsbList").innerHTML = disconnected.length
