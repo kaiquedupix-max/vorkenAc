@@ -46,7 +46,8 @@ internal static class UsnActivityCollector
             try
             {
                 if (!drive.IsReady ||
-                    drive.DriveType != DriveType.Fixed ||
+                    (drive.DriveType != DriveType.Fixed &&
+                     drive.DriveType != DriveType.Removable) ||
                     !drive.DriveFormat.Equals(
                         "NTFS",
                         StringComparison.OrdinalIgnoreCase))
