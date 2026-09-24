@@ -304,6 +304,14 @@ function flattenArtifacts(report) {
     push("recent_link", item.targetPath || item.shortcutName, item);
   }
 
+  for (const item of report.browserDownloads || []) {
+    push(
+      "browser_download",
+      item.targetPath || item.fileName || item.sourceUrl || item.finalUrl,
+      item
+    );
+  }
+
   for (const item of report.extensionMismatches || []) {
     push("extension_mismatch", item.path || item.name, item);
   }
@@ -419,6 +427,24 @@ function matchesRule(rule, artifact) {
     case "recent_link_contains":
       return artifact.type === "recent_link" &&
         JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "download_url_contains":
+      return artifact.type === "browser_download" &&
+        [
+          evidence.sourceUrl,
+          evidence.finalUrl,
+          evidence.referrerUrl,
+          evidence.pageUrl,
+          evidence.siteUrl,
+        ].some((value) =>
+          String(value || "").toLowerCase().includes(pattern));
+    case "download_name_contains":
+      return artifact.type === "browser_download" &&
+        [
+          evidence.fileName,
+          evidence.targetPath,
+          evidence.currentPath,
+        ].some((value) =>
+          String(value || "").toLowerCase().includes(pattern));
     case "rust_module_contains":
       return artifact.type === "rust_module" &&
         JSON.stringify(evidence).toLowerCase().includes(pattern);
@@ -693,6 +719,102 @@ async function addBuiltInReviewFindings(analysisId, report) {
         ...item,
         confidence: "medium",
         note: "O arquivo possui cabeçalho PE/MZ, mas usa uma extensão normalmente associada a documento, mídia, arquivo compactado ou texto.",
+      }
+    );
+  }
+
+  // Browser download history is inventory by default. It becomes an
+  // automatic finding only when a missing executable can be correlated with
+  // actual execution evidence collected from Windows.
+  const executionEvidence = [];
+
+  for (const execution of report.prefetchExecutions || []) {
+    executionEvidence.push({
+      source: "Prefetch",
+      name: String(execution.executableName || "").toLowerCase(),
+      path: normalizePath(
+        execution.resolvedExecutablePath ||
+        execution.nativeExecutablePath ||
+        ""),
+      time: execution.lastRunUtc || null,
+      evidence: execution,
+    });
+  }
+
+  for (const item of report.bam || []) {
+    executionEvidence.push({
+      source: "BAM",
+      name: fileName(item.path || "").toLowerCase(),
+      path: normalizePath(item.path || ""),
+      time: item.lastExecutionUtc || null,
+      evidence: item,
+    });
+  }
+
+  for (const item of report.processCreationEvents || []) {
+    executionEvidence.push({
+      source: "Event 4688",
+      name: String(item.processName || "").toLowerCase(),
+      path: normalizePath(item.processPath || ""),
+      time: item.timeCreatedUtc || null,
+      evidence: item,
+    });
+  }
+
+  for (const download of report.browserDownloads || []) {
+    if (download.fileMissing !== true)
+      continue;
+
+    const downloadedName = String(download.fileName || "").toLowerCase();
+    if (!downloadedName)
+      continue;
+
+    const ext = path.extname(downloadedName).toLowerCase();
+    const executableLike = new Set([
+      ".exe", ".com", ".scr", ".dll", ".bat", ".cmd", ".ps1", ".msi"
+    ]).has(ext);
+
+    if (!executableLike)
+      continue;
+
+    const downloadTime = download.startTimeUtc
+      ? new Date(download.startTimeUtc).getTime()
+      : 0;
+
+    const matches = executionEvidence
+      .filter((candidate) => {
+        if (!candidate.name ||
+            candidate.name !== downloadedName)
+          return false;
+
+        if (!candidate.time || !downloadTime)
+          return true;
+
+        const executionTime = new Date(candidate.time).getTime();
+        if (!Number.isFinite(executionTime))
+          return true;
+
+        // Allow small timestamp drift, but execution should normally occur
+        // after the download and within 30 days.
+        return executionTime >= downloadTime - 5 * 60 * 1000 &&
+          executionTime <= downloadTime + 30 * 86400000;
+      })
+      .slice(0, 5);
+
+    if (!matches.length)
+      continue;
+
+    await insertReviewFinding(
+      analysisId,
+      "Arquivo baixado, executado e depois não localizado",
+      "high",
+      "browser_download",
+      download.targetPath || download.fileName || "download",
+      {
+        ...download,
+        confidence: "high",
+        executionEvidence: matches,
+        note: "O histórico do navegador preserva a origem do download; o arquivo não está mais no caminho de destino e há evidência separada de execução pelo Windows.",
       }
     );
   }
@@ -1012,6 +1134,8 @@ app.post("/api/admin/rules", requireAdmin, async (req, res) => {
     "usb_event_keyword",
     "process_history_contains",
     "recent_link_contains",
+    "download_url_contains",
+    "download_name_contains",
     "rust_module_contains",
     "defender_history_contains",
     "defender_exclusion_contains",
