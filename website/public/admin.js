@@ -5,6 +5,9 @@ const analysesBody = document.getElementById("analysesBody");
 const rulesList = document.getElementById("rulesList");
 const reportCard = document.getElementById("reportCard");
 let currentReportId = null;
+let showWithoutAiResult = false;
+let dashboardPollTimer = null;
+let lastOpenReportProcessing = null;
 
 async function api(url, options = {}) {
   const response = await fetch(url, {
@@ -254,12 +257,141 @@ function looksRandomExecutableNameClient(value) {
   );
 }
 
-async function openReportSafe(id) {
+async function openReportSafe(id, options = {}) {
   try {
+    if (options.resetAiView !== false)
+      showWithoutAiResult = false;
+
     await openReport(id);
   } catch (error) {
     console.error("Falha ao abrir relatório", error);
     alert("Erro ao abrir relatório: " + (error?.message || "erro desconhecido"));
+  }
+}
+
+function processingStageLabel(stage, status) {
+  const map = {
+    waiting: "Aguardando cliente",
+    collecting: "Coletando evidências",
+    preparing: "Preparando análise",
+    normal_filter: "Aplicando filtro técnico",
+    ai_filter: "Filtrando falsos positivos com IA",
+    finalizing: "Preparando resultado final",
+    completed: "Concluído com IA",
+    needs_ai: "Pendente de filtro IA",
+    ai_error: "IA indisponível · resultado técnico",
+  };
+
+  return map[stage] || statusLabel(status);
+}
+
+function processingStageTag(stage, status) {
+  if (stage === "completed") return "low";
+  if (stage === "needs_ai") return "medium";
+  if (stage === "ai_error") return "high";
+  if (stage === "ai_filter") return "medium";
+  if (
+    ["collecting", "preparing", "normal_filter", "finalizing"]
+      .includes(stage)
+  ) {
+    return "info";
+  }
+
+  if (status === "completed") return "low";
+  if (status === "waiting") return "medium";
+  return "info";
+}
+
+function isProcessingStage(stage) {
+  return [
+    "collecting",
+    "preparing",
+    "normal_filter",
+    "ai_filter",
+    "finalizing",
+  ].includes(String(stage || ""));
+}
+
+function updateAnalysisProcessingBanner(status) {
+  const banner = document.getElementById("analysisProcessingBanner");
+  if (!banner) return;
+
+  const stage = status?.processingStage || status?.processing_stage || "waiting";
+  const message =
+    status?.processingMessage ||
+    status?.processing_message ||
+    processingStageLabel(stage, status?.status);
+
+  if (showWithoutAiResult) {
+    banner.className = "message";
+    banner.textContent =
+      "Visualizando o resultado técnico SEM o filtro da IA. " +
+      (isProcessingStage(stage) ? message : "");
+    return;
+  }
+
+  if (isProcessingStage(stage)) {
+    banner.className = "message";
+    banner.textContent = message;
+    return;
+  }
+
+  if (stage === "needs_ai") {
+    banner.className = "message";
+    banner.textContent =
+      message ||
+      "Esta análise ainda não passou pela segunda camada de IA. Use Recalcular com IA.";
+    return;
+  }
+
+  if (stage === "ai_error") {
+    banner.className = "message error";
+    banner.textContent =
+      message ||
+      "A revisão por IA não foi concluída. O resultado técnico continua disponível.";
+    return;
+  }
+
+  if (stage === "completed") {
+    banner.className = "message ok";
+    banner.textContent =
+      message ||
+      "Análise concluída. O resultado abaixo já passou pelo filtro da IA.";
+    return;
+  }
+
+  banner.className = "message hidden";
+  banner.textContent = "";
+}
+
+async function pollAdminProgress() {
+  if (dashboardView.classList.contains("hidden"))
+    return;
+
+  try {
+    await loadAnalyses();
+
+    if (!currentReportId)
+      return;
+
+    const status = await api(
+      "/api/admin/analyses/" +
+      encodeURIComponent(currentReportId) +
+      "/rebuild-status"
+    );
+
+    updateAnalysisProcessingBanner(status);
+
+    if (
+      lastOpenReportProcessing === true &&
+      status.processing === false
+    ) {
+      await openReport(currentReportId);
+    }
+
+    lastOpenReportProcessing = status.processing === true;
+  } catch (error) {
+    console.debug("Polling do painel temporariamente indisponível", error);
   }
 }
 
@@ -288,6 +420,19 @@ function setLoggedIn(logged) {
   loginView.classList.toggle("hidden", logged);
   dashboardView.classList.toggle("hidden", !logged);
   logoutBtn.classList.toggle("hidden", !logged);
+
+  if (logged && !dashboardPollTimer) {
+    dashboardPollTimer =
+      setInterval(
+        () => pollAdminProgress(),
+        4000
+      );
+  }
+
+  if (!logged && dashboardPollTimer) {
+    clearInterval(dashboardPollTimer);
+    dashboardPollTimer = null;
+  }
 }
 
 document.getElementById("loginForm").addEventListener("submit", async (event) => {
@@ -386,6 +531,17 @@ document.getElementById("refreshBtn").addEventListener("click", refreshAll);
 document.getElementById("closeReportBtn").addEventListener("click", () => {
   reportCard.classList.add("hidden");
   currentReportId = null;
+  showWithoutAiResult = false;
+  lastOpenReportProcessing = null;
+});
+
+document.getElementById("toggleAiViewBtn").addEventListener("click", async () => {
+  if (!currentReportId) return;
+
+  showWithoutAiResult =
+    !showWithoutAiResult;
+
+  await openReport(currentReportId);
 });
 
 document.getElementById("rebuildFindingsBtn").addEventListener("click", async () => {
@@ -463,13 +619,38 @@ async function loadAnalyses() {
           ? '<span class="tag high">' + Number(item.total_findings) + '</span>'
           : '<span class="tag medium">' + Number(item.total_findings) + '</span>';
 
+    const stage =
+      item.processing_stage || "waiting";
+
+    const stageLabel =
+      processingStageLabel(
+        stage,
+        item.status
+      );
+
+    const stageClass =
+      processingStageTag(
+        stage,
+        item.status
+      );
+
+    const stageMessage =
+      item.processing_message
+        ? '<br><small class="muted">' +
+          escapeHtml(item.processing_message) +
+          '</small>'
+        : "";
+
     row.innerHTML = `
       <td>#${escapeHtml(item.id)}</td>
       <td>
         <strong>${escapeHtml(item.label)}</strong><br>
         <small class="muted">${escapeHtml(item.machine_name || "Aguardando PC")}</small>
       </td>
-      <td><span class="tag ${escapeHtml(item.status)}">${escapeHtml(statusLabel(item.status))}</span></td>
+      <td>
+        <span class="tag ${escapeHtml(stageClass)}">${escapeHtml(stageLabel)}</span>
+        ${stageMessage}
+      </td>
       <td>${findings}</td>
       <td>${escapeHtml(formatDate(item.created_at))}</td>
       <td><button class="button ghost open-report" data-id="${item.id}">Abrir relatório</button></td>
@@ -491,8 +672,18 @@ async function openReport(id) {
   const data = await api("/api/admin/analyses/" + encodeURIComponent(id));
   const analysis = data.analysis || {};
   const report = data.report || null;
-  const findings = safeArray(data.findings);
   const aiFilteredFindings = safeArray(data.aiFilteredFindings);
+  const postAiFindings = safeArray(data.findings);
+  const findings = showWithoutAiResult
+    ? [
+        ...postAiFindings,
+        ...aiFilteredFindings.filter(
+          (item) => !postAiFindings.some(
+            (base) => String(base.id) === String(item.id)
+          )
+        ),
+      ]
+    : postAiFindings;
   const aiReview = data.aiReview || {};
   const relatedAnalyses = safeArray(data.relatedAnalyses);
   const payload = report?.payload && typeof report.payload === "object"
@@ -505,6 +696,25 @@ async function openReport(id) {
 
   document.getElementById("reportTitle").textContent =
     "#" + analysis.id + " · " + analysis.label;
+
+  const toggleAiViewBtn =
+    document.getElementById("toggleAiViewBtn");
+
+  toggleAiViewBtn.textContent =
+    showWithoutAiResult
+      ? "Ver resultado com IA"
+      : "Ver resultado sem IA";
+
+  updateAnalysisProcessingBanner({
+    status: analysis.status,
+    processingStage: analysis.processing_stage,
+    processingMessage: analysis.processing_message,
+  });
+
+  lastOpenReportProcessing =
+    isProcessingStage(
+      analysis.processing_stage
+    );
 
   const arrays = {
     usbCurrent: safeArray(payload.usbCurrent),
@@ -609,10 +819,17 @@ async function openReport(id) {
     arrays.browserRecoveredArtifacts.length +
     arrays.deletedUsnRecords.length;
 
+  const currentStageLabel =
+    processingStageLabel(
+      analysis.processing_stage,
+      analysis.status
+    );
+
   document.getElementById("reportMetrics").innerHTML = `
-    <div class="metric"><small>STATUS</small><strong>${escapeHtml(statusLabel(analysis.status))}</strong></div>
-    <div class="metric danger-metric"><small>VERMELHO · CRÍTICO/ALTO</small><strong>${criticalFindings.length}</strong><span>Resultado final pós-IA</span></div>
-    <div class="metric warning-metric"><small>AMARELO · REVISAR</small><strong>${mediumFindings.length}</strong><span>Resultado final pós-IA</span></div>
+    <div class="metric"><small>STATUS</small><strong>${escapeHtml(currentStageLabel)}</strong></div>
+    <div class="metric"><small>VISUALIZAÇÃO</small><strong>${showWithoutAiResult ? "SEM IA" : "COM IA"}</strong><span>${showWithoutAiResult ? "Filtro técnico original" : "Resultado final filtrado"}</span></div>
+    <div class="metric danger-metric"><small>VERMELHO · CRÍTICO/ALTO</small><strong>${criticalFindings.length}</strong><span>${showWithoutAiResult ? "Antes da IA" : "Resultado final pós-IA"}</span></div>
+    <div class="metric warning-metric"><small>AMARELO · REVISAR</small><strong>${mediumFindings.length}</strong><span>${showWithoutAiResult ? "Antes da IA" : "Resultado final pós-IA"}</span></div>
     <div class="metric info-metric"><small>IA FILTROU</small><strong>${aiFilteredFindings.length}</strong><span>Prováveis falsos positivos</span></div>
     <div class="metric hardware-metric"><small>HARDWARE / USB</small><strong>${hardwareCount}</strong><span>Pendrives e placas separados</span></div>
     <div class="metric priority-metric"><small>ARQUIVOS PRIORITÁRIOS</small><strong id="summaryPriorityCount">0</strong><span>EXE/ZIP/RAR/7Z suspeitos</span></div>
@@ -628,6 +845,7 @@ async function openReport(id) {
   const aiStatusLabel = {
     completed: "Concluída",
     running: "Em andamento",
+    partial_error: "Parcial · alguns lotes falharam",
     disabled: "Desativada",
     not_configured: "Não configurada",
     error: "Falhou · usando filtro normal",
@@ -659,8 +877,13 @@ async function openReport(id) {
 
       const evidence = finding.evidence || {};
       const ai = finding.ai_review || null;
-      const filteredByAi = ai?.verdict === "likely_false_positive";
-      const displaySeverity = filteredByAi ? "info" : (finding.severity || "info");
+      const filteredByAi =
+        !showWithoutAiResult &&
+        ai?.verdict === "likely_false_positive";
+      const displaySeverity =
+        filteredByAi
+          ? "info"
+          : (finding.severity || "info");
       element.className = "finding severity-card " + escapeHtml(displaySeverity);
 
       const catalogName = evidence.catalogMatch?.name
@@ -737,15 +960,19 @@ async function openReport(id) {
         : "");
 
   aiStatusBox.textContent =
-    aiReview.status === "completed"
-      ? "Segunda camada concluída. A lista principal já está filtrada pela IA."
-      : aiReview.status === "error"
-        ? "A revisão por IA falhou nesta análise. O Vorken manteve o resultado do filtro normal."
-        : aiReview.status === "disabled"
-          ? "Filtro por IA desativado. Resultado exibido somente pelo motor normal."
-          : aiReview.status === "not_configured"
-            ? "Filtro por IA ainda não está configurado no servidor."
-            : "Revisão por IA pendente ou em andamento.";
+    showWithoutAiResult
+      ? "Modo sem IA ativo: a lista principal mostra o resultado original do filtro técnico."
+      : aiReview.status === "completed"
+        ? "Segunda camada concluída. A lista principal já está filtrada pela IA."
+        : aiReview.status === "partial_error"
+          ? "A IA revisou parte dos achados, mas alguns lotes falharam. Os itens não revisados continuam visíveis."
+          : aiReview.status === "error"
+            ? "A revisão por IA falhou nesta análise. O Vorken manteve o resultado do filtro normal."
+            : aiReview.status === "disabled"
+              ? "Filtro por IA desativado. Resultado exibido somente pelo motor normal."
+              : aiReview.status === "not_configured"
+                ? "Filtro por IA ainda não está configurado no servidor."
+                : "Revisão por IA pendente ou em andamento.";
 
   renderFindings(
     "aiFilteredFindingsList",
@@ -1538,6 +1765,7 @@ async function openReport(id) {
   const prioritySeen = new Set();
   const priorityUnique = priorityFiles
     .filter((item) =>
+      showWithoutAiResult ||
       !wasFilteredByAi(
         item.name,
         item.path
