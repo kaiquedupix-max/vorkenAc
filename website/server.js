@@ -378,12 +378,10 @@ async function callAiReviewBatch(cases) {
             "confidence",
             "reason",
           ],
-          additionalProperties: false,
         },
       },
     },
     required: ["reviews"],
-    additionalProperties: false,
   };
 
   const systemPrompt = [
@@ -446,7 +444,7 @@ async function callAiReviewBatch(cases) {
             generationConfig: {
               responseFormat: {
                 text: {
-                  mimeType: "application/json",
+                  mimeType: "APPLICATION_JSON",
                   schema,
                 },
               },
