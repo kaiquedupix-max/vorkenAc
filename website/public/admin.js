@@ -116,6 +116,57 @@ function commonAppMatchClient(value, commonApps = []) {
   return null;
 }
 
+function shouldHideFindingClient(finding, commonApps = []) {
+  const evidence =
+    finding?.evidence &&
+    typeof finding.evidence === "object"
+      ? finding.evidence
+      : {};
+
+  if (
+    isVorkenArtifactClient(
+      finding?.artifact_value,
+      evidence
+    )
+  ) {
+    return true;
+  }
+
+  const strongIndependentSignal =
+    evidence.priorityMaximum === true ||
+    evidence.protectedByTechnicalEngine === true ||
+    evidence.usbExecution === true ||
+    evidence.knownCheatDomain === true ||
+    evidence.directCatalogMatch === true ||
+    (
+      evidence.executionConfirmed === true &&
+      (
+        evidence.catalogMatch ||
+        safeArray(evidence.catalogMatches).length > 0
+      )
+    );
+
+  if (strongIndependentSignal)
+    return false;
+
+  const value =
+    evidence.fileName ||
+    evidence.name ||
+    evidence.path ||
+    evidence.fullPath ||
+    evidence.targetPath ||
+    evidence.currentPath ||
+    evidence.originalPath ||
+    finding?.artifact_value;
+
+  return Boolean(
+    commonAppMatchClient(
+      value,
+      commonApps
+    )
+  );
+}
+
 
 function downloadUrlCandidatesClient(item) {
   return [
@@ -930,8 +981,11 @@ async function openReport(id) {
   const data = await api("/api/admin/analyses/" + encodeURIComponent(id));
   const analysis = data.analysis || {};
   const report = data.report || null;
-  const filteredFindings = safeArray(data.filteredFindings);
-  const finalFindings = safeArray(data.findings);
+  const commonApps = safeArray(data.commonApps);
+  const filteredFindings = safeArray(data.filteredFindings)
+    .filter((finding) => !shouldHideFindingClient(finding, commonApps));
+  const finalFindings = safeArray(data.findings)
+    .filter((finding) => !shouldHideFindingClient(finding, commonApps));
   const findings = showTechnicalResult
     ? [
         ...finalFindings,
@@ -944,7 +998,6 @@ async function openReport(id) {
     : finalFindings;
   const reviewState = data.reviewState || {};
   const relatedAnalyses = safeArray(data.relatedAnalyses);
-  const commonApps = safeArray(data.commonApps);
   const payload = report?.payload && typeof report.payload === "object"
     ? report.payload
     : {};
