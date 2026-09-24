@@ -466,16 +466,91 @@ function isDeceptiveDoubleExtensionExecutable(value) {
   return /\.(zip|rar|7z|pdf|jpg|jpeg|png|gif|txt|doc|docx|xls|xlsx|ppt|pptx)\.exe$/.test(name);
 }
 
-function downloadOriginKind(download) {
-  const values = [
+function downloadUrlCandidates(download) {
+  return [
     download?.sourceUrl,
     download?.finalUrl,
     download?.referrerUrl,
     download?.siteUrl,
     download?.pageUrl,
     ...(Array.isArray(download?.urlChain) ? download.urlChain : [])
-  ]
-    .filter(Boolean)
+  ].filter(Boolean);
+}
+
+function isOfficialDiscordInstallerOrUpdate(download) {
+  const name = path.basename(
+    String(download?.fileName || download?.targetPath || "")
+  ).toLowerCase();
+
+  const target = String(
+    download?.targetPath ||
+    download?.currentPath ||
+    ""
+  )
+    .replaceAll("/", "\\")
+    .toLowerCase();
+
+  if (
+    target.includes("\\appdata\\local\\discord\\") &&
+    ["update.exe", "discord.exe", "discordsetup.exe", "squirrel.exe"].includes(name)
+  ) {
+    return true;
+  }
+
+  return downloadUrlCandidates(download).some((value) => {
+    try {
+      const url = new URL(String(value || ""));
+      const host = url.hostname.toLowerCase();
+      const pathname = url.pathname.toLowerCase();
+
+      const officialHost =
+        host === "discord.com" ||
+        host === "www.discord.com" ||
+        host === "discordapp.com" ||
+        host === "www.discordapp.com" ||
+        host === "dl.discordapp.net" ||
+        host === "stable.dl2.discordapp.net";
+
+      return officialHost && (
+        pathname.includes("/api/download") ||
+        pathname.includes("/apps/") ||
+        pathname.includes("/download")
+      );
+    } catch {
+      return false;
+    }
+  });
+}
+
+function isDiscordAttachmentDownload(download) {
+  if (isOfficialDiscordInstallerOrUpdate(download))
+    return false;
+
+  return downloadUrlCandidates(download).some((value) => {
+    try {
+      const url = new URL(String(value || ""));
+      const host = url.hostname.toLowerCase();
+      const pathname = url.pathname.toLowerCase();
+
+      return (
+        (
+          host === "cdn.discordapp.com" ||
+          host === "media.discordapp.net" ||
+          host.endsWith(".discordattachments.com")
+        ) &&
+        (
+          pathname.includes("/attachments/") ||
+          host.endsWith(".discordattachments.com")
+        )
+      );
+    } catch {
+      return false;
+    }
+  });
+}
+
+function downloadOriginKind(download) {
+  const values = downloadUrlCandidates(download)
     .map((value) => String(value).toLowerCase());
 
   const joined = values.join(" ");
