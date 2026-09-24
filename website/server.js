@@ -5309,6 +5309,308 @@ app.get("/api/admin/me", requireAdmin, (_req, res) => {
   res.json({ authenticated: true });
 });
 
+
+function integrationSecretMatches(req) {
+  const configured =
+    String(process.env.VORKEN_GF_INTEGRATION_KEY || "").trim();
+
+  const supplied =
+    String(req.get("x-vorken-integration-key") || "").trim();
+
+  if (!configured || !supplied)
+    return false;
+
+  const left = Buffer.from(configured);
+  const right = Buffer.from(supplied);
+
+  return left.length === right.length &&
+    crypto.timingSafeEqual(left, right);
+}
+
+function requireGuerraFriaIntegration(req, res, next) {
+  if (!String(process.env.VORKEN_GF_INTEGRATION_KEY || "").trim()) {
+    return res.status(503).json({
+      error: "integration_not_configured",
+      message: "Integração Guerra Fria não configurada."
+    });
+  }
+
+  if (!integrationSecretMatches(req)) {
+    return res.status(401).json({
+      error: "invalid_integration_key"
+    });
+  }
+
+  next();
+}
+
+function normalizeVerificationCode(value) {
+  return String(value || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(0, 12);
+}
+
+app.post(
+  "/api/integrations/guerra-fria/session",
+  requireGuerraFriaIntegration,
+  async (req, res) => {
+    const code = normalizeVerificationCode(req.body?.code);
+    const steamId = cleanText(req.body?.steamId, 32);
+    const playerName = cleanText(req.body?.playerName, 100) || steamId;
+    const administratorId = cleanText(req.body?.administratorId, 40) || null;
+    const ttlSeconds = Math.max(
+      120,
+      Math.min(3600, Math.trunc(Number(req.body?.ttlSeconds || 600)))
+    );
+
+    if (!/^[A-Z0-9]{6,12}$/.test(code))
+      return res.status(400).json({ error: "invalid_verification_code" });
+
+    if (!/^7656119\d{10}$/.test(steamId))
+      return res.status(400).json({ error: "invalid_steam_id" });
+
+    await pool.query(
+      `UPDATE guerra_fria_verifications
+       SET status='superseded', updated_at=NOW()
+       WHERE steam_id=$1
+         AND status='pending'
+         AND verification_code<>$2`,
+      [steamId, code]
+    );
+
+    const result = await pool.query(
+      `INSERT INTO guerra_fria_verifications(
+         verification_code,
+         steam_id,
+         player_name,
+         administrator_id,
+         expires_at
+       )
+       VALUES ($1,$2,$3,$4,NOW() + ($5 || ' seconds')::interval)
+       ON CONFLICT (verification_code)
+       DO UPDATE SET
+         steam_id=EXCLUDED.steam_id,
+         player_name=EXCLUDED.player_name,
+         administrator_id=EXCLUDED.administrator_id,
+         expires_at=EXCLUDED.expires_at,
+         updated_at=NOW()
+       RETURNING verification_code, steam_id, player_name, status, expires_at`,
+      [code, steamId, playerName, administratorId, String(ttlSeconds)]
+    );
+
+    res.json({ ok: true, session: result.rows[0] });
+  }
+);
+
+app.post(
+  "/api/integrations/guerra-fria/session/redeem",
+  requireGuerraFriaIntegration,
+  async (req, res) => {
+    const code = normalizeVerificationCode(req.body?.code);
+    const discordUserId = cleanText(req.body?.discordUserId, 40);
+
+    if (!/^[A-Z0-9]{6,12}$/.test(code))
+      return res.status(400).json({ error: "invalid_verification_code", message: "Código inválido." });
+
+    if (!/^\d{16,20}$/.test(discordUserId))
+      return res.status(400).json({ error: "invalid_discord_user" });
+
+    const client = await pool.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      const sessionResult = await client.query(
+        `SELECT *
+         FROM guerra_fria_verifications
+         WHERE verification_code=$1
+         LIMIT 1
+         FOR UPDATE`,
+        [code]
+      );
+
+      const session = sessionResult.rows[0];
+
+      if (!session) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({
+          error: "verification_code_not_found",
+          message: "Código não encontrado."
+        });
+      }
+
+      if (session.expires_at &&
+          new Date(session.expires_at).getTime() < Date.now()) {
+        await client.query(
+          `UPDATE guerra_fria_verifications
+           SET status='expired', updated_at=NOW()
+           WHERE id=$1`,
+          [session.id]
+        );
+        await client.query("COMMIT");
+        return res.status(410).json({
+          error: "verification_code_expired",
+          message: "Esse código expirou."
+        });
+      }
+
+      if (session.status === "redeemed") {
+        if (String(session.discord_user_id || "") !== discordUserId ||
+            !session.analysis_id) {
+          await client.query("ROLLBACK");
+          return res.status(409).json({
+            error: "verification_code_used",
+            message: "Esse código já foi utilizado."
+          });
+        }
+
+        const existing = await client.query(
+          `SELECT id, public_token, label
+           FROM analyses
+           WHERE id=$1
+           LIMIT 1`,
+          [session.analysis_id]
+        );
+
+        await client.query("COMMIT");
+
+        const analysis = existing.rows[0];
+
+        return res.json({
+          ok: true,
+          alreadyRedeemed: true,
+          analysisId: Number(analysis.id),
+          publicLink: publicUrl + "/a/" + analysis.public_token,
+          steamId: session.steam_id,
+          playerName: session.player_name,
+          administratorId: session.administrator_id
+        });
+      }
+
+      if (session.status !== "pending") {
+        await client.query("ROLLBACK");
+        return res.status(409).json({
+          error: "verification_code_inactive",
+          message: "Esse código não está mais ativo."
+        });
+      }
+
+      const token = analysisToken();
+
+      const analysisResult = await client.query(
+        `INSERT INTO analyses(
+           public_token,
+           label,
+           expires_at,
+           external_source,
+           external_player_id,
+           external_discord_user_id,
+           external_verification_code
+         )
+         VALUES (
+           $1,$2,
+           NOW() + interval '8 hours',
+           'guerra_fria',
+           $3,$4,$5
+         )
+         RETURNING id, public_token, label`,
+        [
+          token,
+          `Guerra Fria · ${session.player_name} · ${session.steam_id}`,
+          session.steam_id,
+          discordUserId,
+          code
+        ]
+      );
+
+      const analysis = analysisResult.rows[0];
+
+      await client.query(
+        `UPDATE guerra_fria_verifications
+         SET status='redeemed',
+             discord_user_id=$2,
+             analysis_id=$3,
+             redeemed_at=NOW(),
+             updated_at=NOW()
+         WHERE id=$1`,
+        [session.id, discordUserId, analysis.id]
+      );
+
+      await client.query("COMMIT");
+
+      res.json({
+        ok: true,
+        analysisId: Number(analysis.id),
+        publicLink: publicUrl + "/a/" + analysis.public_token,
+        steamId: session.steam_id,
+        playerName: session.player_name,
+        administratorId: session.administrator_id
+      });
+    } catch (error) {
+      try { await client.query("ROLLBACK"); } catch {}
+      console.error("Falha ao resgatar código Guerra Fria:", error);
+      res.status(500).json({
+        error: "verification_redeem_failed",
+        message: "Não foi possível criar a análise."
+      });
+    } finally {
+      client.release();
+    }
+  }
+);
+
+app.post(
+  "/api/integrations/guerra-fria/session/:code/ticket",
+  requireGuerraFriaIntegration,
+  async (req, res) => {
+    const code = normalizeVerificationCode(req.params.code);
+    const ticketChannelId = cleanText(req.body?.ticketChannelId, 40);
+
+    if (!/^\d{16,20}$/.test(ticketChannelId))
+      return res.status(400).json({ error: "invalid_ticket_channel" });
+
+    const result = await pool.query(
+      `UPDATE guerra_fria_verifications
+       SET ticket_channel_id=$2, updated_at=NOW()
+       WHERE verification_code=$1
+         AND status='redeemed'
+       RETURNING analysis_id`,
+      [code, ticketChannelId]
+    );
+
+    if (!result.rows[0])
+      return res.status(404).json({ error: "verification_session_not_found" });
+
+    await pool.query(
+      `UPDATE analyses
+       SET external_ticket_channel_id=$2
+       WHERE id=$1`,
+      [result.rows[0].analysis_id, ticketChannelId]
+    );
+
+    res.json({ ok: true });
+  }
+);
+
+app.post(
+  "/api/integrations/guerra-fria/session/:code/cancel",
+  requireGuerraFriaIntegration,
+  async (req, res) => {
+    const code = normalizeVerificationCode(req.params.code);
+
+    await pool.query(
+      `UPDATE guerra_fria_verifications
+       SET status='cancelled', updated_at=NOW()
+       WHERE verification_code=$1
+         AND status='pending'`,
+      [code]
+    );
+
+    res.json({ ok: true });
+  }
+);
+
 app.get("/api/admin/analyses", requireAdmin, async (_req, res) => {
   const result = await pool.query(`
     SELECT
