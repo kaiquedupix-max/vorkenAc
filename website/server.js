@@ -1987,6 +1987,67 @@ async function addBuiltInReviewFindings(analysisId, report) {
     );
   }
 
+  for (const item of report.processCreationEvents || []) {
+    const p = String(item.processPath || item.processName || "");
+
+    if (
+      String(item.driveType || "").toLowerCase() !== "removable" ||
+      !/\.exe$/i.test(fileName(p))
+    ) {
+      continue;
+    }
+
+    await insertReviewFinding(
+      analysisId,
+      "PRIORIDADE MÁXIMA: EXE executado em pendrive/removível conectado",
+      "critical",
+      "usb_execution",
+      p || item.processName || "EXE removível",
+      {
+        ...item,
+        executionConfirmed: true,
+        usbPriorityMaximum: true,
+        usbState: "connected",
+        executionSource: "Event Log 4688",
+        confidence: "high",
+        note: "O Event Log 4688 confirma execução de EXE em unidade classificada como removível. Deve ficar no topo da prioridade."
+      }
+    );
+  }
+
+  for (const item of report.files || []) {
+    const p = String(item.path || item.name || "");
+    const ext = String(
+      item.extension ||
+      path.extname(p)
+    ).toLowerCase();
+
+    if (
+      ext !== ".exe" ||
+      String(item.driveType || "").toLowerCase() !== "removable" ||
+      !item.prefetchEvidenceUtc
+    ) {
+      continue;
+    }
+
+    await insertReviewFinding(
+      analysisId,
+      "PRIORIDADE MÁXIMA: EXE executado em pendrive/removível conectado",
+      "critical",
+      "usb_execution",
+      p,
+      {
+        ...item,
+        executionConfirmed: true,
+        usbPriorityMaximum: true,
+        usbState: "connected",
+        executionSource: "Arquivo + Prefetch",
+        confidence: "high",
+        note: "O arquivo está/esteve em unidade removível e possui evidência de execução por Prefetch. Deve ficar no topo da prioridade."
+      }
+    );
+  }
+
   for (const download of report.browserDownloads || []) {
     const downloadName =
       download.fileName ||
