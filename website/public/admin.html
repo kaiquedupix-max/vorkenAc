@@ -178,6 +178,16 @@
           <div id="mediumFindingsList"></div>
         </details>
 
+        <details class="report-section info-inventory">
+          <summary>
+            <span>Filtrados pela IA · provável falso positivo</span>
+            <span id="aiFilteredCountBadge" class="summary-badge info">0</span>
+          </summary>
+          <div id="aiReviewStatus" class="message"></div>
+          <div class="message">Estes itens foram encontrados pelo filtro normal, mas a segunda camada de IA os classificou como provável falso positivo acima do limite de confiança. O achado original continua salvo para auditoria.</div>
+          <div id="aiFilteredFindingsList"></div>
+        </details>
+
         <details class="report-section severity-group hardware-group">
           <summary>
             <span>Pendrives / Arduino / MAKCU / seriais</span>
@@ -328,6 +338,6 @@
     </section>
   </main>
 
-  <script src="/admin.js?v=20260924-10"></script>
+  <script src="/admin.js?v=20260924-ai1"></script>
 </body>
 </html>
