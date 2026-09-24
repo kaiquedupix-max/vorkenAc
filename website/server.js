@@ -1429,15 +1429,19 @@ async function addBuiltInReviewFindings(analysisId, report) {
   }
 
   for (const item of report.browserRecoveredArtifacts || []) {
+    if (item.recoveredUrl && isKnownBenignWebHost(item.recoveredUrl))
+      continue;
+
+    // Recovered raw SQLite records must be matched only against the
+    // recovered candidate itself. Older agents could carry catalogMatches
+    // polluted by unrelated strings from the same SQLite page.
     await addCatalogFindings(
       "browser_recovery",
       item.recoveredUrl || item.recoveredFileName || item.sourceArtifact,
       item,
       [
         item.recoveredUrl,
-        item.recoveredFileName,
-        item.catalogMatches,
-        item.matchedTerms
+        item.recoveredFileName
       ]
     );
   }
