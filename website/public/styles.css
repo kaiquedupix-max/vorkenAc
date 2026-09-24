@@ -54,3 +54,36 @@ form{display:grid;gap:13px}.form-row{display:grid;grid-template-columns:1fr 160p
 pre.raw{max-height:420px;overflow:auto;background:#05080a;border:1px solid #162029;padding:14px;border-radius:10px;color:#8da0aa;font-size:10px}
 @media(max-width:850px){.hero-grid,.grid.two,.grid.three,.metric-grid{grid-template-columns:1fr 1fr}.page-head{align-items:flex-start;flex-direction:column}}
 @media(max-width:560px){.hero-grid,.grid.two,.grid.three,.metric-grid,.form-row{grid-template-columns:1fr}.hero{padding-top:70px}.page-head h1{font-size:34px}.nav{height:60px}}
+
+.severity-overview{border-color:#2a3440}
+.severity-group{border:1px solid var(--line);border-radius:13px;background:#0a0f13;padding:0}
+.severity-group>summary,.info-inventory>summary,.hardware-group>summary{
+  list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:space-between;
+  gap:12px;padding:16px 18px;font-weight:900
+}
+.severity-group>summary::-webkit-details-marker,.info-inventory>summary::-webkit-details-marker,.hardware-group>summary::-webkit-details-marker{display:none}
+.severity-group[open]>summary,.info-inventory[open]>summary,.hardware-group[open]>summary{border-bottom:1px solid var(--line)}
+.severity-group>div,.info-inventory>div,.hardware-group>div,.hardware-group>h3,.info-inventory>h3{margin-left:16px;margin-right:16px}
+.severity-group>div:last-child,.info-inventory>div:last-child,.hardware-group>div:last-child{margin-bottom:16px}
+.summary-badge{min-width:32px;text-align:center;border-radius:999px;padding:5px 9px;font-size:10px}
+.summary-badge.danger{background:#31141a;color:#ff7e8c}
+.summary-badge.warning{background:#2d2410;color:#ffd36a}
+.summary-badge.info{background:#122435;color:#83bdff}
+.danger-metric{border-color:#5a2029;background:#1b0c10}
+.danger-metric strong{color:#ff7e8c}
+.warning-metric{border-color:#584616;background:#191407}
+.warning-metric strong{color:#ffd36a}
+.hardware-metric{border-color:#214a40;background:#0b1713}
+.hardware-metric strong{color:#63efbf}
+.info-metric{border-color:#1e405e;background:#0b151f}
+.info-metric strong{color:#83bdff}
+.metric span{display:block;margin-top:5px;color:var(--muted);font-size:9px}
+.severity-card.critical,.severity-card.high{border-color:#6a2530;background:#170b0e}
+.severity-card.medium{border-color:#5b4818;background:#171307}
+.severity-card.low,.severity-card.info{border-color:#1f415f;background:#0b141d}
+.evidence-details{margin-top:10px;border-top:1px solid #18222b;padding-top:8px}
+.evidence-details summary{cursor:pointer;color:#8da0aa;font-size:10px}
+.priority-section{border-color:#3a2c16}
+.info-inventory{margin-top:16px;border:1px solid #1d3a52;border-radius:13px;background:#081018;padding:0}
+.info-inventory>h3,.hardware-group>h3{margin-top:18px}
+.hardware-group{margin-top:16px}
