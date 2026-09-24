@@ -1246,7 +1246,37 @@ async function addBuiltInReviewFindings(analysisId, report) {
       : false;
 
     if (appInfo) {
-      if (signerOk || officialDownloadOk)
+      const expectedSigners = appInfo.signerContains || [];
+      const explicitSignerMismatch =
+        item.signed === true &&
+        expectedSigners.length > 0 &&
+        signerOk !== true;
+
+      if (signerOk)
+        continue;
+
+      if (explicitSignerMismatch) {
+        await insertReviewFinding(
+          analysisId,
+          "Aplicativo conhecido assinado por entidade inesperada",
+          "high",
+          "unknown_app",
+          item.path || item.name || appInfo.name,
+          {
+            ...item,
+            expectedApplication: appInfo.name,
+            expectedSigners,
+            signatureMatched: false,
+            officialDownloadMatched: officialDownloadOk,
+            confidence: "high",
+            note: "A assinatura Authenticode é válida, porém o certificado não corresponde ao fabricante esperado para este nome de aplicativo.",
+          }
+        );
+
+        continue;
+      }
+
+      if (officialDownloadOk)
         continue;
 
       if (
@@ -1262,11 +1292,11 @@ async function addBuiltInReviewFindings(analysisId, report) {
           {
             ...item,
             expectedApplication: appInfo.name,
-            expectedSigners: appInfo.signerContains || [],
+            expectedSigners,
             signatureMatched: signerOk,
             officialDownloadMatched: officialDownloadOk,
             confidence: "high",
-            note: "O nome imita um aplicativo comum, mas a assinatura digital esperada não foi confirmada. Nome conhecido não é tratado como legítimo sem validação.",
+            note: "O nome imita um aplicativo comum, mas nem a assinatura digital esperada nem uma origem oficial de download foram confirmadas.",
           }
         );
       }
