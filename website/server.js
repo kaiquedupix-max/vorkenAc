@@ -2066,6 +2066,113 @@ function findRustCatalogMatches(...values) {
     }
   }
 
+  const seenOsint = new Set(
+    matches.map((item) =>
+      String(item?.name || "") +
+      "|" +
+      String(item?.matchedBy || "")
+    )
+  );
+
+  for (const source of rustOsintCatalog.verified || []) {
+    const sourceName =
+      String(source?.name || "Fonte OSINT");
+
+    const confidence =
+      String(source?.confidence || "").toLowerCase();
+
+    const severity =
+      confidence === "high"
+        ? "critical"
+        : "high";
+
+    const domain =
+      normalizeCatalogHost(source?.domain);
+
+    const directDomain =
+      domain &&
+      !osintGenericHosts.has(domain) &&
+      haystack.includes(domain);
+
+    let matchedBy =
+      directDomain
+        ? "osint-domain:" + domain
+        : "";
+
+    if (!matchedBy) {
+      for (const term of normalizedOsintUrlTerms(source?.url)) {
+        if (
+          term.length >= 8 &&
+          haystack.includes(term)
+        ) {
+          matchedBy = "osint-url:" + term;
+          break;
+        }
+      }
+    }
+
+    if (!matchedBy)
+      continue;
+
+    const key =
+      sourceName + "|" + matchedBy;
+
+    if (seenOsint.has(key))
+      continue;
+
+    seenOsint.add(key);
+
+    matches.push({
+      name: sourceName,
+      severity,
+      matchedBy,
+      sourceCatalog:
+        "rust_cheat_sources_catalog_2026-09-24.xlsx",
+      confidence:
+        confidence || "medium",
+    });
+  }
+
+  const contextualHaystack =
+    /\brust\b|cheat|hack|script|dma|spoofer|aimbot|recoil|loader|external|internal|esp|eac/i
+      .test(haystack);
+
+  if (contextualHaystack) {
+    for (const rawAlias of rustOsintCatalog.aliases || []) {
+      const alias =
+        String(rawAlias || "")
+          .trim()
+          .toLowerCase();
+
+      if (
+        !alias ||
+        !containsCatalogAlias(haystack, alias)
+      ) {
+        continue;
+      }
+
+      const key =
+        alias + "|osint-alias:" + alias;
+
+      if (seenOsint.has(key))
+        continue;
+
+      seenOsint.add(key);
+
+      matches.push({
+        name: rawAlias,
+        severity: "high",
+        matchedBy: "osint-alias:" + rawAlias,
+        sourceCatalog:
+          "rust_cheat_sources_catalog_2026-09-24.xlsx",
+        contextual: true,
+      });
+
+      if (matches.length >= 12)
+        break;
+    }
+  }
+
   return matches;
 }
 
