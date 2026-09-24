@@ -120,14 +120,14 @@ const AI_REVIEW_POLICY_VERSION = "v1";
 
 const aiReviewConfig = {
   enabled:
-    String(process.env.AI_REVIEW_ENABLED || "false").toLowerCase() === "true",
+    String(process.env.AI_REVIEW_ENABLED || "true").toLowerCase() !== "false",
   apiKey:
     String(process.env.AI_API_KEY || process.env.OPENAI_API_KEY || "").trim(),
   baseUrl:
     String(process.env.AI_BASE_URL || "https://api.openai.com/v1")
       .replace(/\/$/, ""),
   model:
-    String(process.env.AI_MODEL || "").trim(),
+    String(process.env.AI_MODEL || "gpt-4o-mini").trim(),
   timeoutMs:
     Math.max(
       5000,
@@ -1788,6 +1788,12 @@ async function initDb() {
     ALTER TABLE analyses
       ADD COLUMN IF NOT EXISTS ai_reviewed_at TIMESTAMPTZ NULL;
 
+    ALTER TABLE analyses
+      ADD COLUMN IF NOT EXISTS processing_stage TEXT NOT NULL DEFAULT 'waiting';
+
+    ALTER TABLE analyses
+      ADD COLUMN IF NOT EXISTS processing_message TEXT NULL;
+
     ALTER TABLE scan_reports
       ADD COLUMN IF NOT EXISTS payload_raw BYTEA NULL;
 
@@ -2297,6 +2303,14 @@ function forceInformationalFinding(artifactType, evidence = {}, title = "") {
 }
 
 async function rebuildFindings(analysisId, report) {
+  await pool.query(
+    `UPDATE analyses
+     SET processing_stage='normal_filter',
+         processing_message='Aplicando filtros técnicos e correlacionando evidências...'
+     WHERE id=$1`,
+    [analysisId]
+  );
+
   await pool.query("DELETE FROM scan_findings WHERE analysis_id = $1", [analysisId]);
 
   const rulesResult = await pool.query(
@@ -2344,7 +2358,35 @@ async function rebuildFindings(analysisId, report) {
 
   await addBuiltInReviewFindings(analysisId, report);
   await downgradeUnexecutedExeFindings(analysisId, report);
-  await reviewFindingsWithAi(analysisId);
+
+  await pool.query(
+    `UPDATE analyses
+     SET processing_stage='ai_filter',
+         processing_message='Filtro técnico concluído. A IA está revisando possíveis falsos positivos...'
+     WHERE id=$1`,
+    [analysisId]
+  );
+
+  const aiResult =
+    await reviewFindingsWithAi(analysisId);
+
+  await pool.query(
+    `UPDATE analyses
+     SET processing_stage=$2,
+         processing_message=$3
+     WHERE id=$1`,
+    [
+      analysisId,
+      aiResult?.status === "completed"
+        ? "finalizing"
+        : "ai_error",
+      aiResult?.status === "completed"
+        ? "Revisão por IA concluída. Preparando o resultado final..."
+        : "A revisão por IA não pôde ser concluída. O resultado técnico sem IA continua disponível.",
+    ]
+  );
+
+  return aiResult;
 }
 
 async function insertReviewFinding(
@@ -5069,7 +5111,9 @@ app.post("/api/admin/analyses/:id/rebuild", requireAdmin, async (req, res) => {
   await pool.query(
     `UPDATE analyses
      SET ai_review_status='running',
-         ai_review_error=NULL
+         ai_review_error=NULL,
+         processing_stage='preparing',
+         processing_message='Preparando recálculo com filtros técnico e de IA...'
      WHERE id=$1`,
     [id]
   );
@@ -5082,6 +5126,31 @@ app.post("/api/admin/analyses/:id/rebuild", requireAdmin, async (req, res) => {
   setImmediate(async () => {
     try {
       await rebuildFindings(id, report);
+
+      const finalState =
+        await pool.query(
+          "SELECT ai_review_status FROM analyses WHERE id=$1",
+          [id]
+        );
+
+      const aiStatus =
+        finalState.rows[0]?.ai_review_status || "pending";
+
+      await pool.query(
+        `UPDATE analyses
+         SET processing_stage=$2,
+             processing_message=$3
+         WHERE id=$1`,
+        [
+          id,
+          aiStatus === "completed"
+            ? "completed"
+            : "ai_error",
+          aiStatus === "completed"
+            ? "Recálculo concluído e filtrado pela IA."
+            : "Recálculo técnico concluído, mas a revisão por IA não foi finalizada.",
+        ]
+      );
     } catch (error) {
       console.error(
         "Falha ao recalcular achados/IA:",
@@ -5101,7 +5170,9 @@ app.post("/api/admin/analyses/:id/rebuild", requireAdmin, async (req, res) => {
           `UPDATE analyses
            SET ai_review_status='error',
                ai_review_error=$2,
-               ai_reviewed_at=NOW()
+               ai_reviewed_at=NOW(),
+               processing_stage='ai_error',
+               processing_message='Falha durante o recálculo com IA. O resultado técnico sem IA continua disponível.'
            WHERE id=$1`,
           [
             id,
@@ -5312,6 +5383,8 @@ app.post("/api/agent/:token/start", async (req, res) => {
   await pool.query(
     `UPDATE analyses
      SET status='running',
+         processing_stage='collecting',
+         processing_message='Cliente conectado. Coletando evidências no computador...',
          started_at=COALESCE(started_at, NOW()),
          machine_name=COALESCE($2, machine_name),
          os_version=COALESCE($3, os_version),
@@ -5412,6 +5485,8 @@ app.post("/api/agent/:token/report", async (req, res) => {
     await pool.query(
       `UPDATE analyses
        SET status='running',
+           processing_stage='preparing',
+           processing_message='Relatório recebido. Preparando os dados para os filtros técnico e de IA...',
            machine_name=COALESCE($2, machine_name),
            os_version=COALESCE($3, os_version),
            agent_version=COALESCE($4, agent_version),
@@ -5438,12 +5513,31 @@ app.post("/api/agent/:token/report", async (req, res) => {
           analysis.id,
           report);
 
+        const finalState =
+          await pool.query(
+            "SELECT ai_review_status FROM analyses WHERE id=$1",
+            [analysis.id]
+          );
+
+        const aiStatus =
+          finalState.rows[0]?.ai_review_status || "pending";
+
         await pool.query(
           `UPDATE analyses
            SET status='completed',
+               processing_stage=$2,
+               processing_message=$3,
                finished_at=NOW()
            WHERE id=$1`,
-          [analysis.id]
+          [
+            analysis.id,
+            aiStatus === "completed"
+              ? "completed"
+              : "ai_error",
+            aiStatus === "completed"
+              ? "Análise concluída e filtrada pela IA."
+              : "Análise técnica concluída, mas a revisão por IA não foi finalizada.",
+          ]
         );
       } catch (error) {
         console.error(
