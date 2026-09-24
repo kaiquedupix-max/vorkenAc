@@ -446,6 +446,157 @@ async function openReport(id) {
     <div class="message">A contagem identifica famílias/bridges por VID/PID, descritor e fabricante. CH34x/CP210x/FTDI isoladamente não provam qual placa está atrás do bridge.</div>
   `;
 
+  const priorityFiles = [];
+
+  for (const item of arrays.browserDownloads) {
+    if (item.fileMissing !== true) continue;
+    const name = item.fileName || item.targetPath || "";
+    if (!/\.(exe|com|scr|dll|bat|cmd|ps1|msi)$/i.test(name)) continue;
+
+    priorityFiles.push({
+      priority: 5,
+      status: "BAIXADO E APAGADO / MOVIDO",
+      tag: "high",
+      name: item.fileName || "Executável",
+      path: item.targetPath || item.currentPath || "—",
+      time: item.startTimeUtc,
+      source: item.browser || "Navegador",
+      url: item.sourceUrl || item.finalUrl || item.pageUrl || "",
+      detail: "Histórico de download preservado; arquivo não está mais no destino original."
+    });
+  }
+
+  for (const item of arrays.browserHistorySignals) {
+    if (!item.visitTimeUtc) continue;
+    timeline.push({
+      time: item.visitTimeUtc,
+      action: item.searchQuery ? "PESQUISA SUSPEITA" : "SITE SUSPEITO",
+      tag: item.riskLevel === "high" ? "high" : item.riskLevel === "medium" ? "medium" : "info",
+      path: item.searchQuery || item.host || item.url || "Navegador",
+      detail: [item.browser, (item.matchedTerms || []).join(", ")].filter(Boolean).join(" · ")
+    });
+  }
+  for (const item of arrays.prefetchExecutions) {
+    if (item.likelyDetachedOrRemovable !== true) continue;
+    const pathValue = item.resolvedExecutablePath || item.nativeExecutablePath || "";
+    const lower = String(pathValue).replaceAll("/", "\\").toLowerCase();
+    if (lower.includes("\\windows\\") ||
+        lower.includes("\\program files\\") ||
+        lower.includes("\\program files (x86)\\") ||
+        lower.includes("\\steamapps\\common\\")) continue;
+
+    priorityFiles.push({
+      priority: 6,
+      status: "EXECUTADO / VOLUME REMOVIDO",
+      tag: "high",
+      name: item.executableName || item.prefetchFile || "Executável",
+      path: pathValue || "—",
+      time: item.lastRunUtc,
+      source: "Prefetch",
+      url: "",
+      detail: "Execução recente registrada em mídia removível ou volume não montado."
+    });
+  }
+
+  for (const item of arrays.recycleBin) {
+    const name = item.fileName || item.originalPath || "";
+    if (!/\.(exe|com|scr|dll|bat|cmd|ps1|msi)$/i.test(name)) continue;
+
+    priorityFiles.push({
+      priority: 4,
+      status: "ARQUIVO EXCLUÍDO",
+      tag: "medium",
+      name: item.fileName || "Executável",
+      path: item.originalPath || "—",
+      time: item.deletedAtUtc,
+      source: "Lixeira do Windows",
+      url: "",
+      detail: item.recycledDataPresent ? "Ainda existe conteúdo na Lixeira." : "Metadado de exclusão preservado; conteúdo não localizado."
+    });
+  }
+
+  for (const item of arrays.bam) {
+    const pathValue = item.path || "";
+    const lower = String(pathValue).replaceAll("/", "\\").toLowerCase();
+    if (item.fileExists !== false) continue;
+    if (!/\.(exe|com|scr|dll)$/i.test(pathValue)) continue;
+    if (!lower.includes("\\downloads\\") &&
+        !lower.includes("\\desktop\\") &&
+        !lower.includes("\\temp\\")) continue;
+
+    priorityFiles.push({
+      priority: 3,
+      status: "EXECUTADO / ARQUIVO AUSENTE",
+      tag: "medium",
+      name: pathValue.split("\\").filter(Boolean).at(-1) || "Executável",
+      path: pathValue,
+      time: item.lastExecutionUtc,
+      source: "BAM",
+      url: "",
+      detail: "O Windows registrou execução, mas o arquivo não foi localizado no caminho original."
+    });
+  }
+
+  const prioritySeen = new Set();
+  const priorityUnique = priorityFiles
+    .sort((a, b) => b.priority - a.priority || new Date(b.time || 0) - new Date(a.time || 0))
+    .filter((item) => {
+      const key = String(item.name || item.path || "").toLowerCase();
+      if (!key || prioritySeen.has(key)) return false;
+      prioritySeen.add(key);
+      return true;
+    })
+    .slice(0, 150);
+
+  document.getElementById("priorityFilesList").innerHTML = priorityUnique.length
+    ? priorityUnique.map((item) => {
+        const sourceUrl = safeExternalUrl(item.url);
+        return `
+          <div class="finding">
+            <div class="finding-head">
+              <h4>${escapeHtml(item.name || "Arquivo")}</h4>
+              <span class="tag ${escapeHtml(item.tag)}">${escapeHtml(item.status)}</span>
+            </div>
+            <div class="kv"><span>Caminho</span><span>${escapeHtml(item.path || "—")}</span></div>
+            <div class="kv"><span>Data / horário</span><span>${escapeHtml(formatDate(item.time))}</span></div>
+            <div class="kv"><span>Fonte</span><span>${escapeHtml(item.source || "—")}</span></div>
+            ${sourceUrl ? `<div class="kv"><span>Origem do download</span><span><a href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.url)}</a></span></div>` : ""}
+            <div class="kv"><span>Motivo</span><span>${escapeHtml(item.detail || "—")}</span></div>
+          </div>
+        `;
+      }).join("")
+    : '<div class="message ok">Nenhum arquivo apagado/executado de alta prioridade foi identificado.</div>';
+
+  const historyRiskOrder = { high: 3, medium: 2, low: 1 };
+  const browserHistorySignals = [...arrays.browserHistorySignals]
+    .sort((a, b) =>
+      (historyRiskOrder[String(b.riskLevel || "").toLowerCase()] || 0) -
+      (historyRiskOrder[String(a.riskLevel || "").toLowerCase()] || 0) ||
+      new Date(b.visitTimeUtc || 0) - new Date(a.visitTimeUtc || 0))
+    .slice(0, 300);
+
+  document.getElementById("browserHistorySignalsList").innerHTML = browserHistorySignals.length
+    ? browserHistorySignals.map((item) => {
+        const risk = String(item.riskLevel || "low").toLowerCase();
+        const safeUrl = safeExternalUrl(item.url);
+        const label = item.searchQuery ? "PESQUISA" : "SITE / PÁGINA";
+        return `
+          <div class="finding">
+            <div class="finding-head">
+              <h4>${escapeHtml(item.searchQuery || item.host || item.title || "Histórico do navegador")}</h4>
+              <span class="tag ${escapeHtml(risk === "high" ? "high" : risk === "medium" ? "medium" : "info")}">${label}</span>
+            </div>
+            <div class="kv"><span>Navegador</span><span>${escapeHtml((item.browser || "—") + " · " + (item.profile || "perfil"))}</span></div>
+            <div class="kv"><span>Visitado em</span><span>${escapeHtml(formatDate(item.visitTimeUtc))}</span></div>
+            <div class="kv"><span>Título</span><span>${escapeHtml(item.title || "—")}</span></div>
+            ${item.searchQuery ? `<div class="kv"><span>Pesquisa</span><span>${escapeHtml(item.searchQuery)}</span></div>` : ""}
+            <div class="kv"><span>Termos encontrados</span><span>${escapeHtml((item.matchedTerms || []).join(", ") || "—")}</span></div>
+            <div class="kv"><span>Motivo</span><span>${escapeHtml(item.reason || "—")}</span></div>
+            ${safeUrl ? `<div class="kv"><span>URL</span><span><a href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.url)}</a></span></div>` : `<code>${escapeHtml(item.url || "—")}</code>`}
+          </div>
+        `;
+      }).join("")
+    : '<div class="message ok">Nenhuma pesquisa/site com os termos anti-cheat configurados foi preservado no histórico.</div>';
   const missingDownloads = [...arrays.browserDownloads]
     .filter((item) => item.fileMissing === true)
     .sort((a, b) =>
