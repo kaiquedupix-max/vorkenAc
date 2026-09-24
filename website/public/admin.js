@@ -609,13 +609,38 @@ async function loadAnalyses() {
           ? '<span class="tag high">' + Number(item.total_findings) + '</span>'
           : '<span class="tag medium">' + Number(item.total_findings) + '</span>';
 
+    const stage =
+      item.processing_stage || "waiting";
+
+    const stageLabel =
+      processingStageLabel(
+        stage,
+        item.status
+      );
+
+    const stageClass =
+      processingStageTag(
+        stage,
+        item.status
+      );
+
+    const stageMessage =
+      item.processing_message
+        ? '<br><small class="muted">' +
+          escapeHtml(item.processing_message) +
+          '</small>'
+        : "";
+
     row.innerHTML = `
       <td>#${escapeHtml(item.id)}</td>
       <td>
         <strong>${escapeHtml(item.label)}</strong><br>
         <small class="muted">${escapeHtml(item.machine_name || "Aguardando PC")}</small>
       </td>
-      <td><span class="tag ${escapeHtml(item.status)}">${escapeHtml(statusLabel(item.status))}</span></td>
+      <td>
+        <span class="tag ${escapeHtml(stageClass)}">${escapeHtml(stageLabel)}</span>
+        ${stageMessage}
+      </td>
       <td>${findings}</td>
       <td>${escapeHtml(formatDate(item.created_at))}</td>
       <td><button class="button ghost open-report" data-id="${item.id}">Abrir relatório</button></td>
@@ -637,8 +662,21 @@ async function openReport(id) {
   const data = await api("/api/admin/analyses/" + encodeURIComponent(id));
   const analysis = data.analysis || {};
   const report = data.report || null;
-  const findings = safeArray(data.findings);
   const aiFilteredFindings = safeArray(data.aiFilteredFindings);
+  const aiFilteredIds = new Set(
+    aiFilteredFindings.map((item) => String(item.id))
+  );
+  const postAiFindings = safeArray(data.findings);
+  const findings = showWithoutAiResult
+    ? [
+        ...postAiFindings,
+        ...aiFilteredFindings.filter(
+          (item) => !postAiFindings.some(
+            (base) => String(base.id) === String(item.id)
+          )
+        ),
+      ]
+    : postAiFindings;
   const aiReview = data.aiReview || {};
   const relatedAnalyses = safeArray(data.relatedAnalyses);
   const payload = report?.payload && typeof report.payload === "object"
@@ -651,6 +689,25 @@ async function openReport(id) {
 
   document.getElementById("reportTitle").textContent =
     "#" + analysis.id + " · " + analysis.label;
+
+  const toggleAiViewBtn =
+    document.getElementById("toggleAiViewBtn");
+
+  toggleAiViewBtn.textContent =
+    showWithoutAiResult
+      ? "Ver resultado com IA"
+      : "Ver resultado sem IA";
+
+  updateAnalysisProcessingBanner({
+    status: analysis.status,
+    processingStage: analysis.processing_stage,
+    processingMessage: analysis.processing_message,
+  });
+
+  lastOpenReportProcessing =
+    isProcessingStage(
+      analysis.processing_stage
+    );
 
   const arrays = {
     usbCurrent: safeArray(payload.usbCurrent),
@@ -755,10 +812,17 @@ async function openReport(id) {
     arrays.browserRecoveredArtifacts.length +
     arrays.deletedUsnRecords.length;
 
+  const currentStageLabel =
+    processingStageLabel(
+      analysis.processing_stage,
+      analysis.status
+    );
+
   document.getElementById("reportMetrics").innerHTML = `
-    <div class="metric"><small>STATUS</small><strong>${escapeHtml(statusLabel(analysis.status))}</strong></div>
-    <div class="metric danger-metric"><small>VERMELHO · CRÍTICO/ALTO</small><strong>${criticalFindings.length}</strong><span>Resultado final pós-IA</span></div>
-    <div class="metric warning-metric"><small>AMARELO · REVISAR</small><strong>${mediumFindings.length}</strong><span>Resultado final pós-IA</span></div>
+    <div class="metric"><small>STATUS</small><strong>${escapeHtml(currentStageLabel)}</strong></div>
+    <div class="metric"><small>VISUALIZAÇÃO</small><strong>${showWithoutAiResult ? "SEM IA" : "COM IA"}</strong><span>${showWithoutAiResult ? "Filtro técnico original" : "Resultado final filtrado"}</span></div>
+    <div class="metric danger-metric"><small>VERMELHO · CRÍTICO/ALTO</small><strong>${criticalFindings.length}</strong><span>${showWithoutAiResult ? "Antes da IA" : "Resultado final pós-IA"}</span></div>
+    <div class="metric warning-metric"><small>AMARELO · REVISAR</small><strong>${mediumFindings.length}</strong><span>${showWithoutAiResult ? "Antes da IA" : "Resultado final pós-IA"}</span></div>
     <div class="metric info-metric"><small>IA FILTROU</small><strong>${aiFilteredFindings.length}</strong><span>Prováveis falsos positivos</span></div>
     <div class="metric hardware-metric"><small>HARDWARE / USB</small><strong>${hardwareCount}</strong><span>Pendrives e placas separados</span></div>
     <div class="metric priority-metric"><small>ARQUIVOS PRIORITÁRIOS</small><strong id="summaryPriorityCount">0</strong><span>EXE/ZIP/RAR/7Z suspeitos</span></div>
