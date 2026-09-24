@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Windows.Forms;
 
 namespace Vorken.Agent;
 
@@ -21,35 +22,26 @@ internal static class Program
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
         };
 
-    public static async Task<int> Main(string[] args)
+    private static Action<string>? _statusSink;
+
+    [STAThread]
+    public static void Main(string[] args)
     {
-        Console.OutputEncoding = System.Text.Encoding.UTF8;
-        Console.Title = "Vorken Anti Cheat";
+        ApplicationConfiguration.Initialize();
+        Application.Run(new AgentMainForm(args));
+    }
+
+    internal static async Task<int> RunAnalysisAsync(
+        string[] args,
+        Action<string>? status = null)
+    {
+        _statusSink = status;
+        ReportStatus("Preparando a análise...");
 
         try
         {
             AgentConfig config = LoadConfig(args);
-
-            PrintBanner();
-            WriteInfo("Esta análise coleta metadados técnicos para revisão anti-cheat.");
-            Console.WriteLine();
-            WriteDim("  • USB / dispositivos seriais / hardware relacionado");
-            WriteDim("  • Prefetch, BAM, Amcache, ShimCache, PCA e USN");
-            WriteDim("  • downloads, Zone.Identifier e vestígios SQLite/WAL");
-            WriteDim("  • assinaturas Authenticode, PE/entropia e módulos carregados");
-            WriteDim("  • PowerShell, autoruns, crashes, integridade do sistema e rede");
-            Console.WriteLine();
-            WriteWarning("Privacidade: não coletamos senhas, cookies, mensagens, fotos ou documentos.");
-            Console.WriteLine();
-            Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.Write("  Digite ACEITO para iniciar: ");
-            Console.ResetColor();
-
-            if (!string.Equals(Console.ReadLine()?.Trim(), "ACEITO", StringComparison.OrdinalIgnoreCase))
-            {
-                Console.WriteLine("Análise cancelada.");
-                return 2;
-            }
+            ReportStatus("Conectando ao servidor do Vorken...");
 
             using var http = new HttpClient
             {
@@ -60,6 +52,7 @@ internal static class Program
             RulesResponse rulesPayload =
                 await LoadRulesAsync(http, config.Token);
 
+            ReportStatus("Configuração recebida. Iniciando coleta segura...");
             var rules = rulesPayload.Rules;
 
             string machineFingerprint =
@@ -76,8 +69,7 @@ internal static class Program
                     machineFingerprint
                 });
 
-            Console.WriteLine();
-            Console.WriteLine("Coletando evidências técnicas...");
+            ReportStatus("Coletando evidências técnicas do computador...");
 
             var errors = new List<string>();
 
@@ -463,7 +455,7 @@ internal static class Program
                 Errors = errors
             };
 
-            Console.WriteLine("Enviando relatório...");
+            ReportStatus("Enviando os dados para análise...");
 
             HttpResponseMessage response =
                 await http.PostAsJsonAsync(
@@ -474,20 +466,28 @@ internal static class Program
             if (!response.IsSuccessStatusCode)
             {
                 string body = await response.Content.ReadAsStringAsync();
-                Console.WriteLine($"Falha ao enviar relatório: {(int)response.StatusCode} {body}");
+                ReportStatus($"Falha ao enviar os dados: {(int)response.StatusCode}");
                 return 3;
             }
 
-            Console.WriteLine();
-            WriteSuccess("Análise concluída e enviada com sucesso.");
-            WriteDim("  O relatório já está disponível para o responsável.");
+            ReportStatus("Dados enviados para análise com sucesso.");
             return 0;
         }
         catch (Exception ex)
         {
-            Console.WriteLine();
-            WriteError("Falha no Vorken: " + ex.Message);
+            ReportStatus("Falha no Vorken: " + ex.Message);
             return 1;
+        }
+    }
+
+    private static void ReportStatus(string message)
+    {
+        try
+        {
+            _statusSink?.Invoke(message);
+        }
+        catch
+        {
         }
     }
 
@@ -642,19 +642,13 @@ internal static class Program
         try
         {
             List<T> result = collector();
-            Console.ForegroundColor = ConsoleColor.DarkGreen;
-            Console.Write("  ✓ ");
-            Console.ResetColor();
-            Console.WriteLine($"{moduleName}: {result.Count}");
+            ReportStatus($"✓ {moduleName}: {result.Count}");
             return result;
         }
         catch (Exception ex)
         {
             errors.Add($"{moduleName}: {ex.Message}");
-            Console.ForegroundColor = ConsoleColor.DarkYellow;
-            Console.Write("  ! ");
-            Console.ResetColor();
-            Console.WriteLine($"{moduleName}: indisponível");
+            ReportStatus($"! {moduleName}: indisponível");
             return new List<T>();
         }
     }
