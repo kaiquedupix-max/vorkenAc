@@ -1124,17 +1124,103 @@ internal static class Program
 
         foreach (ManagementObject item in searcher.Get())
         {
+            string pathName =
+                Convert.ToString(item["PathName"]) ?? "";
+
+            string resolvedPath =
+                ResolveDriverPath(pathName);
+
+            string? sha256 = null;
+            bool signed = false;
+            string? signer = null;
+
+            if (
+                !string.IsNullOrWhiteSpace(resolvedPath) &&
+                File.Exists(resolvedPath))
+            {
+                try
+                {
+                    FileInfo info = new(resolvedPath);
+                    if (info.Length <= 64L * 1024L * 1024L)
+                        sha256 = TrySha256(resolvedPath);
+                }
+                catch
+                {
+                }
+
+                (signed, signer) =
+                    TrySigner(resolvedPath);
+            }
+
             result.Add(new DriverRecord
             {
                 Name = Convert.ToString(item["Name"]) ?? "",
                 DisplayName = Convert.ToString(item["DisplayName"]) ?? "",
                 State = Convert.ToString(item["State"]) ?? "",
                 StartMode = Convert.ToString(item["StartMode"]) ?? "",
-                PathName = Convert.ToString(item["PathName"]) ?? ""
+                PathName = pathName,
+                ResolvedPath = resolvedPath,
+                Sha256 = sha256,
+                Signed = signed,
+                SignerSubject = signer
             });
         }
 
         return result;
+    }
+
+    private static string ResolveDriverPath(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return "";
+
+        string path = value.Trim().Trim('"');
+
+        int exeIndex =
+            path.IndexOf(
+                ".sys",
+                StringComparison.OrdinalIgnoreCase);
+
+        if (exeIndex >= 0)
+            path = path[..(exeIndex + 4)];
+
+        string windows =
+            Environment.GetFolderPath(
+                Environment.SpecialFolder.Windows);
+
+        if (path.StartsWith(
+                @"\SystemRoot\",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            path = Path.Combine(
+                windows,
+                path[@"\SystemRoot\".Length..]);
+        }
+        else if (path.StartsWith(
+                     @"\??\",
+                     StringComparison.OrdinalIgnoreCase))
+        {
+            path = path[4..];
+        }
+        else if (
+            path.StartsWith(
+                @"System32\",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            path = Path.Combine(
+                windows,
+                path);
+        }
+
+        try
+        {
+            return Path.GetFullPath(
+                Environment.ExpandEnvironmentVariables(path));
+        }
+        catch
+        {
+            return path;
+        }
     }
 
     private static List<StartupRecord> CollectStartupEntries()
@@ -1600,6 +1686,10 @@ internal sealed class DriverRecord
     public string State { get; set; } = "";
     public string StartMode { get; set; } = "";
     public string PathName { get; set; } = "";
+    public string ResolvedPath { get; set; } = "";
+    public string? Sha256 { get; set; }
+    public bool Signed { get; set; }
+    public string? SignerSubject { get; set; }
 }
 
 internal sealed class StartupRecord
