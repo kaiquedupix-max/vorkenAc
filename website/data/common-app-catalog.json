@@ -1,6 +1,6 @@
 {
-  "version": "2026-09-24.2",
-  "notes": "Allowlist defensiva de aplicativos comuns. Um nome conhecido só é ignorado quando a assinatura digital esperada e/ou uma origem oficial de download é confirmada. Nome conhecido vindo de origem não oficial continua sendo reportado.",
+  "version": "2026-09-24.3",
+  "notes": "Allowlist defensiva de aplicativos comuns. Apps conhecidos são suprimidos quando nome + assinatura, origem oficial ou caminho instalado coerente confirmam legitimidade. Artefatos Vorken são sempre ignorados. Sinais independentes fortes (mídia removível executada, hash/catálogo malicioso, origem suspeita) continuam prevalecendo.",
   "apps": [
     {
       "name": "Discord",
@@ -448,10 +448,13 @@
     {
       "name": "Node.js",
       "filenames": [
-        "node.exe"
+        "node.exe",
+        "node-v24.19.0-x64.msi",
+        "node-v24.19.0-x64.exe"
       ],
       "filenamePrefixes": [
-        "node-v"
+        "node-v",
+        "node-"
       ],
       "signerContains": [
         "openjs foundation",
@@ -486,18 +489,22 @@
     {
       "name": "CapCut",
       "filenames": [
-        "capcut.exe"
+        "capcut.exe",
+        "capcut_installer.exe"
       ],
       "filenamePrefixes": [
         "capcut_installer",
-        "capcut"
+        "capcut",
+        "capcut_"
       ],
       "signerContains": [
         "bytedance",
         "bytedance pte"
       ],
       "officialUrlIncludes": [
-        "capcut.com/download"
+        "capcut.com/download",
+        "capcut.com/",
+        "lf16-capcut-web-useast2.byteoversea.com/"
       ]
     },
     {
@@ -954,6 +961,70 @@
       "officialUrlIncludes": [
         "openvpn.net/client",
         "swupdate.openvpn.net/"
+      ]
+    },
+    {
+      "name": "Microsoft Visual Studio Build Tools",
+      "filenames": [
+        "vs_buildtools.exe",
+        "vs_buildtools (1).exe",
+        "vs_installer.exe",
+        "setup.exe"
+      ],
+      "filenamePrefixes": [
+        "vs_buildtools",
+        "visualstudio",
+        "vs_installer"
+      ],
+      "signerContains": [
+        "microsoft corporation"
+      ],
+      "officialUrlIncludes": [
+        "visualstudio.microsoft.com/downloads",
+        "aka.ms/vs/",
+        "download.visualstudio.microsoft.com/",
+        "aka.ms/vs/17/release/"
+      ]
+    },
+    {
+      "name": "ExitLag",
+      "filenames": [
+        "exitlag.exe",
+        "setupexitlag.exe",
+        "exitlag_installer.exe"
+      ],
+      "filenamePrefixes": [
+        "setupexitlag",
+        "exitlag"
+      ],
+      "signerContains": [
+        "exitlag",
+        "skowronski",
+        "exitlag inc"
+      ],
+      "officialUrlIncludes": [
+        "exitlag.com/download",
+        "exitlag.com/",
+        "cdn.exitlag.com/",
+        "download.exitlag.com/"
+      ]
+    },
+    {
+      "name": "Google Antigravity",
+      "filenames": [
+        "antigravity.exe",
+        "antigravity-x64.exe"
+      ],
+      "filenamePrefixes": [
+        "antigravity"
+      ],
+      "signerContains": [
+        "google llc"
+      ],
+      "officialUrlIncludes": [
+        "storage.googleapis.com/antigravity",
+        "storage.googleapis.com/",
+        "googleapis.com/antigravity"
       ]
     }
   ]
