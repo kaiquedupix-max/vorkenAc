@@ -312,6 +312,14 @@ function flattenArtifacts(report) {
     );
   }
 
+  for (const item of report.recycleBin || []) {
+    push(
+      "recycle_bin",
+      item.originalPath || item.fileName || item.recycledDataPath,
+      item
+    );
+  }
+
   for (const item of report.extensionMismatches || []) {
     push("extension_mismatch", item.path || item.name, item);
   }
@@ -443,6 +451,14 @@ function matchesRule(rule, artifact) {
           evidence.fileName,
           evidence.targetPath,
           evidence.currentPath,
+        ].some((value) =>
+          String(value || "").toLowerCase().includes(pattern));
+    case "recycle_name_contains":
+      return artifact.type === "recycle_bin" &&
+        [
+          evidence.fileName,
+          evidence.originalPath,
+          evidence.recycledDataPath,
         ].some((value) =>
           String(value || "").toLowerCase().includes(pattern));
     case "rust_module_contains":
@@ -819,6 +835,60 @@ async function addBuiltInReviewFindings(analysisId, report) {
     );
   }
 
+  // Recycle Bin is inventory by default. Only escalate when the same
+  // executable also has independent execution evidence.
+  for (const deleted of report.recycleBin || []) {
+    const deletedName = String(deleted.fileName || "").toLowerCase();
+    if (!deletedName)
+      continue;
+
+    const ext = path.extname(deletedName).toLowerCase();
+    const executableLike = new Set([
+      ".exe", ".com", ".scr", ".dll", ".bat", ".cmd", ".ps1", ".msi"
+    ]).has(ext);
+
+    if (!executableLike)
+      continue;
+
+    const deletionTime = deleted.deletedAtUtc
+      ? new Date(deleted.deletedAtUtc).getTime()
+      : 0;
+
+    const matches = executionEvidence
+      .filter((candidate) => {
+        if (!candidate.name || candidate.name !== deletedName)
+          return false;
+
+        if (!candidate.time || !deletionTime)
+          return true;
+
+        const executionTime = new Date(candidate.time).getTime();
+        if (!Number.isFinite(executionTime))
+          return true;
+
+        return executionTime <= deletionTime + 5 * 60 * 1000 &&
+          executionTime >= deletionTime - 30 * 86400000;
+      })
+      .slice(0, 5);
+
+    if (!matches.length)
+      continue;
+
+    await insertReviewFinding(
+      analysisId,
+      "Executável executado e depois enviado para a Lixeira",
+      "high",
+      "recycle_bin",
+      deleted.originalPath || deleted.fileName || "Lixeira",
+      {
+        ...deleted,
+        confidence: "high",
+        executionEvidence: matches,
+        note: "A Lixeira preserva o caminho original e horário de exclusão; o mesmo nome possui evidência separada de execução.",
+      }
+    );
+  }
+
   // Defender history is useful evidence, but still requires human review.
   for (const item of report.defenderDetections || []) {
     if (!item.threatName && !item.path) continue;
@@ -1136,6 +1206,7 @@ app.post("/api/admin/rules", requireAdmin, async (req, res) => {
     "recent_link_contains",
     "download_url_contains",
     "download_name_contains",
+    "recycle_name_contains",
     "rust_module_contains",
     "defender_history_contains",
     "defender_exclusion_contains",
