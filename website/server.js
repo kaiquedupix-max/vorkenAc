@@ -116,7 +116,7 @@ const commonAppCatalog = loadCommonAppCatalog();
 
 const activeRebuilds = new Set();
 
-const AI_REVIEW_POLICY_VERSION = "v2-gemini";
+const AI_REVIEW_POLICY_VERSION = "v3-protected-evidence-origin";
 
 const aiReviewConfig = {
   provider: "gemini",
@@ -267,12 +267,42 @@ function aiEvidenceSubset(evidence = {}) {
 
 function isAiProtectedFinding(finding) {
   const evidence = finding?.evidence || {};
+  const title = String(finding?.title || "").toLowerCase();
+  const artifactType = String(finding?.artifact_type || "").toLowerCase();
+
+  const protectedCatalogExecution =
+    evidence.executionConfirmed === true &&
+    (
+      evidence.catalogMatch ||
+      (Array.isArray(evidence.catalogMatches) && evidence.catalogMatches.length > 0)
+    );
+
+  const protectedDirectCatalogOrigin =
+    evidence.directCatalogPriority === true ||
+    evidence.knownCheatDomain === true ||
+    (
+      ["browser_download", "browser_history", "browser_recovery", "zone_identifier"]
+        .includes(artifactType) &&
+      evidence.catalogMatch &&
+      evidence.directCatalogMatch === true
+    );
+
+  const protectedCorrelation =
+    evidence.strongCorrelation === true ||
+    (
+      evidence.downloadConfirmed === true &&
+      evidence.executionConfirmed === true &&
+      evidence.deletedAfterExecution === true
+    );
 
   return (
     evidence.priorityMaximum === true ||
-    String(finding?.title || "")
-      .toLowerCase()
-      .includes("prioridade máxima")
+    evidence.protectedByTechnicalEngine === true ||
+    evidence.usbExecution === true ||
+    protectedCatalogExecution ||
+    protectedDirectCatalogOrigin ||
+    protectedCorrelation ||
+    title.includes("prioridade máxima")
   );
 }
 
@@ -390,8 +420,11 @@ async function callAiReviewBatch(cases) {
     "Classifique cada caso como likely_cheat, likely_false_positive ou needs_review.",
     "Se faltar evidência, use needs_review.",
     "Não invente fatos, arquivos, assinaturas, origem ou execução que não estejam no JSON.",
-    "Dê peso alto a execução confirmada, origem de download, assinatura/publisher, catálogo conhecido, mídia removível e correlação entre fontes.",
-    "Instaladores, updaters, WindowsApps, Program Files e software conhecido podem ser falsos positivos quando o restante do contexto é benigno.",
+    "Dê peso alto a execução confirmada, origem de download, assinatura/publisher, catálogo conhecido e correlação entre fontes.",
+    "Casos protegidos pelo motor técnico NÃO são enviados para você. Não tente inferir ou rebaixar uma execução confirmada em mídia removível, cheat conhecido executado, origem direta de domínio conhecido de cheat ou correlação forte download+execução+exclusão.",
+    "Windows/System32/SysWOW64/WinSxS, Program Files, Steam, anti-cheats legítimos (Easy Anti-Cheat, BattlEye, Riot Vanguard e componentes assinados de jogos como Warframe), instaladores/updaters assinados e software conhecido devem tender a likely_false_positive quando os metadados forem coerentes.",
+    "Use sourceUrl/finalUrl/pageUrl/siteUrl/referrerUrl/recoveredUrl para classificar a ORIGEM. Diferencie cheat/script/loader/macro de software legítimo. Uma pesquisa no Google/Bing é apenas needs_review; acesso/download direto de domínio conhecido do catálogo é sinal forte.",
+    "Arquivos .xls/.xlsx e outros documentos baixados só devem permanecer como suspeitos se a origem/metadados tiverem relação concreta com cheat/script/loader/macro; extensão ou download isolado não prova cheat.",
     "Nome estranho sozinho, caminho Temp sozinho, arquivo apagado sozinho, ausência de assinatura sozinha e ZIP sozinho não provam cheat.",
     "Nunca rebaixe um caso somente porque o nome do arquivo parece comum.",
     "Retorne uma revisão para cada fingerprint recebido.",
@@ -1712,8 +1745,70 @@ function isKnownBenignPeNoise(value) {
     name === "librehardwaremonitorlib.dll" ||
     name === "dnsjumper.exe" ||
     name === "vorken.agent.exe" ||
+    name === "helpsystem.dll" ||
+    name === "help.system.dll" ||
     /^vorken[-_.].*\.exe$/i.test(name)
   );
+}
+
+function isTrustedSignedSystemFinding(value, evidence = {}) {
+  const p = String(
+    value ||
+    evidence.path ||
+    evidence.fullPath ||
+    evidence.modulePath ||
+    evidence.processPath ||
+    ""
+  )
+    .replaceAll("/", "\\")
+    .toLowerCase();
+
+  const signer = String(
+    evidence.signerSubject ||
+    evidence.publisher ||
+    evidence.companyName ||
+    ""
+  ).toLowerCase();
+
+  const signed = evidence.signed === true;
+  const microsoftSigned =
+    signed &&
+    (
+      signer.includes("microsoft corporation") ||
+      signer.includes("microsoft windows")
+    );
+
+  const trustedWindowsPath =
+    p.includes("\\windows\\system32\\") ||
+    p.includes("\\windows\\syswow64\\") ||
+    p.includes("\\windows\\winsxs\\") ||
+    p.includes("\\windows\\microsoft.net\\");
+
+  if (trustedWindowsPath && microsoftSigned)
+    return true;
+
+  const trustedInstalledPath =
+    p.includes("\\program files\\") ||
+    p.includes("\\program files (x86)\\") ||
+    p.includes("\\windowsapps\\") ||
+    p.includes("\\steamapps\\common\\");
+
+  if (trustedInstalledPath && signed)
+    return true;
+
+  const legitimateAntiCheat =
+    p.includes("\\easyanticheat\\") ||
+    p.includes("\\easyanticheat_eos\\") ||
+    p.includes("\\battleye\\") ||
+    p.includes("\\riot vanguard\\") ||
+    p.includes("\\vgc\\") ||
+    p.includes("\\warframe\\") ||
+    /(^|\\)(easyanticheat|easyanticheat_eos|beservice|bedaisy|vgc|vgk|warframe)(64)?\.(exe|dll|sys)$/i.test(p);
+
+  if (legitimateAntiCheat && signed)
+    return true;
+
+  return false;
 }
 
 function isDistinctiveCatalogAlias(value) {
@@ -2529,6 +2624,18 @@ async function insertReviewFinding(
 
   if (isKnownBenignPeNoise(normalizedValue))
     return;
+
+  const protectedFinding =
+    evidence?.priorityMaximum === true ||
+    evidence?.protectedByTechnicalEngine === true ||
+    evidence?.usbExecution === true;
+
+  if (
+    !protectedFinding &&
+    isTrustedSignedSystemFinding(normalizedValue, evidence || {})
+  ) {
+    return;
+  }
 
   const normalizedSeverity = forceInformationalFinding(
     artifactType,
@@ -4433,9 +4540,21 @@ async function addBuiltInReviewFindings(analysisId, report) {
       execution.executableName || executionPath
     );
 
-    const exeLike = /\.exe$/i.test(executionName);
+    const executionCandidates = [
+      execution.executableName,
+      execution.resolvedExecutablePath,
+      execution.nativeExecutablePath,
+      execution.prefetchFile
+    ].filter(Boolean);
+
+    const exeLike = executionCandidates.some((value) =>
+      /\.exe(?:$|[?#])/i.test(String(value || "").trim())
+    );
+
     const trustedExecutable =
-      isTrustedExecutableCandidate(executionPath || executionName);
+      executionCandidates.some((value) =>
+        isTrustedExecutableCandidate(value)
+      );
 
     const confirmedRemovable =
       execution.currentRemovable === true;
@@ -4493,6 +4612,9 @@ async function addBuiltInReviewFindings(analysisId, report) {
         correlatedUsb: disconnectedUsb,
         priorityMaximum: maximumUsbPriority,
         usbExecution: maximumUsbPriority,
+        protectedByTechnicalEngine: maximumUsbPriority,
+        executionConfirmed: true,
+        technicalVerdict: maximumUsbPriority ? "critical_confirmed_execution" : "execution_evidence",
         confidence: maximumUsbPriority
           ? "high"
           : confirmedRemovable
@@ -4586,6 +4708,9 @@ async function addBuiltInReviewFindings(analysisId, report) {
         ...item,
         priorityMaximum: removableExePriority,
         usbExecution: removableExePriority,
+        protectedByTechnicalEngine: removableExePriority,
+        executionConfirmed: true,
+        technicalVerdict: removableExePriority ? "critical_confirmed_execution" : "execution_evidence",
         confidence:
           removableExePriority
             ? "high"
@@ -5105,6 +5230,7 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
          OR ar.verdict IS DISTINCT FROM 'likely_false_positive'
        )
      ORDER BY
+       CASE WHEN sf.evidence->>'priorityMaximum' = 'true' THEN 100 ELSE 0 END DESC,
        CASE sf.severity
          WHEN 'critical' THEN 5
          WHEN 'high' THEN 4
