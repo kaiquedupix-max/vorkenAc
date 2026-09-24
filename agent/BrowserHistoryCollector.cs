@@ -71,7 +71,21 @@ internal static class BrowserHistoryCollector
         "revelx rust",
         "aimmy rust",
         "kosmos aimbot",
-        "synthar aimbot"
+        "synthar aimbot",
+        "lethality.club",
+        "revolexscript.com",
+        "purgerecoil.club",
+        "zazacheats.net",
+        "slayer.club",
+        "disconnectcheats.com",
+        "nowaxcheats.com",
+        "fcheats.com",
+        "aimsync.ai",
+        "aptitude.pub",
+        "discord.gg/lethalityrust",
+        "discord.gg/zazacheats",
+        "discord.gg/j4gp9t",
+        "discord.me/zbscn"
     };
 
     private static readonly string[] ContextTerms =
