@@ -2484,6 +2484,51 @@ function matchesRule(rule, artifact) {
   }
 }
 
+function artifactFileExtension(artifactValue, evidence = {}) {
+  const candidates = [
+    artifactValue,
+    evidence?.fileName,
+    evidence?.name,
+    evidence?.path,
+    evidence?.fullPath,
+    evidence?.modulePath,
+    evidence?.originalPath,
+    evidence?.targetPath,
+    evidence?.currentPath,
+    evidence?.recoveredFileName,
+    evidence?.resolvedExecutablePath,
+    evidence?.nativeExecutablePath,
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    const clean = String(candidate || "")
+      .split(/[?#]/, 1)[0]
+      .replaceAll("/", "\\")
+      .trim()
+      .toLowerCase();
+
+    const ext = path.extname(clean);
+    if (ext) return ext;
+  }
+
+  return "";
+}
+
+function capFindingSeverityForArtifact(severity, artifactType, artifactValue, evidence = {}) {
+  const normalized = normalizeSeverity(severity);
+  const extension = artifactFileExtension(artifactValue, evidence);
+
+  // DLLs are libraries, not standalone proof of a cheat. A DLL may be useful
+  // correlation context, but must never reach the critical/high bucket by
+  // filename, deletion history, download origin or catalog match alone.
+  // Strong module/memory evidence remains visible for human review as medium.
+  if (extension === ".dll" && ["high", "critical"].includes(normalized)) {
+    return "medium";
+  }
+
+  return normalized;
+}
+
 function forceInformationalFinding(artifactType, evidence = {}, title = "") {
   if (artifactType === "powershell" || artifactType === "powershell_artifact")
     return true;
@@ -2555,7 +2600,12 @@ async function rebuildFindings(analysisId, report) {
         rule.name
       )
         ? "info"
-        : normalizeSeverity(rule.severity);
+        : capFindingSeverityForArtifact(
+            rule.severity,
+            artifact.type,
+            artifact.value,
+            artifact.evidence
+          );
 
       await pool.query(
         `INSERT INTO scan_findings(
@@ -2642,7 +2692,12 @@ async function insertReviewFinding(
     title
   )
     ? "info"
-    : normalizeSeverity(severity);
+    : capFindingSeverityForArtifact(
+        severity,
+        artifactType,
+        normalizedValue,
+        evidence || {}
+      );
 
   await pool.query(
     `INSERT INTO scan_findings(
@@ -3329,10 +3384,33 @@ async function addBuiltInReviewFindings(analysisId, report) {
       catalogMatches.length > 0;
 
     const recentRandomExecutable =
+      extension === ".exe" &&
       looksRandomExecutableName(name) &&
       !isGenericInstallerExecutableName(name) &&
       !hasReadableExecutableToken(name) &&
       ageDays(item.timestampUtc) <= 3;
+
+    // DLL deletion/name alone is not a critical anti-cheat signal. Keep it
+    // available for Gemini/human correlation, but never promote it to red/high.
+    if (extension === ".dll") {
+      if (strongMatch || removable || executed) {
+        await insertReviewFinding(
+          analysisId,
+          "DLL apagada para correlação",
+          "medium",
+          "usn_delete",
+          name || item.volume || "DLL apagada",
+          {
+            ...item,
+            catalogMatches,
+            executionConfirmed: executed,
+            confidence: "medium",
+            note: "DLL registrada pelo USN. DLL por si só não prova cheat e nunca é promovida para crítico/alto; mantida apenas para correlação com carregamento em processo, origem e outras evidências."
+          }
+        );
+      }
+      continue;
+    }
 
     // Deleted/present EXEs are not detections unless there is independent
     // proof they actually executed. Keep them blue for catalog/inventory.
