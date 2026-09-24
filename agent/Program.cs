@@ -1,8 +1,12 @@
 using Microsoft.Win32;
 using System.Diagnostics;
 using System.Management;
+using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.IO.Compression;
 using System.Security.Cryptography;
+using System.Text;
 using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -46,7 +50,7 @@ internal static class Program
             using var http = new HttpClient
             {
                 BaseAddress = new Uri(config.ServerUrl.TrimEnd('/') + "/"),
-                Timeout = TimeSpan.FromSeconds(45)
+                Timeout = TimeSpan.FromSeconds(120)
             };
 
             RulesResponse rulesPayload =
@@ -455,19 +459,55 @@ internal static class Program
                 Errors = errors
             };
 
-            ReportStatus("Enviando os dados para análise...");
+            ReportStatus("Preparando os dados para envio...");
+            CompactLowValueTelemetry(report, aggressive: false);
+
+            string reportRoute =
+                $"api/agent/{Uri.EscapeDataString(config.Token)}/report";
 
             HttpResponseMessage response =
-                await http.PostAsJsonAsync(
-                    $"api/agent/{Uri.EscapeDataString(config.Token)}/report",
-                    report,
-                    JsonOptions);
+                await SendCompressedReportAsync(
+                    http,
+                    reportRoute,
+                    report);
 
-            if (!response.IsSuccessStatusCode)
+            if (!response.IsSuccessStatusCode &&
+                IsRetryableUploadStatus(response.StatusCode))
             {
-                string body = await response.Content.ReadAsStringAsync();
-                ReportStatus($"Falha ao enviar os dados: {(int)response.StatusCode}");
-                return 3;
+                ReportStatus(
+                    $"Servidor respondeu {(int)response.StatusCode}. Reduzindo telemetria bruta e tentando novamente...");
+
+                response.Dispose();
+
+                CompactLowValueTelemetry(report, aggressive: true);
+
+                await Task.Delay(TimeSpan.FromSeconds(2));
+
+                response =
+                    await SendCompressedReportAsync(
+                        http,
+                        reportRoute,
+                        report);
+            }
+
+            using (response)
+            {
+                if (!response.IsSuccessStatusCode)
+                {
+                    string body = await response.Content.ReadAsStringAsync();
+
+                    ReportStatus(
+                        $"Falha ao enviar os dados: {(int)response.StatusCode}");
+
+                    if (!string.IsNullOrWhiteSpace(body))
+                    {
+                        ReportStatus(
+                            "Resposta do servidor: " +
+                            body.Trim().Replace("\r", " ").Replace("\n", " "));
+                    }
+
+                    return 3;
+                }
             }
 
             ReportStatus("Dados enviados para análise com sucesso.");
@@ -632,6 +672,192 @@ internal static class Program
             await http.PostAsJsonAsync(route, body, JsonOptions);
 
         response.EnsureSuccessStatusCode();
+    }
+
+    private static bool IsRetryableUploadStatus(HttpStatusCode statusCode)
+    {
+        return statusCode is
+            HttpStatusCode.RequestTimeout or
+            HttpStatusCode.RequestEntityTooLarge or
+            HttpStatusCode.BadGateway or
+            HttpStatusCode.ServiceUnavailable or
+            HttpStatusCode.GatewayTimeout or
+            HttpStatusCode.TooManyRequests;
+    }
+
+    private static void CompactLowValueTelemetry(
+        ScanReport report,
+        bool aggressive)
+    {
+        int originalUsnCount =
+            report.UsnActivity?.Count ?? 0;
+
+        if (originalUsnCount == 0)
+            return;
+
+        int maxRows =
+            aggressive ? 450 : 1800;
+
+        DateTime recentCutoff =
+            DateTime.UtcNow.AddDays(
+                aggressive ? -3 : -10);
+
+        static bool IsExecutionRelevant(
+            UsnActivityRecord item)
+        {
+            string extension =
+                (item.Extension ?? "").ToLowerInvariant();
+
+            return extension is
+                ".exe" or
+                ".com" or
+                ".scr" or
+                ".dll" or
+                ".sys" or
+                ".msi";
+        }
+
+        List<UsnActivityRecord> important =
+            report.UsnActivity
+                .Where(item =>
+                    item.DriveType.Equals(
+                        "Removable",
+                        StringComparison.OrdinalIgnoreCase) ||
+                    item.UnderPrefetchDirectory ||
+                    item.BrowserDatabase ||
+                    item.WindowsForensicArtifact ||
+                    (
+                        item.Deleted &&
+                        IsExecutionRelevant(item)
+                    ) ||
+                    (
+                        IsExecutionRelevant(item) &&
+                        item.TimestampUtc >= recentCutoff
+                    ))
+                .OrderByDescending(
+                    item => item.TimestampUtc)
+                .ToList();
+
+        HashSet<string> seen =
+            new(StringComparer.OrdinalIgnoreCase);
+
+        var compacted =
+            new List<UsnActivityRecord>(
+                Math.Min(maxRows, originalUsnCount));
+
+        void TryAdd(
+            UsnActivityRecord item)
+        {
+            if (compacted.Count >= maxRows)
+                return;
+
+            string key =
+                $"{item.Volume}|{item.FileName}|{item.TimestampUtc:O}|{item.ReasonMask}";
+
+            if (seen.Add(key))
+                compacted.Add(item);
+        }
+
+        foreach (UsnActivityRecord item in important)
+            TryAdd(item);
+
+        if (compacted.Count < maxRows)
+        {
+            foreach (
+                UsnActivityRecord item
+                in report.UsnActivity
+                    .OrderByDescending(
+                        item => item.TimestampUtc))
+            {
+                TryAdd(item);
+
+                if (compacted.Count >= maxRows)
+                    break;
+            }
+        }
+
+        report.UsnActivity = compacted;
+
+        if (originalUsnCount > compacted.Count)
+        {
+            string note =
+                $"JournalTrace compactado para envio: {originalUsnCount} -> {compacted.Count} registros. " +
+                "Arquivos apagados relevantes continuam preservados no coletor dedicado de USN.";
+
+            if (!report.Errors.Contains(note))
+                report.Errors.Add(note);
+
+            ReportStatus(note);
+        }
+    }
+
+    private static async Task<HttpResponseMessage> SendCompressedReportAsync(
+        HttpClient http,
+        string route,
+        ScanReport report)
+    {
+        byte[] json =
+            JsonSerializer.SerializeToUtf8Bytes(
+                report,
+                JsonOptions);
+
+        byte[] compressed;
+
+        using (
+            var output =
+                new MemoryStream())
+        {
+            using (
+                var gzip =
+                    new GZipStream(
+                        output,
+                        CompressionLevel.Fastest,
+                        leaveOpen: true))
+            {
+                await gzip.WriteAsync(json);
+            }
+
+            compressed =
+                output.ToArray();
+        }
+
+        double sourceMb =
+            json.Length / 1024d / 1024d;
+
+        double compressedMb =
+            compressed.Length / 1024d / 1024d;
+
+        ReportStatus(
+            $"Enviando relatório: {sourceMb:F1} MB -> {compressedMb:F1} MB compactado.");
+
+        var request =
+            new HttpRequestMessage(
+                HttpMethod.Post,
+                route);
+
+        var content =
+            new ByteArrayContent(
+                compressed);
+
+        content.Headers.ContentType =
+            new MediaTypeHeaderValue(
+                "application/json");
+
+        content.Headers.ContentEncoding.Add(
+            "gzip");
+
+        request.Content = content;
+
+        try
+        {
+            return await http.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead);
+        }
+        finally
+        {
+            request.Dispose();
+        }
     }
 
     private static List<T> SafeCollect<T>(
