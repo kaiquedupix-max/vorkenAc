@@ -2264,7 +2264,10 @@ async function addBuiltInReviewFindings(analysisId, report) {
     let title = "";
 
     if (
-      item.randomLikeName === true ||
+      (
+        recoveredFileName &&
+        looksRandomExecutableName(recoveredFileName)
+      ) ||
       item.deceptiveDoubleExtension === true
     ) {
       severity = "critical";
@@ -2340,8 +2343,9 @@ async function addBuiltInReviewFindings(analysisId, report) {
       catalogMatches.length > 0;
 
     const recentRandomExecutable =
-      item.randomLikeName === true &&
+      looksRandomExecutableName(name) &&
       !isGenericInstallerExecutableName(name) &&
+      !hasReadableExecutableToken(name) &&
       ageDays(item.timestampUtc) <= 3;
 
     // Deleted/present EXEs are not detections unless there is independent
@@ -2446,7 +2450,7 @@ async function addBuiltInReviewFindings(analysisId, report) {
         /^[a-f0-9]{64}$/i.test(String(item.sha256 || "")) &&
         (
           isSuspiciousUserPath(item.path) ||
-          item.randomLikeName === true
+          looksRandomExecutableName(item.name || item.path)
         )
       )
       .slice(0, 20);
@@ -2488,7 +2492,10 @@ async function addBuiltInReviewFindings(analysisId, report) {
     if (isKnownBenignPeNoise(pathValue))
       continue;
 
-    if (item.randomLikeName === true && item.signed !== true) {
+    if (
+      looksRandomExecutableName(pathValue) &&
+      item.signed !== true
+    ) {
       await insertReviewFinding(
         analysisId,
         "Executável aleatório com indicadores PE",
@@ -3306,8 +3313,8 @@ async function addBuiltInReviewFindings(analysisId, report) {
     const isRandomExe =
       ext === ".exe" &&
       !isGenericInstallerExecutableName(item.name || item.path) &&
-      (item.randomLikeName === true ||
-       looksRandomExecutableName(item.name || item.path)) &&
+      !hasReadableExecutableToken(item.name || item.path) &&
+      looksRandomExecutableName(item.name || item.path) &&
       item.signed !== true &&
       isSuspiciousUserPath(item.path);
 
