@@ -582,7 +582,7 @@ internal static class Program
             var match =
                 System.Text.RegularExpressions.Regex.Match(
                     executableName,
-                    @"--(?<token>[A-Za-z0-9_-]{20,80})\.exe$",
+                    @"--(?<token>[A-Za-z0-9_-]{20,80})(?: \(\d+\))?\.exe$",
                     System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
             if (match.Success)
