@@ -1413,39 +1413,6 @@ async function addBuiltInReviewFindings(analysisId, report) {
     );
   }
 
-  for (const item of report.browserHistorySignals || []) {
-    await addCatalogFindings(
-      "browser_history",
-      item.searchQuery || item.url || item.host,
-      item,
-      [
-        item.url,
-        item.host,
-        item.title,
-        item.searchQuery,
-        item.matchedTerms
-      ]
-    );
-  }
-
-  for (const item of report.browserRecoveredArtifacts || []) {
-    if (item.recoveredUrl && isKnownBenignWebHost(item.recoveredUrl))
-      continue;
-
-    // Recovered raw SQLite records must be matched only against the
-    // recovered candidate itself. Older agents could carry catalogMatches
-    // polluted by unrelated strings from the same SQLite page.
-    await addCatalogFindings(
-      "browser_recovery",
-      item.recoveredUrl || item.recoveredFileName || item.sourceArtifact,
-      item,
-      [
-        item.recoveredUrl,
-        item.recoveredFileName
-      ]
-    );
-  }
-
   for (const item of report.deletedUsnRecords || []) {
     await addCatalogFindings(
       "usn_delete",
