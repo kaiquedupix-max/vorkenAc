@@ -151,10 +151,12 @@
         <div class="page-head">
           <div><div class="eyebrow">RELATÓRIO</div><h2 id="reportTitle">Análise</h2></div>
           <div>
-            <button id="rebuildFindingsBtn" class="button ghost" type="button">Recalcular achados</button>
+            <button id="rebuildFindingsBtn" class="button ghost" type="button">Recalcular com IA</button>
+            <button id="toggleAiViewBtn" class="button ghost" type="button">Ver resultado sem IA</button>
             <button id="closeReportBtn" class="button ghost" type="button">Fechar</button>
           </div>
         </div>
+        <div id="analysisProcessingBanner" class="message hidden"></div>
         <div id="reportMetrics" class="metric-grid report-summary-grid"></div>
 
         <details class="report-section report-meta-details">
@@ -338,6 +340,6 @@
     </section>
   </main>
 
-  <script src="/admin.js?v=20260924-ai1"></script>
+  <script src="/admin.js?v=20260924-ai2"></script>
 </body>
 </html>
