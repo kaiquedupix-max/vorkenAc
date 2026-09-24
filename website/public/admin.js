@@ -278,6 +278,7 @@ function processingStageLabel(stage, status) {
     ai_filter: "Filtrando falsos positivos com IA",
     finalizing: "Preparando resultado final",
     completed: "Concluído com IA",
+    needs_ai: "Pendente de filtro IA",
     ai_error: "IA indisponível · resultado técnico",
   };
 
@@ -286,6 +287,7 @@ function processingStageLabel(stage, status) {
 
 function processingStageTag(stage, status) {
   if (stage === "completed") return "low";
+  if (stage === "needs_ai") return "medium";
   if (stage === "ai_error") return "high";
   if (stage === "ai_filter") return "medium";
   if (
@@ -663,9 +665,6 @@ async function openReport(id) {
   const analysis = data.analysis || {};
   const report = data.report || null;
   const aiFilteredFindings = safeArray(data.aiFilteredFindings);
-  const aiFilteredIds = new Set(
-    aiFilteredFindings.map((item) => String(item.id))
-  );
   const postAiFindings = safeArray(data.findings);
   const findings = showWithoutAiResult
     ? [
@@ -838,6 +837,7 @@ async function openReport(id) {
   const aiStatusLabel = {
     completed: "Concluída",
     running: "Em andamento",
+    partial_error: "Parcial · alguns lotes falharam",
     disabled: "Desativada",
     not_configured: "Não configurada",
     error: "Falhou · usando filtro normal",
@@ -869,8 +869,13 @@ async function openReport(id) {
 
       const evidence = finding.evidence || {};
       const ai = finding.ai_review || null;
-      const filteredByAi = ai?.verdict === "likely_false_positive";
-      const displaySeverity = filteredByAi ? "info" : (finding.severity || "info");
+      const filteredByAi =
+        !showWithoutAiResult &&
+        ai?.verdict === "likely_false_positive";
+      const displaySeverity =
+        filteredByAi
+          ? "info"
+          : (finding.severity || "info");
       element.className = "finding severity-card " + escapeHtml(displaySeverity);
 
       const catalogName = evidence.catalogMatch?.name
@@ -947,15 +952,19 @@ async function openReport(id) {
         : "");
 
   aiStatusBox.textContent =
-    aiReview.status === "completed"
-      ? "Segunda camada concluída. A lista principal já está filtrada pela IA."
-      : aiReview.status === "error"
-        ? "A revisão por IA falhou nesta análise. O Vorken manteve o resultado do filtro normal."
-        : aiReview.status === "disabled"
-          ? "Filtro por IA desativado. Resultado exibido somente pelo motor normal."
-          : aiReview.status === "not_configured"
-            ? "Filtro por IA ainda não está configurado no servidor."
-            : "Revisão por IA pendente ou em andamento.";
+    showWithoutAiResult
+      ? "Modo sem IA ativo: a lista principal mostra o resultado original do filtro técnico."
+      : aiReview.status === "completed"
+        ? "Segunda camada concluída. A lista principal já está filtrada pela IA."
+        : aiReview.status === "partial_error"
+          ? "A IA revisou parte dos achados, mas alguns lotes falharam. Os itens não revisados continuam visíveis."
+          : aiReview.status === "error"
+            ? "A revisão por IA falhou nesta análise. O Vorken manteve o resultado do filtro normal."
+            : aiReview.status === "disabled"
+              ? "Filtro por IA desativado. Resultado exibido somente pelo motor normal."
+              : aiReview.status === "not_configured"
+                ? "Filtro por IA ainda não está configurado no servidor."
+                : "Revisão por IA pendente ou em andamento.";
 
   renderFindings(
     "aiFilteredFindingsList",
@@ -1748,6 +1757,7 @@ async function openReport(id) {
   const prioritySeen = new Set();
   const priorityUnique = priorityFiles
     .filter((item) =>
+      showWithoutAiResult ||
       !wasFilteredByAi(
         item.name,
         item.path
