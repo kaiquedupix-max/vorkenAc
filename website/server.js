@@ -4,7 +4,6 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import archiver from "archiver";
 import pg from "pg";
 
 const { Pool } = pg;
@@ -2347,11 +2346,12 @@ app.get("/api/public/analyses/:token", async (req, res) => {
       startedAt: analysis.started_at,
       finishedAt: analysis.finished_at,
     },
-    packageUrl: "/api/public/analyses/" + token + "/package",
+    downloadUrl: "/api/public/analyses/" + token + "/download",
+    packageUrl: "/api/public/analyses/" + token + "/download",
   });
 });
 
-app.get("/api/public/analyses/:token/package", async (req, res) => {
+app.get("/api/public/analyses/:token/download", async (req, res) => {
   const token = String(req.params.token || "");
   if (!validToken(token)) return res.status(404).send("Análise não encontrada.");
 
@@ -2364,29 +2364,34 @@ app.get("/api/public/analyses/:token/package", async (req, res) => {
     );
   }
 
-  const config = JSON.stringify({
-    token,
-    serverUrl: publicUrl,
-    analysisLabel: analysis.label,
-  }, null, 2);
+  const binary = fs.readFileSync(agentBinaryPath);
+  const sha256 = crypto
+    .createHash("sha256")
+    .update(binary)
+    .digest("hex");
 
-  res.setHeader("Content-Type", "application/zip");
+  const fileName =
+    "Vorken-" + analysis.id + "--" + token + ".exe";
+
+  res.setHeader(
+    "Content-Type",
+    "application/vnd.microsoft.portable-executable"
+  );
   res.setHeader(
     "Content-Disposition",
-    'attachment; filename="Vorken-' + analysis.id + '.zip"'
+    'attachment; filename="' + fileName + '"'
   );
+  res.setHeader("Content-Length", String(binary.length));
+  res.setHeader("Cache-Control", "private, no-store");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Vorken-SHA256", sha256);
+  res.end(binary);
+});
 
-  const zip = archiver("zip", { zlib: { level: 9 } });
-  zip.on("error", (error) => {
-    console.error(error);
-    if (!res.headersSent) res.status(500).end();
-    else res.destroy(error);
-  });
-
-  zip.pipe(res);
-  zip.file(agentBinaryPath, { name: "Vorken.Agent.exe" });
-  zip.append(config, { name: "vorken-analysis.json" });
-  zip.finalize();
+app.get("/api/public/analyses/:token/package", (req, res) => {
+  const token = String(req.params.token || "");
+  if (!validToken(token)) return res.status(404).send("Análise não encontrada.");
+  res.redirect(302, "/api/public/analyses/" + token + "/download");
 });
 
 app.get("/api/agent/:token/rules", async (req, res) => {
