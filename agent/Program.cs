@@ -58,7 +58,10 @@ internal static class Program
                 Timeout = TimeSpan.FromSeconds(45)
             };
 
-            var rules = await LoadRulesAsync(http, config.Token);
+            RulesResponse rulesPayload =
+                await LoadRulesAsync(http, config.Token);
+
+            var rules = rulesPayload.Rules;
 
             string machineFingerprint =
                 EchoEnvironmentCollector.ComputeMachineFingerprint();
@@ -251,7 +254,8 @@ internal static class Program
 
             List<BrowserHistoryRecord> browserHistorySignals = SafeCollect(
                 "Histórico suspeito de navegação",
-                BrowserHistoryCollector.CollectSuspicious,
+                () => BrowserHistoryCollector.CollectSuspicious(
+                    rulesPayload.ThreatCatalog),
                 errors);
 
             List<ExtensionMismatchRecord> extensionMismatches = SafeCollect(
@@ -439,7 +443,7 @@ internal static class Program
         };
     }
 
-    private static async Task<List<DetectionRule>> LoadRulesAsync(HttpClient http, string token)
+    private static async Task<RulesResponse> LoadRulesAsync(HttpClient http, string token)
     {
         using HttpResponseMessage response =
             await http.GetAsync($"api/agent/{Uri.EscapeDataString(token)}/rules");
@@ -449,7 +453,7 @@ internal static class Program
         RulesResponse? payload =
             await response.Content.ReadFromJsonAsync<RulesResponse>(JsonOptions);
 
-        return payload?.Rules ?? new List<DetectionRule>();
+        return payload ?? new RulesResponse();
     }
 
     private static async Task PostJsonAsync(HttpClient http, string route, object body)
@@ -1234,6 +1238,16 @@ internal sealed class RulesResponse
 {
     public long AnalysisId { get; set; }
     public List<DetectionRule> Rules { get; set; } = new();
+    public List<RustThreatIndicator> ThreatCatalog { get; set; } = new();
+}
+
+internal sealed class RustThreatIndicator
+{
+    public string Name { get; set; } = "";
+    public List<string> Aliases { get; set; } = new();
+    public List<string> Domains { get; set; } = new();
+    public List<string> DiscordInvites { get; set; } = new();
+    public string Severity { get; set; } = "high";
 }
 
 internal sealed class DetectionRule
