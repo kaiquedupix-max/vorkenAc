@@ -11,25 +11,25 @@ internal static class AutorunIntegrityCollector
         var result = new List<AutorunIntegrityRecord>();
 
         CollectRunKey(
-            Registry.CurrentUser,
+            Microsoft.Win32.Registry.CurrentUser,
             @"Software\Microsoft\Windows\CurrentVersion\Run",
             "HKCU Run",
             result);
 
         CollectRunKey(
-            Registry.CurrentUser,
+            Microsoft.Win32.Registry.CurrentUser,
             @"Software\Microsoft\Windows\CurrentVersion\RunOnce",
             "HKCU RunOnce",
             result);
 
         CollectRunKey(
-            Registry.LocalMachine,
+            Microsoft.Win32.Registry.LocalMachine,
             @"Software\Microsoft\Windows\CurrentVersion\Run",
             "HKLM Run",
             result);
 
         CollectRunKey(
-            Registry.LocalMachine,
+            Microsoft.Win32.Registry.LocalMachine,
             @"Software\Microsoft\Windows\CurrentVersion\RunOnce",
             "HKLM RunOnce",
             result);
