@@ -47,6 +47,19 @@ function safeExternalUrl(value) {
   }
 }
 
+function safeArray(value) {
+  return Array.isArray(value) ? value.filter(Boolean) : [];
+}
+
+async function openReportSafe(id) {
+  try {
+    await openReport(id);
+  } catch (error) {
+    console.error("Falha ao abrir relatório", error);
+    alert("Erro ao abrir relatório: " + (error?.message || "erro desconhecido"));
+  }
+}
+
 function statusLabel(status) {
   const map = {
     waiting: "Aguardando",
@@ -232,55 +245,67 @@ async function loadAnalyses() {
   }
 
   document.querySelectorAll(".open-report").forEach((button) => {
-    button.addEventListener("click", () => openReport(button.dataset.id));
+    button.addEventListener("click", async () => {
+      await openReportSafe(button.dataset.id);
+    });
   });
 }
 
 async function openReport(id) {
   currentReportId = id;
+
   const data = await api("/api/admin/analyses/" + encodeURIComponent(id));
-  const { analysis, report, findings, relatedAnalyses = [] } = data;
-  const payload = report?.payload || {};
+  const analysis = data.analysis || {};
+  const report = data.report || null;
+  const findings = safeArray(data.findings);
+  const relatedAnalyses = safeArray(data.relatedAnalyses);
+  const payload = report?.payload && typeof report.payload === "object"
+    ? report.payload
+    : {};
+
+  // Abre o cartão antes de montar as seções pesadas. Assim um erro em uma
+  // seção específica não faz o botão parecer que "não funciona".
+  reportCard.classList.remove("hidden");
 
   document.getElementById("reportTitle").textContent =
     "#" + analysis.id + " · " + analysis.label;
 
   const arrays = {
-    usbCurrent: payload.usbCurrent || [],
-    usbHistory: payload.usbHistory || [],
-    usbTimeline: payload.usbTimeline || [],
-    serialDevices: payload.serialDevices || [],
-    processes: payload.processes || [],
-    prefetch: payload.prefetch || [],
-    prefetchExecutions: payload.prefetchExecutions || [],
-    services: payload.services || [],
-    drivers: payload.drivers || [],
-    startup: payload.startup || [],
-    files: payload.files || [],
-    bam: payload.bam || [],
-    userAssist: payload.userAssist || [],
-    muiCache: payload.muiCache || [],
-    pca: payload.pca || [],
-    amcache: payload.amcache || [],
-    shimCache: payload.shimCache || [],
-    setupApiUsb: payload.setupApiUsb || [],
-    powerShellHits: payload.powerShellHits || [],
-    prefetchIntegrity: payload.prefetchIntegrity || [],
-    hiddenVolumes: payload.hiddenVolumes || [],
-    logClearSignals: payload.logClearSignals || [],
-    processCreationEvents: payload.processCreationEvents || [],
-    defenderDetections: payload.defenderDetections || [],
-    recentShortcuts: payload.recentShortcuts || [],
-    recycleBin: payload.recycleBin || [],
-    browserDownloads: payload.browserDownloads || [],
-    browserHistorySignals: payload.browserHistorySignals || [],
-    extensionMismatches: payload.extensionMismatches || [],
-    defenderExclusions: payload.defenderExclusions || [],
-    bootIntegrity: payload.bootIntegrity || [],
-    systemTimeChanges: payload.systemTimeChanges || [],
-    virtualDisks: payload.virtualDisks || [],
-    rustModules: payload.rustModules || [],
-    usnJournalState: payload.usnJournalState || [],
+    usbCurrent: safeArray(payload.usbCurrent),
+    usbHistory: safeArray(payload.usbHistory),
+    usbTimeline: safeArray(payload.usbTimeline),
+    serialDevices: safeArray(payload.serialDevices),
+    processes: safeArray(payload.processes),
+    prefetch: safeArray(payload.prefetch),
+    prefetchExecutions: safeArray(payload.prefetchExecutions),
+    services: safeArray(payload.services),
+    drivers: safeArray(payload.drivers),
+    startup: safeArray(payload.startup),
+    files: safeArray(payload.files),
+    bam: safeArray(payload.bam),
+    userAssist: safeArray(payload.userAssist),
+    muiCache: safeArray(payload.muiCache),
+    pca: safeArray(payload.pca),
+    amcache: safeArray(payload.amcache),
+    shimCache: safeArray(payload.shimCache),
+    setupApiUsb: safeArray(payload.setupApiUsb),
+    powerShellHits: safeArray(payload.powerShellHits),
+    prefetchIntegrity: safeArray(payload.prefetchIntegrity),
+    hiddenVolumes: safeArray(payload.hiddenVolumes),
+    logClearSignals: safeArray(payload.logClearSignals),
+    processCreationEvents: safeArray(payload.processCreationEvents),
+    defenderDetections: safeArray(payload.defenderDetections),
+    recentShortcuts: safeArray(payload.recentShortcuts),
+    recycleBin: safeArray(payload.recycleBin),
+    browserDownloads: safeArray(payload.browserDownloads),
+    browserHistorySignals: safeArray(payload.browserHistorySignals),
+    extensionMismatches: safeArray(payload.extensionMismatches),
+    defenderExclusions: safeArray(payload.defenderExclusions),
+    bootIntegrity: safeArray(payload.bootIntegrity),
+    systemTimeChanges: safeArray(payload.systemTimeChanges),
+    virtualDisks: safeArray(payload.virtualDisks),
+    rustModules: safeArray(payload.rustModules),
+    usnJournalState: safeArray(payload.usnJournalState),
   };
 
   const disconnectedUsb =
@@ -408,7 +433,9 @@ async function openReport(id) {
     : '<div class="message">Nenhuma análise anterior associada a este fingerprint.</div>';
 
   document.querySelectorAll(".open-related-report").forEach((button) => {
-    button.addEventListener("click", () => openReport(button.dataset.id));
+    button.addEventListener("click", async () => {
+      await openReportSafe(button.dataset.id);
+    });
   });
 
   const disconnected = arrays.usbHistory.filter((item) => item.present === false);
@@ -1093,7 +1120,6 @@ async function openReport(id) {
   document.getElementById("rawReport").textContent =
     JSON.stringify(payload, null, 2);
 
-  reportCard.classList.remove("hidden");
   reportCard.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
