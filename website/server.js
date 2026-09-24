@@ -7117,6 +7117,64 @@ app.get("/api/public/analyses/:token", async (req, res) => {
   });
 });
 
+const ANALYSIS_TOKEN_SLOT =
+  "__VORKEN_ANALYSIS_TOKEN_SLOT__" +
+  "_".repeat(
+    128 -
+    "__VORKEN_ANALYSIS_TOKEN_SLOT__".length
+  );
+
+function personalizeAgentBinaryToken(binary, token) {
+  const slotBuffer =
+    Buffer.from(
+      ANALYSIS_TOKEN_SLOT,
+      "utf8"
+    );
+
+  const tokenText =
+    String(token || "").trim();
+
+  if (!validToken(tokenText)) {
+    throw new Error(
+      "Token de análise inválido para personalização do agente."
+    );
+  }
+
+  if (tokenText.length > slotBuffer.length) {
+    throw new Error(
+      "Token de análise excede o espaço reservado no agente."
+    );
+  }
+
+  const offset =
+    binary.indexOf(slotBuffer);
+
+  if (offset < 0) {
+    throw new Error(
+      "Slot de token não encontrado no Vorken Agent publicado."
+    );
+  }
+
+  const personalized =
+    Buffer.from(binary);
+
+  const replacement =
+    Buffer.from(
+      tokenText.padEnd(
+        slotBuffer.length,
+        " "
+      ),
+      "utf8"
+    );
+
+  replacement.copy(
+    personalized,
+    offset
+  );
+
+  return personalized;
+}
+
 app.get("/api/public/analyses/:token/download", async (req, res) => {
   const token = String(req.params.token || "");
   if (!validToken(token)) return res.status(404).send("Análise não encontrada.");
@@ -7130,11 +7188,31 @@ app.get("/api/public/analyses/:token/download", async (req, res) => {
     );
   }
 
-  const binary = fs.readFileSync(agentBinaryPath);
-  const verification = getAgentVerification();
-  const sha256 = verification.sha256 || crypto
+  const binary =
+    fs.readFileSync(agentBinaryPath);
+
+  let personalizedBinary;
+
+  try {
+    personalizedBinary =
+      personalizeAgentBinaryToken(
+        binary,
+        token
+      );
+  } catch (error) {
+    console.error(
+      "Falha ao personalizar Vorken Agent:",
+      error
+    );
+
+    return res.status(503).send(
+      "O Vorken Agent publicado precisa ser recompilado antes de gerar esta análise."
+    );
+  }
+
+  const sha256 = crypto
     .createHash("sha256")
-    .update(binary)
+    .update(personalizedBinary)
     .digest("hex");
 
   const clientName =
@@ -7165,11 +7243,14 @@ app.get("/api/public/analyses/:token/download", async (req, res) => {
       '"; filename*=UTF-8\'\'' +
       encodeURIComponent(fileName)
   );
-  res.setHeader("Content-Length", String(binary.length));
+  res.setHeader(
+    "Content-Length",
+    String(personalizedBinary.length)
+  );
   res.setHeader("Cache-Control", "private, no-store");
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Vorken-SHA256", sha256);
-  res.end(binary);
+  res.end(personalizedBinary);
 });
 
 app.get("/api/public/analyses/:token/package", (req, res) => {
