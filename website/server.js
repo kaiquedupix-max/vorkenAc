@@ -4806,13 +4806,28 @@ app.get("/api/admin/analyses", requireAdmin, async (_req, res) => {
     FROM analyses a
     LEFT JOIN (
       SELECT
-        analysis_id,
-        COUNT(DISTINCT LOWER(artifact_type) || '|' || LOWER(TRIM(artifact_value)))
-          FILTER (WHERE severity IN ('high','critical')) AS total_findings,
-        COUNT(DISTINCT LOWER(artifact_type) || '|' || LOWER(TRIM(artifact_value)))
-          FILTER (WHERE severity IN ('high','critical')) AS high_findings
-      FROM scan_findings
-      GROUP BY analysis_id
+        sf.analysis_id,
+        COUNT(DISTINCT LOWER(sf.artifact_type) || '|' || LOWER(TRIM(sf.artifact_value)))
+          FILTER (
+            WHERE sf.severity IN ('high','critical')
+              AND (
+                sf.evidence->>'priorityMaximum' = 'true'
+                OR ar.verdict IS DISTINCT FROM 'likely_false_positive'
+              )
+          ) AS total_findings,
+        COUNT(DISTINCT LOWER(sf.artifact_type) || '|' || LOWER(TRIM(sf.artifact_value)))
+          FILTER (
+            WHERE sf.severity IN ('high','critical')
+              AND (
+                sf.evidence->>'priorityMaximum' = 'true'
+                OR ar.verdict IS DISTINCT FROM 'likely_false_positive'
+              )
+          ) AS high_findings
+      FROM scan_findings sf
+      LEFT JOIN ai_finding_reviews ar
+        ON ar.analysis_id = sf.analysis_id
+       AND ar.finding_id = sf.id
+      GROUP BY sf.analysis_id
     ) f ON f.analysis_id = a.id
     ORDER BY a.id DESC
     LIMIT 500
@@ -4866,18 +4881,71 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
   }
 
   const findingsResult = await pool.query(
-    `SELECT id, rule_id, title, severity, artifact_type, artifact_value, evidence, created_at
-     FROM scan_findings
-     WHERE analysis_id = $1
+    `SELECT
+       sf.id,
+       sf.rule_id,
+       sf.title,
+       sf.severity,
+       sf.artifact_type,
+       sf.artifact_value,
+       sf.evidence,
+       sf.created_at,
+       CASE
+         WHEN ar.id IS NULL THEN NULL
+         ELSE json_build_object(
+           'verdict', ar.verdict,
+           'confidence', ar.confidence,
+           'reason', ar.reason,
+           'model', ar.model,
+           'cached', ar.cached
+         )
+       END AS ai_review
+     FROM scan_findings sf
+     LEFT JOIN ai_finding_reviews ar
+       ON ar.analysis_id = sf.analysis_id
+      AND ar.finding_id = sf.id
+     WHERE sf.analysis_id = $1
+       AND (
+         sf.evidence->>'priorityMaximum' = 'true'
+         OR ar.verdict IS DISTINCT FROM 'likely_false_positive'
+       )
      ORDER BY
-       CASE severity
+       CASE sf.severity
          WHEN 'critical' THEN 5
          WHEN 'high' THEN 4
          WHEN 'medium' THEN 3
          WHEN 'low' THEN 2
          ELSE 1
        END DESC,
-       id ASC`,
+       sf.id ASC`,
+    [id]
+  );
+
+  const aiFilteredResult = await pool.query(
+    `SELECT
+       sf.id,
+       sf.rule_id,
+       sf.title,
+       sf.severity,
+       sf.artifact_type,
+       sf.artifact_value,
+       sf.evidence,
+       sf.created_at,
+       json_build_object(
+         'verdict', ar.verdict,
+         'confidence', ar.confidence,
+         'reason', ar.reason,
+         'model', ar.model,
+         'cached', ar.cached
+       ) AS ai_review
+     FROM scan_findings sf
+     JOIN ai_finding_reviews ar
+       ON ar.analysis_id = sf.analysis_id
+      AND ar.finding_id = sf.id
+     WHERE sf.analysis_id = $1
+       AND ar.verdict = 'likely_false_positive'
+       AND COALESCE(sf.evidence->>'priorityMaximum', 'false') <> 'true'
+     ORDER BY sf.id ASC`,
     [id]
   );
 
@@ -4909,6 +4977,13 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
     analysis,
     report: reportResult.rows[0] || null,
     findings: findingsResult.rows,
+    aiFilteredFindings: aiFilteredResult.rows,
+    aiReview: {
+      status: analysis.ai_review_status || "pending",
+      error: analysis.ai_review_error || null,
+      reviewedAt: analysis.ai_reviewed_at || null,
+      configured: aiReviewAvailable(),
+    },
     relatedAnalyses,
   });
 });
@@ -4947,19 +5022,46 @@ app.post("/api/admin/analyses/:id/rebuild", requireAdmin, async (req, res) => {
 
   const countResult = await pool.query(
     `SELECT
-       COUNT(DISTINCT LOWER(artifact_type) || '|' || LOWER(TRIM(artifact_value)))
-         FILTER (WHERE severity IN ('high','critical'))::int AS total,
-       COUNT(DISTINCT LOWER(artifact_type) || '|' || LOWER(TRIM(artifact_value)))
-         FILTER (WHERE severity IN ('high','critical'))::int AS high
-     FROM scan_findings
-     WHERE analysis_id=$1`,
+       COUNT(DISTINCT LOWER(sf.artifact_type) || '|' || LOWER(TRIM(sf.artifact_value)))
+         FILTER (
+           WHERE sf.severity IN ('high','critical')
+             AND (
+               sf.evidence->>'priorityMaximum' = 'true'
+               OR ar.verdict IS DISTINCT FROM 'likely_false_positive'
+             )
+         )::int AS total,
+       COUNT(DISTINCT LOWER(sf.artifact_type) || '|' || LOWER(TRIM(sf.artifact_value)))
+         FILTER (
+           WHERE sf.severity IN ('high','critical')
+             AND (
+               sf.evidence->>'priorityMaximum' = 'true'
+               OR ar.verdict IS DISTINCT FROM 'likely_false_positive'
+             )
+         )::int AS high,
+       COUNT(*) FILTER (
+         WHERE ar.verdict='likely_false_positive'
+           AND COALESCE(sf.evidence->>'priorityMaximum','false') <> 'true'
+       )::int AS ai_filtered
+     FROM scan_findings sf
+     LEFT JOIN ai_finding_reviews ar
+       ON ar.analysis_id=sf.analysis_id
+      AND ar.finding_id=sf.id
+     WHERE sf.analysis_id=$1`,
     [id]
   );
 
   res.json({
     ok: true,
     findings: Number(countResult.rows[0]?.total || 0),
-    highFindings: Number(countResult.rows[0]?.high || 0)
+    highFindings: Number(countResult.rows[0]?.high || 0),
+    aiFiltered: Number(countResult.rows[0]?.ai_filtered || 0),
+    aiReviewStatus:
+      (
+        await pool.query(
+          "SELECT ai_review_status FROM analyses WHERE id=$1",
+          [id]
+        )
+      ).rows[0]?.ai_review_status || "pending"
   });
 });
 
