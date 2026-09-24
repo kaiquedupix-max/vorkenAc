@@ -114,6 +114,8 @@ function loadCommonAppCatalog() {
 
 const commonAppCatalog = loadCommonAppCatalog();
 
+const activeRebuilds = new Set();
+
 const AI_REVIEW_POLICY_VERSION = "v1";
 
 const aiReviewConfig = {
@@ -4994,10 +4996,47 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
   });
 });
 
+app.get("/api/admin/analyses/:id/rebuild-status", requireAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: "invalid_id" });
+  }
+
+  const result = await pool.query(
+    `SELECT
+       ai_review_status,
+       ai_review_error,
+       ai_reviewed_at
+     FROM analyses
+     WHERE id=$1
+     LIMIT 1`,
+    [id]
+  );
+
+  if (!result.rows[0]) {
+    return res.status(404).json({ error: "analysis_not_found" });
+  }
+
+  res.json({
+    processing: activeRebuilds.has(id),
+    aiReviewStatus: result.rows[0].ai_review_status || "pending",
+    aiReviewError: result.rows[0].ai_review_error || null,
+    aiReviewedAt: result.rows[0].ai_reviewed_at || null,
+  });
+});
+
 app.post("/api/admin/analyses/:id/rebuild", requireAdmin, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) {
     return res.status(400).json({ error: "invalid_id" });
+  }
+
+  if (activeRebuilds.has(id)) {
+    return res.status(202).json({
+      ok: true,
+      processing: true,
+      alreadyRunning: true,
+    });
   }
 
   const analysisResult = await pool.query(
@@ -5017,6 +5056,7 @@ app.post("/api/admin/analyses/:id/rebuild", requireAdmin, async (req, res) => {
   const report =
     decodeStoredRawReport(
       reportResult.rows[0]);
+
   if (!report) {
     return res.status(404).json({
       error: "report_not_found",
@@ -5024,50 +5064,62 @@ app.post("/api/admin/analyses/:id/rebuild", requireAdmin, async (req, res) => {
     });
   }
 
-  await rebuildFindings(id, report);
+  activeRebuilds.add(id);
 
-  const countResult = await pool.query(
-    `SELECT
-       COUNT(DISTINCT LOWER(sf.artifact_type) || '|' || LOWER(TRIM(sf.artifact_value)))
-         FILTER (
-           WHERE sf.severity IN ('high','critical')
-             AND (
-               sf.evidence->>'priorityMaximum' = 'true'
-               OR ar.verdict IS DISTINCT FROM 'likely_false_positive'
-             )
-         )::int AS total,
-       COUNT(DISTINCT LOWER(sf.artifact_type) || '|' || LOWER(TRIM(sf.artifact_value)))
-         FILTER (
-           WHERE sf.severity IN ('high','critical')
-             AND (
-               sf.evidence->>'priorityMaximum' = 'true'
-               OR ar.verdict IS DISTINCT FROM 'likely_false_positive'
-             )
-         )::int AS high,
-       COUNT(*) FILTER (
-         WHERE ar.verdict='likely_false_positive'
-           AND COALESCE(sf.evidence->>'priorityMaximum','false') <> 'true'
-       )::int AS ai_filtered
-     FROM scan_findings sf
-     LEFT JOIN ai_finding_reviews ar
-       ON ar.analysis_id=sf.analysis_id
-      AND ar.finding_id=sf.id
-     WHERE sf.analysis_id=$1`,
+  await pool.query(
+    `UPDATE analyses
+     SET ai_review_status='running',
+         ai_review_error=NULL
+     WHERE id=$1`,
     [id]
   );
 
-  res.json({
+  res.status(202).json({
     ok: true,
-    findings: Number(countResult.rows[0]?.total || 0),
-    highFindings: Number(countResult.rows[0]?.high || 0),
-    aiFiltered: Number(countResult.rows[0]?.ai_filtered || 0),
-    aiReviewStatus:
-      (
+    processing: true,
+  });
+
+  setImmediate(async () => {
+    try {
+      await rebuildFindings(id, report);
+    } catch (error) {
+      console.error(
+        "Falha ao recalcular achados/IA:",
+        {
+          analysisId: id,
+          message: error?.message,
+          code: error?.code,
+          detail: error?.detail,
+          hint: error?.hint,
+          where: error?.where,
+          stack: error?.stack,
+        }
+      );
+
+      try {
         await pool.query(
-          "SELECT ai_review_status FROM analyses WHERE id=$1",
-          [id]
-        )
-      ).rows[0]?.ai_review_status || "pending"
+          `UPDATE analyses
+           SET ai_review_status='error',
+               ai_review_error=$2,
+               ai_reviewed_at=NOW()
+           WHERE id=$1`,
+          [
+            id,
+            trimAiString(
+              error?.message || "Erro desconhecido durante o recálculo.",
+              1000
+            ),
+          ]
+        );
+      } catch (statusError) {
+        console.error(
+          "Falha ao registrar erro do recálculo:",
+          statusError
+        );
+      }
+    } finally {
+      activeRebuilds.delete(id);
+    }
   });
 });
 
