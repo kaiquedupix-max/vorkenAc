@@ -364,7 +364,7 @@ internal static class BrowserHistoryCollector
                 .Any(term =>
                 {
                     if (string.IsNullOrWhiteSpace(term) ||
-                        !combined.Contains(term, StringComparison.OrdinalIgnoreCase))
+                        !ContainsCatalogTerm(combined, term))
                     {
                         return false;
                     }
@@ -461,6 +461,65 @@ internal static class BrowserHistoryCollector
         };
     }
 
+    private static bool IsDistinctiveCatalogAlias(string value)
+    {
+        string alias = (value ?? "").Trim();
+
+        if (alias.Length >= 7)
+            return true;
+
+        string lower = alias.ToLowerInvariant();
+
+        return
+            lower.Contains("rust") ||
+            lower.Contains("cheat") ||
+            lower.Contains("script") ||
+            lower.Contains("aimbot") ||
+            lower.Contains("recoil") ||
+            lower.Contains("loader") ||
+            lower.Contains("private") ||
+            lower.Contains("dma") ||
+            lower.Contains("external") ||
+            lower.Contains("internal");
+    }
+
+    private static bool ContainsCatalogTerm(string haystack, string value)
+    {
+        string term = (value ?? "").Trim();
+        if (term.Length == 0)
+            return false;
+
+        int start = 0;
+
+        while (start <= haystack.Length - term.Length)
+        {
+            int index = haystack.IndexOf(
+                term,
+                start,
+                StringComparison.OrdinalIgnoreCase);
+
+            if (index < 0)
+                return false;
+
+            int end = index + term.Length;
+
+            bool leftOk =
+                index == 0 ||
+                !char.IsLetterOrDigit(haystack[index - 1]);
+
+            bool rightOk =
+                end == haystack.Length ||
+                !char.IsLetterOrDigit(haystack[end]);
+
+            if (leftOk && rightOk)
+                return true;
+
+            start = index + 1;
+        }
+
+        return false;
+    }
+
     private static IReadOnlyCollection<string> BuildCatalogTerms(
         IEnumerable<RustThreatIndicator>? threatCatalog)
     {
@@ -475,8 +534,11 @@ internal static class BrowserHistoryCollector
             foreach (string alias in item.Aliases ?? new List<string>())
             {
                 string value = alias.Trim();
-                if (!string.IsNullOrWhiteSpace(value))
+                if (!string.IsNullOrWhiteSpace(value) &&
+                    IsDistinctiveCatalogAlias(value))
+                {
                     terms.Add(value);
+                }
             }
 
             foreach (string domain in item.Domains ?? new List<string>())
