@@ -466,16 +466,91 @@ function isDeceptiveDoubleExtensionExecutable(value) {
   return /\.(zip|rar|7z|pdf|jpg|jpeg|png|gif|txt|doc|docx|xls|xlsx|ppt|pptx)\.exe$/.test(name);
 }
 
-function downloadOriginKind(download) {
-  const values = [
+function downloadUrlCandidates(download) {
+  return [
     download?.sourceUrl,
     download?.finalUrl,
     download?.referrerUrl,
     download?.siteUrl,
     download?.pageUrl,
     ...(Array.isArray(download?.urlChain) ? download.urlChain : [])
-  ]
-    .filter(Boolean)
+  ].filter(Boolean);
+}
+
+function isOfficialDiscordInstallerOrUpdate(download) {
+  const name = path.basename(
+    String(download?.fileName || download?.targetPath || "")
+  ).toLowerCase();
+
+  const target = String(
+    download?.targetPath ||
+    download?.currentPath ||
+    ""
+  )
+    .replaceAll("/", "\\")
+    .toLowerCase();
+
+  if (
+    target.includes("\\appdata\\local\\discord\\") &&
+    ["update.exe", "discord.exe", "discordsetup.exe", "squirrel.exe"].includes(name)
+  ) {
+    return true;
+  }
+
+  return downloadUrlCandidates(download).some((value) => {
+    try {
+      const url = new URL(String(value || ""));
+      const host = url.hostname.toLowerCase();
+      const pathname = url.pathname.toLowerCase();
+
+      const officialHost =
+        host === "discord.com" ||
+        host === "www.discord.com" ||
+        host === "discordapp.com" ||
+        host === "www.discordapp.com" ||
+        host === "dl.discordapp.net" ||
+        host === "stable.dl2.discordapp.net";
+
+      return officialHost && (
+        pathname.includes("/api/download") ||
+        pathname.includes("/apps/") ||
+        pathname.includes("/download")
+      );
+    } catch {
+      return false;
+    }
+  });
+}
+
+function isDiscordAttachmentDownload(download) {
+  if (isOfficialDiscordInstallerOrUpdate(download))
+    return false;
+
+  return downloadUrlCandidates(download).some((value) => {
+    try {
+      const url = new URL(String(value || ""));
+      const host = url.hostname.toLowerCase();
+      const pathname = url.pathname.toLowerCase();
+
+      return (
+        (
+          host === "cdn.discordapp.com" ||
+          host === "media.discordapp.net" ||
+          host.endsWith(".discordattachments.com")
+        ) &&
+        (
+          pathname.includes("/attachments/") ||
+          host.endsWith(".discordattachments.com")
+        )
+      );
+    } catch {
+      return false;
+    }
+  });
+}
+
+function downloadOriginKind(download) {
+  const values = downloadUrlCandidates(download)
     .map((value) => String(value).toLowerCase());
 
   const joined = values.join(" ");
@@ -613,6 +688,7 @@ function isKnownBenignPeNoise(value) {
     name === "openhardwaremonitorlib.dll" ||
     name === "librehardwaremonitor.exe" ||
     name === "librehardwaremonitorlib.dll" ||
+    name === "dnsjumper.exe" ||
     name === "vorken.agent.exe" ||
     /^vorken[-_.].*\.exe$/i.test(name)
   );
@@ -1245,6 +1321,22 @@ function forceInformationalFinding(artifactType, evidence = {}, title = "") {
   }
 
   const lowerTitle = String(title || "").toLowerCase();
+  const evidenceName = String(
+    evidence?.name ||
+    evidence?.serviceName ||
+    evidence?.kind ||
+    ""
+  ).toLowerCase();
+
+  if (
+    artifactType === "system_integrity_expansion" &&
+    (
+      evidenceName === "pcasvc" ||
+      lowerTitle.includes("pcasvc")
+    )
+  ) {
+    return true;
+  }
 
   return (
     lowerTitle.includes("prefetch apagado") ||
@@ -1269,6 +1361,7 @@ async function rebuildFindings(analysisId, report) {
   for (const rule of rulesResult.rows) {
     for (const artifact of artifacts) {
       if (!matchesRule(rule, artifact)) continue;
+      if (isKnownBenignPeNoise(artifact.value)) continue;
 
       const severity = forceInformationalFinding(
         artifact.type,
@@ -1439,6 +1532,10 @@ async function downgradeUnexecutedExeFindings(analysisId, report) {
       continue;
 
     const evidence = finding.evidence || {};
+
+    if (evidence.priorityMaximum === true)
+      continue;
+
     const candidates = [
       finding.artifact_value,
       evidence.name,
@@ -1523,6 +1620,71 @@ async function addBuiltInReviewFindings(analysisId, report) {
     const p = normalizePath(value);
     const parts = p.split("\\").filter(Boolean);
     return parts.at(-1) || "";
+  };
+
+  const isTrustedExecutableCandidate = (value) => {
+    const candidatePath = normalizePath(value);
+    const candidateName = fileName(candidatePath);
+
+    if (!candidateName)
+      return false;
+
+    if (isKnownBenignPeNoise(candidateName))
+      return true;
+
+    return (report.files || []).some((item) => {
+      const itemPath = normalizePath(item.path || item.name);
+      const itemName = fileName(itemPath);
+
+      if (
+        itemName !== candidateName &&
+        itemPath !== candidatePath
+      ) {
+        return false;
+      }
+
+      return item.signed === true;
+    });
+  };
+
+  const recentDisconnectedUsb = (report.usbHistory || [])
+    .filter((item) => {
+      if (item.present !== false)
+        return false;
+
+      const disconnectedAt =
+        item.lastDisconnectedUtc ||
+        item.lastConnectedUtc;
+
+      return ageDays(disconnectedAt) <= 7;
+    });
+
+  const correlatedDisconnectedUsb = (execution) => {
+    const runMs = new Date(execution?.lastRunUtc || 0).getTime();
+    if (!Number.isFinite(runMs) || runMs <= 0)
+      return null;
+
+    return recentDisconnectedUsb
+      .map((item) => {
+        const disconnectMs = new Date(
+          item.lastDisconnectedUtc ||
+          item.lastConnectedUtc ||
+          0
+        ).getTime();
+
+        if (!Number.isFinite(disconnectMs) || disconnectMs <= 0)
+          return null;
+
+        const plausible =
+          runMs <= disconnectMs + 15 * 60 * 1000 &&
+          runMs >= disconnectMs - 24 * 60 * 60 * 1000;
+
+        return plausible
+          ? { item, delta: Math.abs(disconnectMs - runMs) }
+          : null;
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.delta - b.delta)[0]?.item || null;
   };
 
   // Keep file reputation/catalog matches separate from proof of execution.
@@ -1637,6 +1799,11 @@ async function addBuiltInReviewFindings(analysisId, report) {
           : "high";
       }
 
+      const directCatalogPriority =
+        ["browser_history", "browser_recovery", "browser_download"]
+          .includes(artifactType) &&
+        isDirectCatalogWebMatch(match, evidence);
+
       const fileLikeArtifact =
         ["file", "browser_download", "usn_delete", "recycle_bin"]
           .includes(artifactType);
@@ -1664,7 +1831,7 @@ async function addBuiltInReviewFindings(analysisId, report) {
           evidence?.originalPath
         );
 
-      if (unexecutedExe) {
+      if (unexecutedExe && !directCatalogPriority) {
         catalogSeverity = "info";
       }
 
@@ -1677,6 +1844,7 @@ async function addBuiltInReviewFindings(analysisId, report) {
         {
           ...evidence,
           catalogMatch: match,
+          priorityMaximum: directCatalogPriority,
           confidence:
             catalogSeverity === "info"
               ? "info"
@@ -2502,6 +2670,25 @@ async function addBuiltInReviewFindings(analysisId, report) {
 
   // System integrity expansion.
   for (const item of report.systemIntegrityExpansion || []) {
+    const itemName = String(item.name || item.kind || "").toLowerCase();
+    const isPcaSvc = itemName === "pcasvc";
+
+    if (isPcaSvc) {
+      await insertReviewFinding(
+        analysisId,
+        "Integridade do sistema: PcaSvc (informativo)",
+        "info",
+        "system_integrity_expansion",
+        item.detail || item.name || item.kind,
+        {
+          ...item,
+          confidence: "info",
+          note: "PcaSvc é um serviço legítimo do Windows. Mantido somente como contexto de integridade, sem gerar alerta."
+        }
+      );
+      continue;
+    }
+
     const severity =
       String(item.severityHint || "info").toLowerCase();
 
@@ -2879,16 +3066,30 @@ async function addBuiltInReviewFindings(analysisId, report) {
     const randomExecutable =
       ext === ".exe" && looksRandomExecutableName(name);
     const danger = chromiumDangerInfo(download.dangerType);
+    const officialDiscordDownload =
+      isOfficialDiscordInstallerOrUpdate(download);
+    const discordAttachmentExe =
+      ext === ".exe" &&
+      isDiscordAttachmentDownload(download) &&
+      !findCommonAppByFileName(name) &&
+      !isKnownBenignPeNoise(name);
 
-    if (originKind && isRiskyDownloadName(name)) {
+    if (
+      originKind &&
+      isRiskyDownloadName(name) &&
+      !officialDiscordDownload
+    ) {
       const severity =
+        discordAttachmentExe ? "critical" :
         randomExecutable ? "critical" :
         doubleExtension ? "high" :
         "medium";
 
       await insertReviewFinding(
         analysisId,
-        "Arquivo baixado do " + originKind,
+        discordAttachmentExe
+          ? "PRIORIDADE MÁXIMA: EXE baixado de anexo CDN do Discord"
+          : "Arquivo baixado do " + originKind,
         severity,
         "browser_download",
         download.targetPath || download.fileName || "download",
@@ -2897,10 +3098,14 @@ async function addBuiltInReviewFindings(analysisId, report) {
           originKind,
           doubleExtension,
           randomExecutable,
+          discordAttachment: discordAttachmentExe,
+          priorityMaximum: discordAttachmentExe,
           confidence: severity === "critical" ? "high" : "medium",
-          note: doubleExtension
-            ? "Download originado do " + originKind + " usa dupla extensão que termina em .exe. Deve ser revisado."
-            : "Download executável/compactado originado do " + originKind + ". Classificado no mínimo como ocorrência média para revisão.",
+          note: discordAttachmentExe
+            ? "Executável não reconhecido como aplicativo confiável foi baixado por URL real de anexo do CDN do Discord. Atualizadores oficiais do Discord são excluídos desta regra."
+            : doubleExtension
+              ? "Download originado do " + originKind + " usa dupla extensão que termina em .exe. Deve ser revisado."
+              : "Download executável/compactado originado do " + originKind + ". Classificado no mínimo como ocorrência média para revisão.",
         }
       );
     }
@@ -3041,9 +3246,9 @@ async function addBuiltInReviewFindings(analysisId, report) {
     }
   }
 
-  // HIGH-SIGNAL EXECUTION: confirmed removable drive, or a recent executable
-  // from a detached non-system volume at the root/user-temporary location.
-  // A generic unresolved Prefetch volume alone is NOT a finding.
+  // HIGH-SIGNAL EXECUTION: removable-drive execution gets maximum priority
+  // only for untrusted EXEs. Detached non-system volumes still require
+  // temporal correlation with recently disconnected USB storage.
   for (const execution of report.prefetchExecutions || []) {
     const lastAge = ageDays(execution.lastRunUtc);
     if (lastAge > 30) continue;
@@ -3051,10 +3256,19 @@ async function addBuiltInReviewFindings(analysisId, report) {
     const executionPath =
       execution.resolvedExecutablePath ||
       execution.nativeExecutablePath ||
+      execution.executableName ||
       "";
 
     if (isTrustedInstalledPath(executionPath))
       continue;
+
+    const executionName = fileName(
+      execution.executableName || executionPath
+    );
+
+    const exeLike = /\.exe$/i.test(executionName);
+    const trustedExecutable =
+      isTrustedExecutableCandidate(executionPath || executionName);
 
     const confirmedRemovable =
       execution.currentRemovable === true;
@@ -3068,25 +3282,62 @@ async function addBuiltInReviewFindings(analysisId, report) {
         isSuspiciousUserPath(executionPath)
       );
 
-    if (!confirmedRemovable && !strongDetachedEvidence)
+    const disconnectedUsb =
+      strongDetachedEvidence
+        ? correlatedDisconnectedUsb(execution)
+        : null;
+
+    const maximumUsbPriority =
+      exeLike &&
+      !trustedExecutable &&
+      (
+        confirmedRemovable ||
+        Boolean(disconnectedUsb)
+      );
+
+    if (
+      !maximumUsbPriority &&
+      !confirmedRemovable &&
+      !strongDetachedEvidence
+    ) {
       continue;
+    }
 
     await insertReviewFinding(
       analysisId,
-      confirmedRemovable
-        ? "Execução recente em mídia removível"
-        : "Execução recente em volume removido/não montado",
-      confirmedRemovable || lastAge <= 7 ? "high" : "medium",
+      maximumUsbPriority
+        ? confirmedRemovable
+          ? "PRIORIDADE MÁXIMA: EXE executado em pendrive/removível conectado"
+          : "PRIORIDADE MÁXIMA: EXE executado em pendrive/removível desconectado"
+        : confirmedRemovable
+          ? "Execução recente em mídia removível"
+          : "Execução recente em volume removido/não montado",
+      maximumUsbPriority
+        ? "critical"
+        : confirmedRemovable || lastAge <= 7
+          ? "high"
+          : "medium",
       "prefetch_execution",
       execution.executableName ||
         execution.nativeExecutablePath ||
         execution.prefetchFile,
       {
         ...execution,
-        confidence: confirmedRemovable ? "high" : "medium",
-        note: confirmedRemovable
-          ? "O Prefetch registrou execução em uma unidade atualmente identificada como removível."
-          : "O Prefetch registrou um executável recente em volume não montado, sem arquivo presente, em caminho compatível com execução portátil. Volume não resolvido sozinho não gera alerta.",
+        correlatedUsb: disconnectedUsb,
+        priorityMaximum: maximumUsbPriority,
+        usbExecution: maximumUsbPriority,
+        confidence: maximumUsbPriority
+          ? "high"
+          : confirmedRemovable
+            ? "high"
+            : "medium",
+        note: maximumUsbPriority
+          ? confirmedRemovable
+            ? "O Prefetch confirma execução de EXE não confiável em unidade atualmente removível. Deve aparecer no topo da prioridade."
+            : "O Prefetch confirma execução de EXE não confiável em volume não montado e o horário é compatível com pendrive desconectado recentemente. Deve aparecer no topo da prioridade."
+          : confirmedRemovable
+            ? "O Prefetch registrou execução em uma unidade atualmente identificada como removível."
+            : "O Prefetch registrou um executável recente em volume não montado, sem arquivo presente, em caminho compatível com execução portátil. Volume não resolvido sozinho não gera alerta.",
       }
     );
   }
@@ -3131,6 +3382,11 @@ async function addBuiltInReviewFindings(analysisId, report) {
       item.driveType === "Removable" ||
       item.driveType === "Network";
 
+    const removableExePriority =
+      item.driveType === "Removable" &&
+      /\.exe$/i.test(fileName(p || item.processName)) &&
+      !isTrustedExecutableCandidate(p || item.processName);
+
     const missingSuspicious =
       item.processPresent === false &&
       (
@@ -3143,29 +3399,39 @@ async function addBuiltInReviewFindings(analysisId, report) {
 
     await insertReviewFinding(
       analysisId,
-      external
-        ? (item.driveType === "Network"
-            ? "Execução registrada a partir de recurso de rede (informativo)"
-            : "Execução registrada a partir de mídia removível")
-        : "Processo executado recentemente e arquivo não localizado",
-      item.driveType === "Network"
-        ? "info"
+      removableExePriority
+        ? "PRIORIDADE MÁXIMA: EXE executado em pendrive/removível"
         : external
-          ? "high"
-          : "medium",
+          ? (item.driveType === "Network"
+              ? "Execução registrada a partir de recurso de rede (informativo)"
+              : "Execução registrada a partir de mídia removível")
+          : "Processo executado recentemente e arquivo não localizado",
+      removableExePriority
+        ? "critical"
+        : item.driveType === "Network"
+          ? "info"
+          : external
+            ? "high"
+            : "medium",
       "process_history",
       p || item.processName || "processo",
       {
         ...item,
+        priorityMaximum: removableExePriority,
+        usbExecution: removableExePriority,
         confidence:
-          item.driveType === "Network"
-            ? "info"
-            : external
-              ? "high"
-              : "medium",
-        note: item.driveType === "Network"
-          ? "Execução confirmada pelo Event Log 4688 a partir de recurso de rede. Mantida apenas como contexto azul."
-          : "Execução confirmada pelo Event Log 4688; caminhos normais do Windows e Program Files são ignorados.",
+          removableExePriority
+            ? "high"
+            : item.driveType === "Network"
+              ? "info"
+              : external
+                ? "high"
+                : "medium",
+        note: removableExePriority
+          ? "O Event Log 4688 confirma execução de EXE não confiável em unidade removível. Deve aparecer no topo da prioridade."
+          : item.driveType === "Network"
+            ? "Execução confirmada pelo Event Log 4688 a partir de recurso de rede. Mantida apenas como contexto azul."
+            : "Execução confirmada pelo Event Log 4688; caminhos normais do Windows e Program Files são ignorados.",
       }
     );
   }
@@ -3393,6 +3659,7 @@ async function addBuiltInReviewFindings(analysisId, report) {
       item.searchQuery || item.url || item.host || "Histórico do navegador",
       {
         ...item,
+        priorityMaximum: directKnownSite,
         confidence: isSearch ? "medium" : directKnownSite ? "high" : "medium",
         note: isSearch
           ? "Pesquisa em mecanismo de busca: ocorrência amarela/média. Pesquisa não equivale a acesso direto ao site."

@@ -51,6 +51,91 @@ function safeArray(value) {
   return Array.isArray(value) ? value.filter(Boolean) : [];
 }
 
+function downloadUrlCandidatesClient(item) {
+  return [
+    item?.sourceUrl,
+    item?.finalUrl,
+    item?.referrerUrl,
+    item?.siteUrl,
+    item?.pageUrl,
+    ...safeArray(item?.urlChain)
+  ].filter(Boolean);
+}
+
+function isOfficialDiscordInstallerOrUpdateClient(item) {
+  const name = String(
+    item?.fileName ||
+    item?.targetPath ||
+    ""
+  ).split(/[\\/]/).at(-1)?.toLowerCase() || "";
+
+  const target = String(
+    item?.targetPath ||
+    item?.currentPath ||
+    ""
+  )
+    .replaceAll("/", "\\")
+    .toLowerCase();
+
+  if (
+    target.includes("\\appdata\\local\\discord\\") &&
+    ["update.exe", "discord.exe", "discordsetup.exe", "squirrel.exe"].includes(name)
+  ) {
+    return true;
+  }
+
+  return downloadUrlCandidatesClient(item).some((value) => {
+    try {
+      const url = new URL(String(value || ""));
+      const host = url.hostname.toLowerCase();
+      const pathname = url.pathname.toLowerCase();
+
+      const officialHost =
+        host === "discord.com" ||
+        host === "www.discord.com" ||
+        host === "discordapp.com" ||
+        host === "www.discordapp.com" ||
+        host === "dl.discordapp.net" ||
+        host === "stable.dl2.discordapp.net";
+
+      return officialHost && (
+        pathname.includes("/api/download") ||
+        pathname.includes("/apps/") ||
+        pathname.includes("/download")
+      );
+    } catch {
+      return false;
+    }
+  });
+}
+
+function isDiscordAttachmentDownloadClient(item) {
+  if (isOfficialDiscordInstallerOrUpdateClient(item))
+    return false;
+
+  return downloadUrlCandidatesClient(item).some((value) => {
+    try {
+      const url = new URL(String(value || ""));
+      const host = url.hostname.toLowerCase();
+      const pathname = url.pathname.toLowerCase();
+
+      return (
+        (
+          host === "cdn.discordapp.com" ||
+          host === "media.discordapp.net" ||
+          host.endsWith(".discordattachments.com")
+        ) &&
+        (
+          pathname.includes("/attachments/") ||
+          host.endsWith(".discordattachments.com")
+        )
+      );
+    } catch {
+      return false;
+    }
+  });
+}
+
 function downloadOriginKind(item) {
   const urls = [
     item?.sourceUrl,
@@ -445,7 +530,18 @@ async function openReport(id) {
     arrays.usbHistory.filter((item) => item.present === false).length;
 
   const criticalFindings =
-    findings.filter((item) => ["critical", "high"].includes(item.severity));
+    findings
+      .filter((item) => ["critical", "high"].includes(item.severity))
+      .sort((a, b) => {
+        const aPriority = a.evidence?.priorityMaximum === true ? 1 : 0;
+        const bPriority = b.evidence?.priorityMaximum === true ? 1 : 0;
+
+        if (aPriority !== bPriority)
+          return bPriority - aPriority;
+
+        const rank = { critical: 2, high: 1 };
+        return (rank[b.severity] || 0) - (rank[a.severity] || 0);
+      });
 
   const mediumFindings =
     findings.filter((item) => item.severity === "medium");
@@ -846,13 +942,27 @@ async function openReport(id) {
     advancedGroup(
       "Integridade do Windows / BCD / serviços / SRUM",
       arrays.systemIntegrityExpansion,
-      (item) => `
-        <div class="finding">
-          <div class="finding-head"><h4>${escapeHtml(item.name || item.kind || "Integridade")}</h4><span class="tag ${["high","critical"].includes(String(item.severityHint || "").toLowerCase()) ? "high" : String(item.severityHint || "").toLowerCase() === "medium" ? "medium" : "info"}">${escapeHtml(String(item.kind || "INTEGRITY").toUpperCase())}</span></div>
-          <code>${escapeHtml(item.detail || "—")}</code>
-          <div class="kv"><span>Data</span><span>${escapeHtml(formatDate(item.timestampUtc))}</span></div>
-        </div>
-      `
+      (item) => {
+        const pcaSvc =
+          String(item.name || item.kind || "").toLowerCase() === "pcasvc";
+        const rawSeverity =
+          String(item.severityHint || "").toLowerCase();
+        const tag = pcaSvc
+          ? "info"
+          : ["high","critical"].includes(rawSeverity)
+            ? "high"
+            : rawSeverity === "medium"
+              ? "medium"
+              : "info";
+
+        return `
+          <div class="finding">
+            <div class="finding-head"><h4>${escapeHtml(item.name || item.kind || "Integridade")}</h4><span class="tag ${tag}">${escapeHtml(pcaSvc ? "WINDOWS · INFO" : String(item.kind || "INTEGRITY").toUpperCase())}</span></div>
+            <code>${escapeHtml(item.detail || "—")}</code>
+            <div class="kv"><span>Data</span><span>${escapeHtml(formatDate(item.timestampUtc))}</span></div>
+          </div>
+        `;
+      }
     )
   );
 
@@ -998,15 +1108,22 @@ async function openReport(id) {
     .map((item) => ({
       item,
       origin: downloadOriginKind(item),
-      name: item.fileName || item.targetPath || ""
+      name: item.fileName || item.targetPath || "",
+      officialDiscordUpdate: isOfficialDiscordInstallerOrUpdateClient(item),
+      discordAttachmentExe:
+        /\.exe$/i.test(item.fileName || item.targetPath || "") &&
+        isDiscordAttachmentDownloadClient(item)
     }))
-    .filter((entry) => entry.origin && isRiskyDownloadName(entry.name))
+    .filter((entry) =>
+      entry.origin &&
+      isRiskyDownloadName(entry.name) &&
+      !entry.officialDiscordUpdate)
     .sort((a, b) => new Date(b.item.startTimeUtc || 0) - new Date(a.item.startTimeUtc || 0))
     .slice(0, 300);
 
   document.getElementById("socialDownloadsCountBadge").textContent = socialDownloads.length;
   document.getElementById("socialDownloadsList").innerHTML = socialDownloads.length
-    ? socialDownloads.map(({ item, origin, name }) => {
+    ? socialDownloads.map(({ item, origin, name, discordAttachmentExe }) => {
         const sourceUrl =
           safeExternalUrl(item.sourceUrl) ||
           safeExternalUrl(item.finalUrl) ||
@@ -1014,7 +1131,11 @@ async function openReport(id) {
           safeExternalUrl(item.referrerUrl);
 
         const doubleExtension = isDeceptiveDoubleExtension(name);
-        const tag = doubleExtension ? "high" : "medium";
+        const tag = discordAttachmentExe
+          ? "critical"
+          : doubleExtension
+            ? "high"
+            : "medium";
 
         return `
           <div class="finding severity-card ${tag}">
@@ -1227,28 +1348,43 @@ async function openReport(id) {
   }
 
   for (const finding of [...criticalFindings, ...mediumFindings]) {
-    if (![
-      "archive",
-      "file",
-      "browser_download",
-      "browser_recovery",
-      "usn_delete",
-      "unknown_app",
-      "prefetch_execution",
-      "bam",
-      "recycle_bin"
-    ].includes(finding.artifact_type)) {
+    const maximumPriority =
+      finding.evidence?.priorityMaximum === true;
+
+    if (
+      !maximumPriority &&
+      ![
+        "archive",
+        "file",
+        "browser_download",
+        "browser_recovery",
+        "usn_delete",
+        "unknown_app",
+        "prefetch_execution",
+        "process_history",
+        "browser_history",
+        "bam",
+        "recycle_bin"
+      ].includes(finding.artifact_type)
+    ) {
       continue;
     }
 
     priorityFiles.push({
-      priority: finding.severity === "critical" ? 10 :
-        finding.severity === "high" ? 8 : 4,
-      status: finding.severity === "critical"
-        ? "CATÁLOGO / CRÍTICO"
-        : finding.severity === "high"
-          ? "ALTO RISCO"
-          : "REVISAR",
+      priority: maximumPriority
+        ? 100
+        : finding.severity === "critical"
+          ? 10
+          : finding.severity === "high"
+            ? 8
+            : 4,
+      status: maximumPriority
+        ? "PRIORIDADE MÁXIMA"
+        : finding.severity === "critical"
+          ? "CATÁLOGO / CRÍTICO"
+          : finding.severity === "high"
+            ? "ALTO RISCO"
+            : "REVISAR",
       tag: finding.severity === "critical" ? "critical" :
         finding.severity === "high" ? "high" : "medium",
       name: finding.title || "Arquivo suspeito",
