@@ -262,10 +262,29 @@ async function openReportSafe(id, options = {}) {
     if (options.resetAiView !== false)
       showWithoutAiResult = false;
 
+    reportCard.classList.remove("hidden");
+    document.getElementById("reportEmptyState")?.classList.add("hidden");
+
+    const banner = document.getElementById("analysisProcessingBanner");
+    if (banner) {
+      banner.textContent = "Carregando relatório da análise #" + id + "...";
+      banner.className = "message";
+    }
+
     await openReport(id);
   } catch (error) {
     console.error("Falha ao abrir relatório", error);
-    alert("Erro ao abrir relatório: " + (error?.message || "erro desconhecido"));
+
+    reportCard.classList.remove("hidden");
+    document.getElementById("reportEmptyState")?.classList.add("hidden");
+
+    const banner = document.getElementById("analysisProcessingBanner");
+    if (banner) {
+      banner.textContent =
+        "Não foi possível abrir o relatório: " +
+        (error?.message || "erro desconhecido");
+      banner.className = "message error";
+    }
   }
 }
 
@@ -656,6 +675,7 @@ async function loadAnalyses() {
             : "review";
 
     row.dataset.sessionKind = sessionKind;
+    row.dataset.analysisId = String(item.id);
     row.dataset.searchText = [
       item.id,
       item.label,
@@ -683,19 +703,29 @@ async function loadAnalyses() {
         ${item.status === "completed" ? resultTag : '<span class="tag ' + escapeHtml(stageClass) + '">' + escapeHtml(stageLabel) + '</span>'}
         ${item.status === "completed" ? '<br><small class="muted">' + Number(item.total_findings || 0) + ' achados</small>' : stageMessage}
       </td>
-      <td><button class="button ghost open-report" data-id="${item.id}" aria-label="Abrir relatório">›</button></td>
+      <td><button class="button ghost open-report" data-id="${item.id}" type="button">Abrir</button></td>
     `;
 
     analysesBody.appendChild(row);
   }
 
-  document.querySelectorAll(".open-report").forEach((button) => {
-    button.addEventListener("click", async () => {
-      document.querySelectorAll("#analysesBody tr").forEach((row) =>
-        row.classList.remove("active-session")
+  document.querySelectorAll("#analysesBody tr[data-analysis-id]").forEach((row) => {
+    const openRow = async () => {
+      document.querySelectorAll("#analysesBody tr").forEach((item) =>
+        item.classList.remove("active-session")
       );
-      button.closest("tr")?.classList.add("active-session");
-      await openReportSafe(button.dataset.id);
+      row.classList.add("active-session");
+      await openReportSafe(row.dataset.analysisId);
+    };
+
+    row.tabIndex = 0;
+    row.setAttribute("role", "button");
+
+    row.addEventListener("click", openRow);
+    row.addEventListener("keydown", async (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      await openRow();
     });
   });
 
