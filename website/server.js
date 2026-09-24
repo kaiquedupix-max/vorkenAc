@@ -1880,20 +1880,45 @@ async function addBuiltInReviewFindings(analysisId, report) {
   }
 
   // Autoruns / persistence integrity.
+  // Re-evaluate the path on the server instead of trusting older agents that
+  // marked every unsigned executable (including System32 scheduled tasks) as
+  // suspicious. Protected Windows/Program Files paths are inventory only.
   for (const item of report.autorunIntegrity || []) {
-    if (item.suspicious !== true)
+    if (item.enabled === false)
       continue;
+
+    const executable =
+      item.executablePath ||
+      item.command ||
+      item.name ||
+      "";
+
+    if (!executable || isTrustedInstalledPath(executable))
+      continue;
+
+    const userWritable =
+      item.userWritablePath === true ||
+      isSuspiciousUserPath(executable);
+
+    if (!userWritable)
+      continue;
+
+    const unsignedExisting =
+      item.fileExists === true &&
+      item.signed !== true;
 
     await insertReviewFinding(
       analysisId,
-      "Autorun/tarefa suspeita em caminho gravável pelo usuário",
-      item.fileExists === true && item.signed !== true ? "high" : "medium",
+      "Autorun/tarefa em caminho gravável pelo usuário",
+      unsignedExisting ? "high" : "medium",
       "autorun_integrity",
-      item.executablePath || item.command || item.name,
+      executable,
       {
         ...item,
-        confidence: "medium",
-        note: "Entrada de inicialização aponta para caminho do usuário/Temp ou executável não assinado."
+        confidence: unsignedExisting ? "high" : "medium",
+        note: unsignedExisting
+          ? "Entrada de inicialização aponta para caminho gravável pelo usuário e o executável existente não possui assinatura Authenticode confiável."
+          : "Entrada de inicialização aponta para caminho gravável pelo usuário. Mantida como amarela/média para revisão; caminhos protegidos do Windows e Program Files são ignorados."
       }
     );
   }
