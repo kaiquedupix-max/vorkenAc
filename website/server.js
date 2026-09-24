@@ -1249,7 +1249,8 @@ function forceInformationalFinding(artifactType, evidence = {}, title = "") {
   return (
     lowerTitle.includes("prefetch apagado") ||
     lowerTitle.includes("artefato forense") ||
-    lowerTitle.includes("powershell")
+    lowerTitle.includes("powershell") ||
+    lowerTitle.includes("recurso de rede")
   );
 }
 
@@ -1396,6 +1397,69 @@ async function addBuiltInReviewFindings(analysisId, report) {
     return parts.at(-1) || "";
   };
 
+  // Keep file reputation/catalog matches separate from proof of execution.
+  // A file being present, downloaded, deleted or named like a catalog entry
+  // is not execution evidence by itself.
+  const executedPaths = new Set();
+  const executedNames = new Set();
+
+  const rememberExecution = (...values) => {
+    for (const raw of values.flat(Infinity)) {
+      const normalized = normalizePath(raw);
+      if (!normalized)
+        continue;
+
+      executedPaths.add(normalized);
+
+      const name = fileName(normalized);
+      if (name)
+        executedNames.add(name);
+    }
+  };
+
+  for (const item of report.processes || []) {
+    rememberExecution(item.path, item.name);
+  }
+
+  for (const item of report.prefetchExecutions || []) {
+    rememberExecution(
+      item.resolvedExecutablePath,
+      item.nativeExecutablePath,
+      item.executableName
+    );
+  }
+
+  for (const item of report.bam || []) {
+    rememberExecution(item.path);
+  }
+
+  for (const item of report.processCreationEvents || []) {
+    rememberExecution(item.processPath, item.processName);
+  }
+
+  const hasExecutionEvidence = (...values) =>
+    values
+      .flat(Infinity)
+      .filter((value) => value !== null && value !== undefined)
+      .some((raw) => {
+        const normalized = normalizePath(raw);
+        if (!normalized)
+          return false;
+
+        if (executedPaths.has(normalized))
+          return true;
+
+        const name = fileName(normalized);
+        return Boolean(name && executedNames.has(name));
+      });
+
+  const isExeCandidate = (...values) =>
+    values
+      .flat(Infinity)
+      .filter(Boolean)
+      .some((value) =>
+        /\.exe(?:$|[?#])/i.test(String(value || "").trim()));
+
   const catalogFindingKeys = new Set();
 
   const addCatalogFindings = async (artifactType, artifactValue, evidence, values) => {
@@ -1445,6 +1509,37 @@ async function addBuiltInReviewFindings(analysisId, report) {
           : "high";
       }
 
+      const fileLikeArtifact =
+        ["file", "browser_download", "usn_delete", "recycle_bin"]
+          .includes(artifactType);
+
+      const unexecutedExe =
+        fileLikeArtifact &&
+        isExeCandidate(
+          artifactValue,
+          values,
+          evidence?.name,
+          evidence?.fileName,
+          evidence?.path,
+          evidence?.targetPath,
+          evidence?.currentPath,
+          evidence?.originalPath
+        ) &&
+        !hasExecutionEvidence(
+          artifactValue,
+          values,
+          evidence?.name,
+          evidence?.fileName,
+          evidence?.path,
+          evidence?.targetPath,
+          evidence?.currentPath,
+          evidence?.originalPath
+        );
+
+      if (unexecutedExe) {
+        catalogSeverity = "info";
+      }
+
       await insertReviewFinding(
         analysisId,
         "Catálogo Rust: " + match.name,
@@ -1454,9 +1549,16 @@ async function addBuiltInReviewFindings(analysisId, report) {
         {
           ...evidence,
           catalogMatch: match,
-          confidence: catalogSeverity === "medium" ? "medium" : "high",
+          confidence:
+            catalogSeverity === "info"
+              ? "info"
+              : catalogSeverity === "medium"
+                ? "medium"
+                : "high",
           note:
-            artifactType === "browser_history" && (
+            unexecutedExe
+              ? "O arquivo corresponde ao catálogo, mas não há evidência de execução no PC. Mantido apenas como catálogo/inventário azul."
+              : artifactType === "browser_history" && (
               Boolean(String(evidence?.searchQuery || "").trim()) ||
               isSearchEngineUrl(evidence?.url)
             )
@@ -1682,6 +1784,14 @@ async function addBuiltInReviewFindings(analysisId, report) {
     const removable =
       String(item.driveType || "").toLowerCase() === "removable";
 
+    const executed =
+      hasExecutionEvidence(
+        name,
+        item.fileName,
+        item.originalPath,
+        item.path
+      );
+
     const strongMatch =
       item.deceptiveDoubleExtension === true ||
       catalogMatches.length > 0;
@@ -1689,6 +1799,35 @@ async function addBuiltInReviewFindings(analysisId, report) {
     const recentRandomExecutable =
       item.randomLikeName === true &&
       ageDays(item.timestampUtc) <= 3;
+
+    // Deleted/present EXEs are not detections unless there is independent
+    // proof they actually executed. Keep them blue for catalog/inventory.
+    if (extension === ".exe" && !executed) {
+      if (
+        strongMatch ||
+        recentRandomExecutable
+      ) {
+        await insertReviewFinding(
+          analysisId,
+          catalogMatches.length > 0
+            ? "Catálogo Rust: arquivo EXE sem evidência de execução"
+            : "Arquivo EXE apagado sem evidência de execução",
+          "info",
+          "usn_delete",
+          name || item.volume || "arquivo apagado",
+          {
+            ...item,
+            catalogMatches,
+            confidence: "info",
+            note: catalogMatches.length > 0
+              ? "O nome corresponde ao catálogo, porém não foi encontrada evidência independente de execução. Mantido somente como catálogo/inventário azul."
+              : "O USN registrou o arquivo, mas não há evidência independente de execução. Mantido somente como inventário azul."
+          }
+        );
+      }
+
+      continue;
+    }
 
     if (strongMatch || recentRandomExecutable) {
       await insertReviewFinding(
@@ -2316,17 +2455,19 @@ async function addBuiltInReviewFindings(analysisId, report) {
     const value = String(execution.value || "");
     const normalized = normalizePath(value);
 
-    if (value.startsWith("\\")) {
+    // True UNC paths start with two backslashes. A single leading slash is
+    // also used by NT volume paths such as \\VOLUME{GUID} and is NOT network.
+    if (value.startsWith("\\\\")) {
       await insertReviewFinding(
         analysisId,
-        "Execução a partir de recurso de rede",
-        "high",
+        "Execução a partir de recurso de rede (informativo)",
+        "info",
         execution.type,
         value,
         {
           ...execution.evidence,
-          confidence: "high",
-          note: "A execução aponta para caminho UNC/recurso de rede."
+          confidence: "info",
+          note: "A execução aponta para caminho UNC/recurso de rede. Mantido apenas como contexto azul; não é considerado detecção por si só."
         }
       );
     }
@@ -2876,16 +3017,27 @@ async function addBuiltInReviewFindings(analysisId, report) {
       analysisId,
       external
         ? (item.driveType === "Network"
-            ? "Execução registrada a partir de recurso de rede"
+            ? "Execução registrada a partir de recurso de rede (informativo)"
             : "Execução registrada a partir de mídia removível")
         : "Processo executado recentemente e arquivo não localizado",
-      external ? "high" : "medium",
+      item.driveType === "Network"
+        ? "info"
+        : external
+          ? "high"
+          : "medium",
       "process_history",
       p || item.processName || "processo",
       {
         ...item,
-        confidence: external ? "high" : "medium",
-        note: "Execução confirmada pelo Event Log 4688; caminhos normais do Windows e Program Files são ignorados.",
+        confidence:
+          item.driveType === "Network"
+            ? "info"
+            : external
+              ? "high"
+              : "medium",
+        note: item.driveType === "Network"
+          ? "Execução confirmada pelo Event Log 4688 a partir de recurso de rede. Mantida apenas como contexto azul."
+          : "Execução confirmada pelo Event Log 4688; caminhos normais do Windows e Program Files são ignorados.",
       }
     );
   }
