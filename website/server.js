@@ -618,6 +618,43 @@ function isKnownBenignPeNoise(value) {
   );
 }
 
+function isDistinctiveCatalogAlias(value) {
+  const alias = String(value || "").toLowerCase().trim();
+  if (!alias) return false;
+
+  return (
+    alias.length >= 7 ||
+    /rust|cheat|script|aimbot|recoil|loader|private|dma|external|internal/.test(alias)
+  );
+}
+
+function containsCatalogAlias(haystack, value) {
+  const alias = String(value || "").toLowerCase().trim();
+  if (!isDistinctiveCatalogAlias(alias))
+    return false;
+
+  let start = 0;
+  while (start <= haystack.length - alias.length) {
+    const index = haystack.indexOf(alias, start);
+    if (index < 0) return false;
+
+    const end = index + alias.length;
+    const leftOk =
+      index === 0 ||
+      !/[a-z0-9]/i.test(haystack[index - 1]);
+    const rightOk =
+      end === haystack.length ||
+      !/[a-z0-9]/i.test(haystack[end]);
+
+    if (leftOk && rightOk)
+      return true;
+
+    start = index + 1;
+  }
+
+  return false;
+}
+
 function findRustCatalogMatches(...values) {
   const haystack = values
     .flat(Infinity)
@@ -665,13 +702,7 @@ function findRustCatalogMatches(...values) {
     if (!matchedBy) {
       for (const alias of brand.aliases || []) {
         const needle = String(alias || "").toLowerCase().trim();
-        if (!needle || !haystack.includes(needle)) continue;
-
-        const distinctive =
-          needle.length >= 7 ||
-          /rust|cheat|script|aimbot|recoil|loader|private|dma|external|internal/.test(needle);
-
-        if (!distinctive) continue;
+        if (!needle || !containsCatalogAlias(haystack, needle)) continue;
 
         matchedBy = "alias:" + alias;
         break;
@@ -1247,17 +1278,30 @@ async function insertReviewFinding(
   artifactValue,
   evidence
 ) {
+  const normalizedValue = String(artifactValue || "").slice(0, 2000);
+
+  if (isKnownBenignPeNoise(normalizedValue))
+    return;
+
   await pool.query(
     `INSERT INTO scan_findings(
        analysis_id, rule_id, title, severity, artifact_type, artifact_value, evidence
      )
-     VALUES ($1,NULL,$2,$3,$4,$5,$6::jsonb)`,
+     SELECT $1,NULL,$2,$3,$4,$5,$6::jsonb
+     WHERE NOT EXISTS (
+       SELECT 1
+       FROM scan_findings
+       WHERE analysis_id = $1
+         AND title = $2
+         AND artifact_type = $4
+         AND LOWER(TRIM(artifact_value)) = LOWER(TRIM($5))
+     )`,
     [
       analysisId,
       title,
       normalizeSeverity(severity),
       artifactType,
-      String(artifactValue || "").slice(0, 2000),
+      normalizedValue,
       JSON.stringify(evidence || {}),
     ]
   );
@@ -1599,23 +1643,28 @@ async function addBuiltInReviewFindings(analysisId, report) {
     const removable =
       String(item.driveType || "").toLowerCase() === "removable";
 
-    const critical =
-      item.randomLikeName === true ||
+    const strongMatch =
       item.deceptiveDoubleExtension === true ||
       catalogMatches.length > 0;
 
-    if (critical) {
+    const recentRandomExecutable =
+      item.randomLikeName === true &&
+      ageDays(item.timestampUtc) <= 3;
+
+    if (strongMatch || recentRandomExecutable) {
       await insertReviewFinding(
         analysisId,
         "Arquivo apagado recuperado pelo USN Journal",
-        "critical",
+        strongMatch ? "critical" : "high",
         "usn_delete",
         name || item.volume || "arquivo apagado",
         {
           ...item,
           catalogMatches,
-          confidence: "high",
-          note: "O NTFS registrou a exclusão. A ocorrência é crítica por nome aleatório, dupla extensão ou correspondência direta com o catálogo."
+          confidence: strongMatch ? "high" : "medium",
+          note: strongMatch
+            ? "O NTFS registrou a exclusão e há dupla extensão ou correspondência direta com o catálogo."
+            : "Executável com nome altamente aleatório apagado nos últimos 3 dias. Mantido para revisão sem tratar nomes aleatórios antigos como detecção crítica."
         }
       );
       continue;
@@ -2971,12 +3020,23 @@ async function addBuiltInReviewFindings(analysisId, report) {
   // The agent only sends browser-history rows that matched the
   // anti-cheat vocabulary. Keep low-score rows as context and create
   // automatic findings only for medium/high confidence matches.
+  const browserHistoryFindingKeys = new Set();
+
   for (const item of report.browserHistorySignals || []) {
     const risk = String(item.riskLevel || "").toLowerCase();
     if (!["medium", "high"].includes(risk))
       continue;
 
     const isSearch = Boolean(String(item.searchQuery || "").trim());
+
+    const historyKey = isSearch
+      ? "search|" + String(item.searchQuery || "").trim().toLowerCase()
+      : "url|" + String(item.url || item.host || "").trim().toLowerCase();
+
+    if (historyKey.endsWith("|") || browserHistoryFindingKeys.has(historyKey))
+      continue;
+
+    browserHistoryFindingKeys.add(historyKey);
 
     const directKnownSite =
       !isSearch &&
@@ -3173,8 +3233,10 @@ app.get("/api/admin/analyses", requireAdmin, async (_req, res) => {
     LEFT JOIN (
       SELECT
         analysis_id,
-        COUNT(*) AS total_findings,
-        COUNT(*) FILTER (WHERE severity IN ('high','critical')) AS high_findings
+        COUNT(DISTINCT LOWER(artifact_type) || '|' || LOWER(TRIM(artifact_value)))
+          FILTER (WHERE severity IN ('high','critical')) AS total_findings,
+        COUNT(DISTINCT LOWER(artifact_type) || '|' || LOWER(TRIM(artifact_value)))
+          FILTER (WHERE severity IN ('high','critical')) AS high_findings
       FROM scan_findings
       GROUP BY analysis_id
     ) f ON f.analysis_id = a.id
@@ -3301,8 +3363,10 @@ app.post("/api/admin/analyses/:id/rebuild", requireAdmin, async (req, res) => {
 
   const countResult = await pool.query(
     `SELECT
-       COUNT(*)::int AS total,
-       COUNT(*) FILTER (WHERE severity IN ('high','critical'))::int AS high
+       COUNT(DISTINCT LOWER(artifact_type) || '|' || LOWER(TRIM(artifact_value)))
+         FILTER (WHERE severity IN ('high','critical'))::int AS total,
+       COUNT(DISTINCT LOWER(artifact_type) || '|' || LOWER(TRIM(artifact_value)))
+         FILTER (WHERE severity IN ('high','critical'))::int AS high
      FROM scan_findings
      WHERE analysis_id=$1`,
     [id]
