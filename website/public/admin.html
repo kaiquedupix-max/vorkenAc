@@ -105,6 +105,8 @@
                 <option value="download_url_contains">URL de download contém</option>
                 <option value="download_name_contains">Nome/caminho de download contém</option>
                 <option value="browser_history_contains">Histórico/pesquisa do navegador contém</option>
+                <option value="browser_recovery_contains">Vestígio recuperado do navegador contém</option>
+                <option value="deleted_name_contains">USN: arquivo apagado contém</option>
                 <option value="recycle_name_contains">Lixeira: nome/caminho contém</option>
                 <option value="rust_module_contains">Módulo carregado no Rust contém</option>
                 <option value="defender_history_contains">Histórico do Defender contém</option>
@@ -188,6 +190,33 @@
           </summary>
           <div class="message">Somente arquivos que merecem atenção aparecem aqui: apagados/executados, ZIP/RAR/7Z suspeitos, nomes aleatórios e correspondências do catálogo Rust.</div>
           <div id="priorityFilesList"></div>
+        </details>
+
+        <details class="report-section severity-group severity-critical">
+          <summary>
+            <span>Aplicativos desconhecidos / origem inválida</span>
+            <span id="unknownAppsCountBadge" class="summary-badge danger">0</span>
+          </summary>
+          <div class="message">Aplicativos comuns só são ignorados quando a assinatura digital esperada ou a fonte oficial é confirmada. Um Discord.exe vindo de outro domínio continua sendo mostrado aqui.</div>
+          <div id="unknownAppsList"></div>
+        </details>
+
+        <details class="report-section severity-group severity-critical">
+          <summary>
+            <span>Histórico apagado recuperado</span>
+            <span id="recoveredHistoryCountBadge" class="summary-badge danger">0</span>
+          </summary>
+          <div class="message">Vestígios recuperados das páginas SQLite, WAL e journal do navegador que não aparecem mais nas tabelas ativas.</div>
+          <div id="recoveredHistoryList"></div>
+        </details>
+
+        <details class="report-section severity-group severity-medium">
+          <summary>
+            <span>Arquivos apagados no NTFS / USN</span>
+            <span id="deletedUsnCountBadge" class="summary-badge warning">0</span>
+          </summary>
+          <div class="message">Nomes de EXE/ZIP/RAR/7Z/scripts recentemente apagados segundo o USN Journal, mesmo que nunca tenham sido executados.</div>
+          <div id="deletedUsnList"></div>
         </details>
 
         <details class="report-section severity-group severity-medium">
@@ -278,6 +307,6 @@
     </section>
   </main>
 
-  <script src="/admin.js?v=20260924-6"></script>
+  <script src="/admin.js?v=20260924-7"></script>
 </body>
 </html>
