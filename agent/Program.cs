@@ -943,7 +943,7 @@ internal static class Program
 
             string root = drive.RootDirectory.FullName;
 
-            var options = new EnumerationOptions
+            var options = new System.IO.EnumerationOptions
             {
                 RecurseSubdirectories = true,
                 IgnoreInaccessible = true,
