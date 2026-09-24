@@ -1782,7 +1782,245 @@ async function addBuiltInReviewFindings(analysisId, report) {
       .some((value) =>
         /\.exe(?:$|[?#])/i.test(String(value || "").trim()));
 
-  const catalogFindingKeys = new Set();
+  const isUsbStorageLike = (item) => {
+    const haystack = [
+      item?.deviceClass,
+      item?.instanceId,
+      item?.friendlyName,
+      item?.deviceDescription,
+      item?.manufacturer,
+      item?.name,
+      item?.deviceId,
+      item?.pnpDeviceId
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+
+    return (
+      haystack.includes("usbstor") ||
+      haystack.includes("mass storage") ||
+      haystack.includes("diskdrive") ||
+      haystack.includes("usb disk") ||
+      haystack.includes("flash drive") ||
+      haystack.includes("pendrive")
+    );
+  };
+
+  const recentDisconnectedUsb = (report.usbHistory || [])
+    .filter((item) =>
+      item.present === false &&
+      isUsbStorageLike(item) &&
+      ageDays(item.lastDisconnectedUtc || item.lastConnectedUtc) <= 3);
+
+  for (const item of recentDisconnectedUsb) {
+    await insertReviewFinding(
+      analysisId,
+      "Pendrive/armazenamento USB desconectado recentemente",
+      "medium",
+      "usb_recent_disconnect",
+      item.friendlyName ||
+        item.deviceDescription ||
+        item.instanceId ||
+        "USB removível",
+      {
+        ...item,
+        specialUsbAlert: true,
+        confidence: "medium",
+        note: "Dispositivo de armazenamento USB foi desconectado nos últimos 3 dias. É um alerta especial de contexto; sozinho não é detecção crítica."
+      }
+    );
+  }
+
+  const randomExecutionSeen = new Set();
+  const randomExecutionCandidates = [
+    ...(report.processes || []).map((item) => ({
+      value: item.path || item.name,
+      source: "Processo atual",
+      time: item.startTimeUtc,
+      present: true,
+      evidence: item
+    })),
+    ...(report.prefetchExecutions || []).map((item) => ({
+      value:
+        item.resolvedExecutablePath ||
+        item.nativeExecutablePath ||
+        item.executableName,
+      source: "Prefetch",
+      time: item.lastRunUtc,
+      present: item.executablePresent,
+      evidence: item
+    })),
+    ...(report.processCreationEvents || []).map((item) => ({
+      value: item.processPath || item.processName,
+      source: "Event Log 4688",
+      time: item.timeCreatedUtc,
+      present: item.processPresent,
+      evidence: item
+    })),
+    ...(report.bam || []).map((item) => ({
+      value: item.path,
+      source: "BAM",
+      time: item.lastExecutionUtc,
+      present: item.fileExists,
+      evidence: item
+    }))
+  ];
+
+  for (const candidate of randomExecutionCandidates) {
+    const value = String(candidate.value || "");
+    const name = fileName(value);
+
+    if (
+      !/\.exe$/i.test(name) ||
+      !looksRandomExecutableName(name) ||
+      isTrustedInstalledPath(value) ||
+      isKnownBenignPeNoise(value)
+    ) {
+      continue;
+    }
+
+    if (
+      candidate.source !== "Processo atual" &&
+      ageDays(candidate.time) > 30
+    ) {
+      continue;
+    }
+
+    const key = name.toLowerCase();
+    if (!key || randomExecutionSeen.has(key))
+      continue;
+
+    randomExecutionSeen.add(key);
+
+    await insertReviewFinding(
+      analysisId,
+      candidate.present === false
+        ? "EXE com nome aleatório executado e depois apagado/não localizado"
+        : "EXE com nome aleatório executado",
+      "critical",
+      "executed_random_exe",
+      value || name,
+      {
+        ...candidate.evidence,
+        executionConfirmed: true,
+        randomLikeName: true,
+        executionSource: candidate.source,
+        executablePresent: candidate.present,
+        confidence: "high",
+        note: candidate.present === false
+          ? "Há evidência independente de execução e o EXE de nome aleatório não está mais presente."
+          : "Há evidência independente de execução de um EXE com nome de alta aleatoriedade."
+      }
+    );
+  }
+
+  for (const execution of report.prefetchExecutions || []) {
+    const executionPath =
+      execution.resolvedExecutablePath ||
+      execution.nativeExecutablePath ||
+      execution.executableName ||
+      "";
+
+    const executionName = fileName(
+      execution.executableName || executionPath
+    );
+
+    if (!/\.exe$/i.test(executionName))
+      continue;
+
+    const runMs = new Date(execution.lastRunUtc || 0).getTime();
+
+    const disconnectedMatch = recentDisconnectedUsb
+      .map((item) => {
+        const disconnectMs = new Date(
+          item.lastDisconnectedUtc ||
+          item.lastConnectedUtc ||
+          0
+        ).getTime();
+
+        const plausible =
+          Number.isFinite(runMs) &&
+          Number.isFinite(disconnectMs) &&
+          runMs > 0 &&
+          disconnectMs > 0 &&
+          runMs <= disconnectMs + 15 * 60 * 1000 &&
+          runMs >= disconnectMs - 24 * 60 * 60 * 1000;
+
+        return plausible
+          ? { item, delta: Math.abs(disconnectMs - runMs) }
+          : null;
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.delta - b.delta)[0]?.item || null;
+
+    const connectedRemovable =
+      execution.currentRemovable === true;
+
+    const disconnectedRemovable =
+      execution.volumeNotMounted === true &&
+      execution.nonSystemVolume === true &&
+      Boolean(disconnectedMatch);
+
+    if (!connectedRemovable && !disconnectedRemovable)
+      continue;
+
+    await insertReviewFinding(
+      analysisId,
+      connectedRemovable
+        ? "PRIORIDADE MÁXIMA: EXE executado em pendrive/removível conectado"
+        : "PRIORIDADE MÁXIMA: EXE executado em pendrive/removível desconectado",
+      "critical",
+      "usb_execution",
+      executionPath || executionName,
+      {
+        ...execution,
+        executionConfirmed: true,
+        usbPriorityMaximum: true,
+        usbState: connectedRemovable ? "connected" : "disconnected",
+        correlatedUsb: disconnectedMatch,
+        confidence: "high",
+        note: connectedRemovable
+          ? "O Prefetch confirma execução de EXE em unidade atualmente classificada como removível. Deve ficar no topo da prioridade."
+          : "O Prefetch confirma execução em volume não montado e o horário é compatível com um armazenamento USB desconectado recentemente. Deve ficar no topo da prioridade."
+      }
+    );
+  }
+
+  for (const download of report.browserDownloads || []) {
+    const downloadName =
+      download.fileName ||
+      download.targetPath ||
+      download.currentPath ||
+      "";
+
+    if (
+      !isDiscordAttachmentDownload(download) ||
+      !isRiskyDownloadName(downloadName)
+    ) {
+      continue;
+    }
+
+    await insertReviewFinding(
+      analysisId,
+      "Arquivo executável/compactado baixado de anexo CDN do Discord",
+      "critical",
+      "browser_download",
+      download.targetPath ||
+        download.fileName ||
+        download.sourceUrl ||
+        "Discord CDN",
+      {
+        ...download,
+        discordAttachment: true,
+        officialDiscordUpdate: false,
+        confidence: "high",
+        note: "O histórico do navegador aponta o download de arquivo executável/compactado por URL de anexos do CDN do Discord. Atualizadores oficiais do Discord são excluídos desta regra."
+      }
+    );
+  }
+
+    const catalogFindingKeys = new Set();
 
   const addCatalogFindings = async (artifactType, artifactValue, evidence, values) => {
     const matches = findRustCatalogMatches(values);
