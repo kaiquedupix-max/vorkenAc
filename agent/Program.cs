@@ -135,9 +135,39 @@ internal static class Program
                 () => CollectCandidateFiles(prefetch, rules),
                 errors);
 
+            List<PeInspectionRecord> peInspections = SafeCollect(
+                "Análise PE / entropia / packers",
+                () => PeInspectionCollector.Collect(files),
+                errors);
+
+            List<ZoneIdentifierRecord> zoneIdentifiers = SafeCollect(
+                "Zone.Identifier / origem de downloads",
+                ZoneIdentifierCollector.Collect,
+                errors);
+
+            List<AlternateDataStreamRecord> alternateDataStreams = SafeCollect(
+                "Alternate Data Streams",
+                () => AlternateDataStreamCollector.Collect(files),
+                errors);
+
+            List<AutorunIntegrityRecord> autorunIntegrity = SafeCollect(
+                "Autoruns e tarefas agendadas",
+                AutorunIntegrityCollector.Collect,
+                errors);
+
             List<ProcessRecord> processes = SafeCollect(
                 "Processos",
                 CollectProcesses,
+                errors);
+
+            List<ProcessModuleIntegrityRecord> processModuleIntegrity = SafeCollect(
+                "Módulos em processos críticos",
+                ProcessModuleIntegrityCollector.Collect,
+                errors);
+
+            List<WindowProtectionRecord> protectedWindows = SafeCollect(
+                "Janelas excluídas de captura",
+                WindowProtectionCollector.Collect,
                 errors);
 
             List<ServiceRecord> services = SafeCollect(
@@ -195,6 +225,11 @@ internal static class Program
                 () => AdvancedCollectors.CollectPowerShellRuleHits(rules),
                 errors);
 
+            List<PowerShellArtifactRecord> powerShellArtifacts = SafeCollect(
+                "PowerShell histórico / eventos",
+                PowerShellForensicsCollector.Collect,
+                errors);
+
             List<PrefetchIntegrityRecord> prefetchIntegrity = SafeCollect(
                 "Integridade do Prefetch",
                 AdvancedCollectors.CollectPrefetchIntegrity,
@@ -223,6 +258,16 @@ internal static class Program
             List<RecentShortcutRecord> recentShortcuts = SafeCollect(
                 "Atalhos recentes",
                 DeepForensicCollector.CollectRecentShortcuts,
+                errors);
+
+            List<CrashArtifactRecord> crashArtifacts = SafeCollect(
+                "Windows Error Reporting / crashes",
+                CrashArtifactCollector.Collect,
+                errors);
+
+            List<SecurityProductRecord> securityProducts = SafeCollect(
+                "Produtos de segurança registrados",
+                SecurityProductCollector.Collect,
                 errors);
 
             List<RecycleBinRecord> recycleBin = SafeCollect(
@@ -260,6 +305,12 @@ internal static class Program
             List<RecoveredBrowserArtifact> browserRecoveredArtifacts = SafeCollect(
                 "Vestígios de histórico apagado",
                 () => BrowserArtifactRecoveryCollector.Collect(
+                    rulesPayload.ThreatCatalog),
+                errors);
+
+            List<NetworkIndicatorRecord> networkIndicators = SafeCollect(
+                "Rede / DNS / conexões TCP",
+                () => NetworkIndicatorCollector.Collect(
                     rulesPayload.ThreatCatalog),
                 errors);
 
@@ -301,6 +352,16 @@ internal static class Program
             List<UsnJournalStateRecord> usnJournalState = SafeCollect(
                 "Estado do USN Journal",
                 DeepForensicCollector.CollectUsnJournalState,
+                errors);
+
+            List<UsnActivityRecord> usnActivity = SafeCollect(
+                "JournalTrace / atividade USN",
+                UsnActivityCollector.Collect,
+                errors);
+
+            List<SystemIntegrityExpansionRecord> systemIntegrityExpansion = SafeCollect(
+                "Integridade ampliada do Windows",
+                SystemIntegrityExpansionCollector.Collect,
                 errors);
 
             ActivityHistoryState activityHistory;
@@ -352,6 +413,12 @@ internal static class Program
                 Drivers = drivers,
                 Startup = startup,
                 Files = files,
+                PeInspections = peInspections,
+                ZoneIdentifiers = zoneIdentifiers,
+                AlternateDataStreams = alternateDataStreams,
+                AutorunIntegrity = autorunIntegrity,
+                ProcessModuleIntegrity = processModuleIntegrity,
+                ProtectedWindows = protectedWindows,
                 Bam = bam,
                 UserAssist = userAssist,
                 MuiCache = muiCache,
@@ -360,17 +427,21 @@ internal static class Program
                 ShimCache = shimCache,
                 SetupApiUsb = setupApiUsb,
                 PowerShellHits = powerShellHits,
+                PowerShellArtifacts = powerShellArtifacts,
                 PrefetchIntegrity = prefetchIntegrity,
                 HiddenVolumes = hiddenVolumes,
                 LogClearSignals = logClearSignals,
                 ProcessCreationEvents = processCreationEvents,
                 DefenderDetections = defenderDetections,
                 RecentShortcuts = recentShortcuts,
+                CrashArtifacts = crashArtifacts,
+                SecurityProducts = securityProducts,
                 RecycleBin = recycleBin,
                 VmEnvironment = vmEnvironment,
                 BrowserDownloads = browserDownloads,
                 BrowserHistorySignals = browserHistorySignals,
                 BrowserRecoveredArtifacts = browserRecoveredArtifacts,
+                NetworkIndicators = networkIndicators,
                 DeletedUsnRecords = deletedUsnRecords,
                 ExtensionMismatches = extensionMismatches,
                 DefenderExclusions = defenderExclusions,
@@ -380,6 +451,8 @@ internal static class Program
                 VirtualDisks = virtualDisks,
                 RustModules = rustModules,
                 UsnJournalState = usnJournalState,
+                UsnActivity = usnActivity,
+                SystemIntegrityExpansion = systemIntegrityExpansion,
                 SystemArtifacts = systemArtifacts,
                 Errors = errors
             };
@@ -1388,6 +1461,12 @@ internal sealed class ScanReport
     public List<DriverRecord> Drivers { get; set; } = new();
     public List<StartupRecord> Startup { get; set; } = new();
     public List<FileRecord> Files { get; set; } = new();
+    public List<PeInspectionRecord> PeInspections { get; set; } = new();
+    public List<ZoneIdentifierRecord> ZoneIdentifiers { get; set; } = new();
+    public List<AlternateDataStreamRecord> AlternateDataStreams { get; set; } = new();
+    public List<AutorunIntegrityRecord> AutorunIntegrity { get; set; } = new();
+    public List<ProcessModuleIntegrityRecord> ProcessModuleIntegrity { get; set; } = new();
+    public List<WindowProtectionRecord> ProtectedWindows { get; set; } = new();
     public List<BamRecord> Bam { get; set; } = new();
     public List<UserAssistRecord> UserAssist { get; set; } = new();
     public List<MuiCacheRecord> MuiCache { get; set; } = new();
@@ -1396,17 +1475,21 @@ internal sealed class ScanReport
     public List<ShimCacheRecord> ShimCache { get; set; } = new();
     public List<SetupApiUsbRecord> SetupApiUsb { get; set; } = new();
     public List<PowerShellRuleHit> PowerShellHits { get; set; } = new();
+    public List<PowerShellArtifactRecord> PowerShellArtifacts { get; set; } = new();
     public List<PrefetchIntegrityRecord> PrefetchIntegrity { get; set; } = new();
     public List<VolumeRecord> HiddenVolumes { get; set; } = new();
     public List<EventLogSignalRecord> LogClearSignals { get; set; } = new();
     public List<ProcessCreationRecord> ProcessCreationEvents { get; set; } = new();
     public List<DefenderDetectionRecord> DefenderDetections { get; set; } = new();
     public List<RecentShortcutRecord> RecentShortcuts { get; set; } = new();
+    public List<CrashArtifactRecord> CrashArtifacts { get; set; } = new();
+    public List<SecurityProductRecord> SecurityProducts { get; set; } = new();
     public List<RecycleBinRecord> RecycleBin { get; set; } = new();
     public VmEnvironmentRecord VmEnvironment { get; set; } = new();
     public List<BrowserDownloadRecord> BrowserDownloads { get; set; } = new();
     public List<BrowserHistoryRecord> BrowserHistorySignals { get; set; } = new();
     public List<RecoveredBrowserArtifact> BrowserRecoveredArtifacts { get; set; } = new();
+    public List<NetworkIndicatorRecord> NetworkIndicators { get; set; } = new();
     public List<DeletedUsnRecord> DeletedUsnRecords { get; set; } = new();
     public List<ExtensionMismatchRecord> ExtensionMismatches { get; set; } = new();
     public List<DefenderExclusionRecord> DefenderExclusions { get; set; } = new();
@@ -1416,6 +1499,8 @@ internal sealed class ScanReport
     public List<VirtualDiskRecord> VirtualDisks { get; set; } = new();
     public List<RustModuleRecord> RustModules { get; set; } = new();
     public List<UsnJournalStateRecord> UsnJournalState { get; set; } = new();
+    public List<UsnActivityRecord> UsnActivity { get; set; } = new();
+    public List<SystemIntegrityExpansionRecord> SystemIntegrityExpansion { get; set; } = new();
     public SystemArtifactRecord SystemArtifacts { get; set; } = new();
     public List<string> Errors { get; set; } = new();
 }
