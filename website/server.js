@@ -1226,8 +1226,27 @@ async function addBuiltInReviewFindings(analysisId, report) {
       ? signerMatchesCommonApp(appInfo, item.signerSubject)
       : false;
 
+    const officialDownloadOk = appInfo
+      ? (report.browserDownloads || []).some((download) => {
+          const downloadName = path.basename(
+            String(download.fileName || download.targetPath || "")
+          ).toLowerCase();
+
+          const itemName = path.basename(
+            String(item.name || item.path || "")
+          ).toLowerCase();
+
+          return (
+            downloadName &&
+            itemName &&
+            downloadName === itemName &&
+            downloadMatchesOfficialSource(appInfo, download)
+          );
+        })
+      : false;
+
     if (appInfo) {
-      if (signerOk)
+      if (signerOk || officialDownloadOk)
         continue;
 
       if (
@@ -1245,6 +1264,7 @@ async function addBuiltInReviewFindings(analysisId, report) {
             expectedApplication: appInfo.name,
             expectedSigners: appInfo.signerContains || [],
             signatureMatched: signerOk,
+            officialDownloadMatched: officialDownloadOk,
             confidence: "high",
             note: "O nome imita um aplicativo comum, mas a assinatura digital esperada não foi confirmada. Nome conhecido não é tratado como legítimo sem validação.",
           }
