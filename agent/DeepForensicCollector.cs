@@ -836,18 +836,7 @@ internal static class DeepForensicCollector
 
     private static (bool Signed, string Subject) TrySigner(string path)
     {
-        try
-        {
-            X509Certificate certificate =
-                X509Certificate.CreateFromSignedFile(path);
-
-            using var cert2 = new X509Certificate2(certificate);
-            return (true, cert2.Subject ?? "");
-        }
-        catch
-        {
-            return (false, "");
-        }
+        return AuthenticodeVerifier.Verify(path);
     }
 
     private static bool IsPathUnder(string path, string root)
