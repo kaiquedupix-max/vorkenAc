@@ -969,8 +969,13 @@ async function openReport(id) {
         .includes(currentIntegrationDecision.status)
     );
 
-  if (gfBanBtn)
+  if (gfBanBtn) {
     gfBanBtn.disabled = decisionLocked;
+    gfBanBtn.textContent =
+      selectedBanEvidenceIds.size > 0
+        ? "⚠ Banir jogador · " + selectedBanEvidenceIds.size + " prova(s)"
+        : "⚠ Banir jogador";
+  }
 
   if (gfReleaseBtn)
     gfReleaseBtn.disabled = decisionLocked;
@@ -1176,6 +1181,7 @@ async function openReport(id) {
     <div class="kv"><span>Agente</span><span>${escapeHtml(analysis.agent_version || "—")}</span></div>
     ${currentGuerraFriaLinked ? '<div class="kv"><span>Guerra Fria · SteamID</span><span>' + escapeHtml(analysis.external_player_id || "—") + '</span></div>' : ""}
     ${currentGuerraFriaLinked ? '<div class="kv"><span>Código da verificação</span><span>' + escapeHtml(analysis.external_verification_code || "—") + '</span></div>' : ""}
+    ${analysis.external_evidence_url ? '<div class="kv"><span>Provas publicadas</span><span><a class="analysis-link" target="_blank" rel="noopener" href="' + escapeHtml(analysis.external_evidence_url) + '">Abrir resultados do Vorken</a></span></div>' : ""}
     <div class="kv"><span>Revisão final</span><span>${escapeHtml(reviewStatusLabel)}</span></div>
     <div class="kv"><span>Última revisão</span><span>${escapeHtml(formatDate(reviewState.reviewedAt))}</span></div>
     <div class="kv"><span>Início</span><span>${escapeHtml(formatDate(analysis.started_at))}</span></div>
