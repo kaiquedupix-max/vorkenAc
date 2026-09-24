@@ -493,16 +493,6 @@ async function openReport(id) {
     });
   }
 
-  for (const item of arrays.browserHistorySignals) {
-    if (!item.visitTimeUtc) continue;
-    timeline.push({
-      time: item.visitTimeUtc,
-      action: item.searchQuery ? "PESQUISA SUSPEITA" : "SITE SUSPEITO",
-      tag: item.riskLevel === "high" ? "high" : item.riskLevel === "medium" ? "medium" : "info",
-      path: item.searchQuery || item.host || item.url || "Navegador",
-      detail: [item.browser, (item.matchedTerms || []).join(", ")].filter(Boolean).join(" · ")
-    });
-  }
   for (const item of arrays.prefetchExecutions) {
     if (item.likelyDetachedOrRemovable !== true) continue;
     const pathValue = item.resolvedExecutablePath || item.nativeExecutablePath || "";
@@ -669,6 +659,17 @@ async function openReport(id) {
     : '<div class="message ok">Nenhum download apagado/movido foi preservado no histórico dos navegadores suportados.</div>';
 
   const timeline = [];
+
+  for (const item of arrays.browserHistorySignals) {
+    if (!item.visitTimeUtc) continue;
+    timeline.push({
+      time: item.visitTimeUtc,
+      action: item.searchQuery ? "PESQUISA SUSPEITA" : "SITE SUSPEITO",
+      tag: item.riskLevel === "high" ? "high" : item.riskLevel === "medium" ? "medium" : "info",
+      path: item.searchQuery || item.host || item.url || "Navegador",
+      detail: [item.browser, safeArray(item.matchedTerms).join(", ")].filter(Boolean).join(" · ")
+    });
+  }
 
   for (const item of arrays.browserDownloads) {
     if (!item.startTimeUtc) continue;
