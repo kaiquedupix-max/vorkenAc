@@ -332,16 +332,11 @@ async function openReport(id) {
 
   document.getElementById("reportMetrics").innerHTML = `
     <div class="metric"><small>STATUS</small><strong>${escapeHtml(statusLabel(analysis.status))}</strong></div>
-    <div class="metric danger-metric"><small>CRÍTICOS / ALTOS</small><strong>${criticalFindings.length}</strong></div>
-    <div class="metric warning-metric"><small>MÉDIOS</small><strong>${mediumFindings.length}</strong></div>
-    <div class="metric"><small>USB DESCONECTADOS</small><strong>${disconnectedUsb}</strong></div>
-  `;
-
-  document.getElementById("severityOverview").innerHTML = `
-    <div class="metric danger-metric"><small>VERMELHO</small><strong>${criticalFindings.length}</strong><span>Crítico / alto</span></div>
-    <div class="metric warning-metric"><small>AMARELO</small><strong>${mediumFindings.length}</strong><span>Revisar</span></div>
-    <div class="metric hardware-metric"><small>HARDWARE / USB</small><strong>${hardwareCount}</strong><span>Separado</span></div>
-    <div class="metric info-metric"><small>INFORMATIVO</small><strong>${informationalCount}</strong><span>Recolhido</span></div>
+    <div class="metric danger-metric"><small>VERMELHO · CRÍTICO/ALTO</small><strong>${criticalFindings.length}</strong><span>Clique na seção vermelha abaixo</span></div>
+    <div class="metric warning-metric"><small>AMARELO · REVISAR</small><strong>${mediumFindings.length}</strong><span>Clique na seção amarela abaixo</span></div>
+    <div class="metric hardware-metric"><small>HARDWARE / USB</small><strong>${hardwareCount}</strong><span>Pendrives e placas separados</span></div>
+    <div class="metric priority-metric"><small>ARQUIVOS PRIORITÁRIOS</small><strong id="summaryPriorityCount">0</strong><span>EXE/ZIP/RAR/7Z suspeitos</span></div>
+    <div class="metric info-metric"><small>AZUL · INVENTÁRIO</small><strong>${informationalCount}</strong><span>Oculto até você abrir</span></div>
   `;
 
   document.getElementById("criticalCountBadge").textContent = criticalFindings.length;
@@ -614,7 +609,7 @@ async function openReport(id) {
 
   for (const item of arrays.files) {
     const ext = String(item.extension || "").toLowerCase();
-    if (ext !== ".zip") continue;
+    if (![".zip", ".rar", ".7z"].includes(ext)) continue;
 
     const zipText = [
       item.name,
@@ -627,7 +622,7 @@ async function openReport(id) {
       "aimbot", "recoil", "macro", "spoofer", "bypass", "eac"
     ].filter((term) => zipText.includes(term));
 
-    const randomExeInside = safeArray(item.archiveEntries).some((entry) =>
+    const randomExeInside = ext === ".zip" && safeArray(item.archiveEntries).some((entry) =>
       /\.exe$/i.test(String(entry || "")) &&
       /^[A-Z0-9]{7,28}\.exe$/i.test(
         String(entry || "").split(/[\\/]/).at(-1) || ""
@@ -637,16 +632,16 @@ async function openReport(id) {
 
     priorityFiles.push({
       priority: randomExeInside ? 7 : 5,
-      status: "ZIP SUSPEITO",
+      status: ext === ".zip" ? "ZIP SUSPEITO" : "ARQUIVO COMPACTADO SUSPEITO",
       tag: randomExeInside ? "high" : "medium",
       name: item.name || "Arquivo ZIP",
       path: item.path || "—",
       time: item.lastWriteUtc || item.createdUtc,
-      source: "Análise do ZIP",
+      source: ext === ".zip" ? "Análise interna do ZIP" : "Nome/caminho do arquivo compactado",
       url: "",
       detail: randomExeInside
         ? "ZIP contém executável com nome aleatório."
-        : "ZIP contém combinação de termos associados a cheat/script: " + zipTerms.join(", ")
+        : "Arquivo compactado contém combinação de termos associados a cheat/script: " + zipTerms.join(", ")
     });
   }
 
@@ -692,6 +687,10 @@ async function openReport(id) {
     })
     .slice(0, 150);
 
+  document.getElementById("priorityCountBadge").textContent = priorityUnique.length;
+  const summaryPriorityCount = document.getElementById("summaryPriorityCount");
+  if (summaryPriorityCount) summaryPriorityCount.textContent = priorityUnique.length;
+
   document.getElementById("priorityFilesList").innerHTML = priorityUnique.length
     ? priorityUnique.map((item) => {
         const sourceUrl = safeExternalUrl(item.url);
@@ -722,6 +721,8 @@ async function openReport(id) {
       (historyRiskOrder[String(a.riskLevel || "").toLowerCase()] || 0) ||
       new Date(b.visitTimeUtc || 0) - new Date(a.visitTimeUtc || 0))
     .slice(0, 300);
+
+  document.getElementById("historyCountBadge").textContent = browserHistorySignals.length;
 
   document.getElementById("browserHistorySignalsList").innerHTML = browserHistorySignals.length
     ? browserHistorySignals.map((item) => {
