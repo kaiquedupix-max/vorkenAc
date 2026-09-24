@@ -5909,6 +5909,7 @@ app.post(
     const analysisResult = await pool.query(
       `SELECT
          id,
+         status,
          external_source,
          external_player_id,
          external_discord_user_id,
@@ -5930,6 +5931,13 @@ app.post(
       return res.status(409).json({
         error: "analysis_not_linked",
         message: "Esta análise não está vinculada ao Guerra Fria."
+      });
+    }
+
+    if (analysis.status !== "completed") {
+      return res.status(409).json({
+        error: "analysis_not_completed",
+        message: "Aguarde a análise Vorken concluir antes de aplicar a decisão."
       });
     }
 
