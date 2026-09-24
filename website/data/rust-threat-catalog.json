@@ -1,5 +1,5 @@
 {
-  "version": "2026-09-24",
+  "version": "2026-09-24.2",
   "notes": "Catálogo defensivo de nomes/domínios publicamente associados a cheats/scripts de Rust. Correspondência de nome isolado não deve ser tratada como prova sem contexto.",
   "brands": [
     {
@@ -15,7 +15,10 @@
         "lethality.club"
       ],
       "severity": "critical",
-      "source": "public_web"
+      "source": "public_web",
+      "discordInvites": [
+        "lethalityrust"
+      ]
     },
     {
       "name": "Revolex",
@@ -29,7 +32,10 @@
         "revolexscript.com"
       ],
       "severity": "critical",
-      "source": "public_web"
+      "source": "public_web",
+      "discordInvites": [
+        "j4GP9t"
+      ]
     },
     {
       "name": "Purge Recoil",
@@ -43,7 +49,8 @@
         "purgerecoil.club"
       ],
       "severity": "critical",
-      "source": "public_web"
+      "source": "public_web",
+      "discordInvites": []
     },
     {
       "name": "Zaza Cheats",
@@ -56,7 +63,10 @@
         "zazacheats.net"
       ],
       "severity": "critical",
-      "source": "public_web"
+      "source": "public_web",
+      "discordInvites": [
+        "zazacheats"
+      ]
     },
     {
       "name": "Slayer Private",
@@ -69,7 +79,8 @@
         "slayer.club"
       ],
       "severity": "critical",
-      "source": "public_web"
+      "source": "public_web",
+      "discordInvites": []
     },
     {
       "name": "Disconnect Cheats",
@@ -81,7 +92,8 @@
         "disconnectcheats.com"
       ],
       "severity": "critical",
-      "source": "public_web"
+      "source": "public_web",
+      "discordInvites": []
     },
     {
       "name": "Beazt Private",
@@ -92,7 +104,8 @@
       ],
       "domains": [],
       "severity": "critical",
-      "source": "public_web"
+      "source": "public_web",
+      "discordInvites": []
     },
     {
       "name": "Agera",
@@ -105,7 +118,10 @@
         "discord.me"
       ],
       "severity": "high",
-      "source": "public_web"
+      "source": "public_web",
+      "discordInvites": [
+        "zbscn"
+      ]
     },
     {
       "name": "PureDMA",
@@ -116,7 +132,8 @@
       ],
       "domains": [],
       "severity": "critical",
-      "source": "public_web"
+      "source": "public_web",
+      "discordInvites": []
     },
     {
       "name": "LordCheat",
@@ -127,7 +144,8 @@
       ],
       "domains": [],
       "severity": "high",
-      "source": "public_web"
+      "source": "public_web",
+      "discordInvites": []
     },
     {
       "name": "AimSync",
@@ -140,7 +158,8 @@
         "aimsync.ai"
       ],
       "severity": "critical",
-      "source": "public_web"
+      "source": "public_web",
+      "discordInvites": []
     },
     {
       "name": "SmartAI",
@@ -153,7 +172,8 @@
         "aptitude.pub"
       ],
       "severity": "high",
-      "source": "public_web"
+      "source": "public_web",
+      "discordInvites": []
     },
     {
       "name": "Nowax Cheats",
@@ -166,7 +186,8 @@
         "nowaxcheats.com"
       ],
       "severity": "critical",
-      "source": "public_web"
+      "source": "public_web",
+      "discordInvites": []
     },
     {
       "name": "FCheats",
@@ -183,7 +204,8 @@
         "fcheats.com"
       ],
       "severity": "critical",
-      "source": "public_web"
+      "source": "public_web",
+      "discordInvites": []
     },
     {
       "name": "GameVantage",
@@ -193,7 +215,8 @@
       ],
       "domains": [],
       "severity": "high",
-      "source": "public_web"
+      "source": "public_web",
+      "discordInvites": []
     },
     {
       "name": "BlastAim",
@@ -203,7 +226,8 @@
       ],
       "domains": [],
       "severity": "critical",
-      "source": "public_web"
+      "source": "public_web",
+      "discordInvites": []
     },
     {
       "name": "Aegis",
@@ -213,7 +237,8 @@
       ],
       "domains": [],
       "severity": "high",
-      "source": "public_web"
+      "source": "public_web",
+      "discordInvites": []
     },
     {
       "name": "AuroraCheats",
@@ -223,7 +248,8 @@
       ],
       "domains": [],
       "severity": "critical",
-      "source": "public_web"
+      "source": "public_web",
+      "discordInvites": []
     },
     {
       "name": "Mirage",
@@ -233,7 +259,8 @@
       ],
       "domains": [],
       "severity": "high",
-      "source": "public_web"
+      "source": "public_web",
+      "discordInvites": []
     },
     {
       "name": "The Darkest Magic",
@@ -243,7 +270,8 @@
       ],
       "domains": [],
       "severity": "high",
-      "source": "public_web"
+      "source": "public_web",
+      "discordInvites": []
     },
     {
       "name": "AI Aimbot",
@@ -255,7 +283,8 @@
       ],
       "domains": [],
       "severity": "high",
-      "source": "public_web"
+      "source": "public_web",
+      "discordInvites": []
     },
     {
       "name": "Aimmy",
@@ -266,7 +295,8 @@
       ],
       "domains": [],
       "severity": "high",
-      "source": "public_web"
+      "source": "public_web",
+      "discordInvites": []
     },
     {
       "name": "Kosmos AI",
@@ -277,7 +307,8 @@
       ],
       "domains": [],
       "severity": "high",
-      "source": "public_web"
+      "source": "public_web",
+      "discordInvites": []
     },
     {
       "name": "Synthar AI",
@@ -288,7 +319,8 @@
       ],
       "domains": [],
       "severity": "high",
-      "source": "public_web"
+      "source": "public_web",
+      "discordInvites": []
     },
     {
       "name": "Moonlight",
@@ -299,7 +331,8 @@
       ],
       "domains": [],
       "severity": "critical",
-      "source": "public_mentions"
+      "source": "public_mentions",
+      "discordInvites": []
     },
     {
       "name": "Poak",
@@ -310,7 +343,8 @@
       ],
       "domains": [],
       "severity": "critical",
-      "source": "admin_seed"
+      "source": "admin_seed",
+      "discordInvites": []
     },
     {
       "name": "RevelX",
@@ -321,7 +355,67 @@
       ],
       "domains": [],
       "severity": "critical",
-      "source": "admin_seed"
+      "source": "admin_seed",
+      "discordInvites": []
+    },
+    {
+      "name": "Memez",
+      "aliases": [
+        "memez macros",
+        "memez internalx",
+        "memez external"
+      ],
+      "domains": [],
+      "discordInvites": [],
+      "severity": "critical",
+      "source": "public_marketplace"
+    },
+    {
+      "name": "Ancient",
+      "aliases": [
+        "ancient rust cheat",
+        "ancient rust"
+      ],
+      "domains": [],
+      "discordInvites": [],
+      "severity": "high",
+      "source": "public_marketplace"
+    },
+    {
+      "name": "Mason Internal",
+      "aliases": [
+        "mason internal",
+        "mason rust internal"
+      ],
+      "domains": [],
+      "discordInvites": [],
+      "severity": "high",
+      "source": "public_marketplace"
+    },
+    {
+      "name": "Aurora Cheats",
+      "aliases": [
+        "auroracheats",
+        "aurora cheats rust"
+      ],
+      "domains": [],
+      "discordInvites": [],
+      "severity": "critical",
+      "source": "public_marketplace"
+    },
+    {
+      "name": "AimSync AI",
+      "aliases": [
+        "aimsync",
+        "aimsync.ai",
+        "aimsync rust"
+      ],
+      "domains": [
+        "aimsync.ai"
+      ],
+      "discordInvites": [],
+      "severity": "critical",
+      "source": "public_marketplace"
     }
   ]
 }
