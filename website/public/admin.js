@@ -405,6 +405,7 @@ async function openReport(id) {
     alternateDataStreams: safeArray(payload.alternateDataStreams),
     autorunIntegrity: safeArray(payload.autorunIntegrity),
     processModuleIntegrity: safeArray(payload.processModuleIntegrity),
+    processMemoryIntegrity: safeArray(payload.processMemoryIntegrity),
     protectedWindows: safeArray(payload.protectedWindows),
     bam: safeArray(payload.bam),
     userAssist: safeArray(payload.userAssist),
@@ -462,6 +463,7 @@ async function openReport(id) {
     arrays.alternateDataStreams.length +
     arrays.autorunIntegrity.filter((x) => x.suspicious === true).length +
     arrays.processModuleIntegrity.filter((x) => x.suspicious === true).length +
+    arrays.processMemoryIntegrity.length +
     arrays.protectedWindows.length +
     arrays.powerShellArtifacts.length +
     arrays.crashArtifacts.length +
@@ -650,6 +652,7 @@ async function openReport(id) {
     <div class="metric"><small>AUTORUNS SUSPEITOS</small><strong>${arrays.autorunIntegrity.filter((x) => x.suspicious === true).length}</strong></div>
     <div class="metric"><small>ADS</small><strong>${arrays.alternateDataStreams.length}</strong></div>
     <div class="metric"><small>DLL / MÓDULOS</small><strong>${arrays.processModuleIntegrity.length}</strong></div>
+    <div class="metric"><small>MEMÓRIA PRIVADA EXEC</small><strong>${arrays.processMemoryIntegrity.length}</strong></div>
     <div class="metric"><small>STREAMPROOF</small><strong>${arrays.protectedWindows.length}</strong></div>
     <div class="metric"><small>REDE / DNS</small><strong>${arrays.networkIndicators.length}</strong></div>
     <div class="metric"><small>JOURNALTRACE</small><strong>${arrays.usnActivity.length}</strong></div>
@@ -763,6 +766,21 @@ async function openReport(id) {
           <div class="finding-head"><h4>${escapeHtml((item.processName || "processo") + " → " + (item.moduleName || "módulo"))}</h4><span class="tag high">DLL</span></div>
           <code>${escapeHtml(item.modulePath || "—")}</code>
           <div class="kv"><span>Assinado</span><span>${item.moduleSigned ? "Sim" : "Não"}</span></div>
+        </div>
+      `
+    )
+  );
+
+  advancedHtml.push(
+    advancedGroup(
+      "Memória executável privada / manual-map",
+      arrays.processMemoryIntegrity,
+      (item) => `
+        <div class="finding">
+          <div class="finding-head"><h4>${escapeHtml(item.processName || "Processo")}</h4><span class="tag ${item.potentialManualMap ? "critical" : "info"}">${item.potentialManualMap ? "POSSÍVEL MANUAL MAP" : "MEM_PRIVATE EXEC"}</span></div>
+          <code>${escapeHtml((item.baseAddress || "—") + " · " + (item.regionSize || 0) + " bytes")}</code>
+          <div class="kv"><span>Processo</span><span>${escapeHtml(item.processPath || "—")}</span></div>
+          <div class="kv"><span>Cabeçalho MZ</span><span>${item.mzHeader ? "SIM" : "Não"}</span></div>
         </div>
       `
     )
@@ -884,6 +902,7 @@ async function openReport(id) {
     <div class="kv"><span>Autoruns avançados</span><span>${arrays.autorunIntegrity.length}</span></div>
     <div class="kv"><span>Processos</span><span>${arrays.processes.length}</span></div>
     <div class="kv"><span>Módulos em processos críticos</span><span>${arrays.processModuleIntegrity.length}</span></div>
+    <div class="kv"><span>Memória privada executável</span><span>${arrays.processMemoryIntegrity.length}</span></div>
     <div class="kv"><span>Janelas excluídas de captura</span><span>${arrays.protectedWindows.length}</span></div>
     <div class="kv"><span>Prefetch</span><span>${arrays.prefetch.length}</span></div>
     <div class="kv"><span>Serviços</span><span>${arrays.services.length}</span></div>
