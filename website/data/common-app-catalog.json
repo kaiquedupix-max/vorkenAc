@@ -1,5 +1,5 @@
 {
-  "version": "2026-09-24.3",
+  "version": "2026-09-24.4",
   "notes": "Allowlist defensiva de aplicativos comuns. Apps conhecidos são suprimidos quando nome + assinatura, origem oficial ou caminho instalado coerente confirmam legitimidade. Artefatos Vorken são sempre ignorados. Sinais independentes fortes (mídia removível executada, hash/catálogo malicioso, origem suspeita) continuam prevalecendo.",
   "apps": [
     {
@@ -1025,6 +1025,98 @@
         "storage.googleapis.com/antigravity",
         "storage.googleapis.com/",
         "googleapis.com/antigravity"
+      ]
+    },
+    {
+      "name": "Easy Anti-Cheat",
+      "filenames": [
+        "easyanticheat.exe",
+        "easyanticheat_eos.exe",
+        "easyanticheat_launcher.exe"
+      ],
+      "filenamePrefixes": [
+        "easyanticheat",
+        "eac_usermode_",
+        "eac_launcher",
+        "eac_"
+      ],
+      "signerContains": [
+        "easyanticheat oy",
+        "easy anti-cheat",
+        "epic games, inc",
+        "epic games inc"
+      ],
+      "officialUrlIncludes": [
+        "easy.ac/",
+        "epicgames.com/",
+        "epicgames.com/site/en-US/news/epic-online-services"
+      ]
+    },
+    {
+      "name": "BattlEye",
+      "filenames": [
+        "beservice.exe",
+        "beservice_x64.exe",
+        "battleye.exe"
+      ],
+      "filenamePrefixes": [
+        "beservice",
+        "battleye",
+        "beclient"
+      ],
+      "signerContains": [
+        "battleye innovations"
+      ],
+      "officialUrlIncludes": [
+        "battleye.com/",
+        "battleye.com/downloads/"
+      ]
+    },
+    {
+      "name": "Riot Vanguard",
+      "filenames": [
+        "vgc.exe",
+        "vgtray.exe",
+        "vgk.sys"
+      ],
+      "filenamePrefixes": [
+        "vgc",
+        "vgtray",
+        "vgk"
+      ],
+      "signerContains": [
+        "riot games, inc",
+        "riot games inc"
+      ],
+      "officialUrlIncludes": [
+        "riotgames.com/",
+        "support-valorant.riotgames.com/"
+      ]
+    },
+    {
+      "name": "Microsoft Visual C++ / .NET Runtime",
+      "filenames": [
+        "vc_redist.x64.exe",
+        "vc_redist.x86.exe",
+        "dotnet.exe",
+        "dotnet-hosting-win.exe",
+        "windowsdesktop-runtime.exe"
+      ],
+      "filenamePrefixes": [
+        "vc_redist.",
+        "dotnet-runtime-",
+        "windowsdesktop-runtime-",
+        "aspnetcore-runtime-",
+        "dotnet-hosting-"
+      ],
+      "signerContains": [
+        "microsoft corporation"
+      ],
+      "officialUrlIncludes": [
+        "aka.ms/vs/",
+        "download.visualstudio.microsoft.com/",
+        "dotnet.microsoft.com/",
+        "builds.dotnet.microsoft.com/"
       ]
     }
   ]
