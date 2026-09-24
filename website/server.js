@@ -4189,50 +4189,99 @@ app.post("/api/agent/:token/start", async (req, res) => {
 });
 
 app.post("/api/agent/:token/report", async (req, res) => {
-  const token = String(req.params.token || "");
-  const analysis = validToken(token) ? await getAnalysisByToken(token) : null;
-  if (!ensureAnalysisUsable(analysis, res)) return;
+  try {
+    const token = String(req.params.token || "");
+    const analysis = validToken(token) ? await getAnalysisByToken(token) : null;
+    if (!ensureAnalysisUsable(analysis, res)) return;
 
-  if (!req.body || typeof req.body !== "object" || Array.isArray(req.body)) {
-    return res.status(400).json({ error: "invalid_report" });
+    if (!req.body || typeof req.body !== "object" || Array.isArray(req.body)) {
+      return res.status(400).json({ error: "invalid_report" });
+    }
+
+    const report = req.body;
+
+    // Persist the complete report first. Large USN/JournalTrace collections can
+    // legitimately contain thousands of rows on some PCs. Rebuilding every
+    // finding synchronously before replying kept the reverse proxy waiting and
+    // could surface as a 502 even though the upload itself was valid.
+    await pool.query(
+      "INSERT INTO scan_reports(analysis_id, payload) VALUES ($1,$2::jsonb)",
+      [analysis.id, JSON.stringify(report)]
+    );
+
+    await pool.query(
+      `UPDATE analyses
+       SET status='running',
+           machine_name=COALESCE($2, machine_name),
+           os_version=COALESCE($3, os_version),
+           agent_version=COALESCE($4, agent_version),
+           machine_fingerprint=COALESCE($5, machine_fingerprint)
+       WHERE id=$1`,
+      [
+        analysis.id,
+        cleanText(report.machine?.machineName, 180) || null,
+        cleanText(report.machine?.osVersion, 250) || null,
+        cleanText(report.agentVersion, 80) || null,
+        cleanText(report.machine?.fingerprint, 128) || null,
+      ]
+    );
+
+    // Acknowledge the upload immediately. Finding generation continues after
+    // the response so a large local history cannot trigger proxy timeouts.
+    res.status(202).json({
+      ok: true,
+      accepted: true,
+      processing: true,
+    });
+
+    setImmediate(async () => {
+      try {
+        await rebuildFindings(analysis.id, report);
+
+        await pool.query(
+          `UPDATE analyses
+           SET status='completed',
+               finished_at=NOW()
+           WHERE id=$1`,
+          [analysis.id]
+        );
+      } catch (error) {
+        console.error(
+          "Failed to process report findings for analysis",
+          analysis.id,
+          error
+        );
+
+        // The raw report is already safely stored. Mark the upload itself as
+        // completed so the administrator can still open it and use the manual
+        // "Recalcular achados" action instead of leaving the analysis stuck.
+        try {
+          await pool.query(
+            `UPDATE analyses
+             SET status='completed',
+                 finished_at=COALESCE(finished_at, NOW())
+             WHERE id=$1`,
+            [analysis.id]
+          );
+        } catch (statusError) {
+          console.error(
+            "Failed to finalize report status for analysis",
+            analysis.id,
+            statusError
+          );
+        }
+      }
+    });
+  } catch (error) {
+    console.error("Failed to accept agent report", error);
+
+    if (!res.headersSent) {
+      res.status(500).json({
+        error: "report_store_failed",
+        message: "Não foi possível armazenar o relatório.",
+      });
+    }
   }
-
-  const report = req.body;
-
-  await pool.query(
-    "INSERT INTO scan_reports(analysis_id, payload) VALUES ($1,$2::jsonb)",
-    [analysis.id, JSON.stringify(report)]
-  );
-
-  await rebuildFindings(analysis.id, report);
-
-  await pool.query(
-    `UPDATE analyses
-     SET status='completed',
-         finished_at=NOW(),
-         machine_name=COALESCE($2, machine_name),
-         os_version=COALESCE($3, os_version),
-         agent_version=COALESCE($4, agent_version),
-         machine_fingerprint=COALESCE($5, machine_fingerprint)
-     WHERE id=$1`,
-    [
-      analysis.id,
-      cleanText(report.machine?.machineName, 180) || null,
-      cleanText(report.machine?.osVersion, 250) || null,
-      cleanText(report.agentVersion, 80) || null,
-      cleanText(report.machine?.fingerprint, 128) || null,
-    ]
-  );
-
-  const findingCount = await pool.query(
-    "SELECT COUNT(*)::int AS total FROM scan_findings WHERE analysis_id=$1",
-    [analysis.id]
-  );
-
-  res.json({
-    ok: true,
-    findings: Number(findingCount.rows[0]?.total || 0),
-  });
 });
 
 app.get("/admin", (_req, res) => {
