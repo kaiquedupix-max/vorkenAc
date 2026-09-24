@@ -466,16 +466,91 @@ function isDeceptiveDoubleExtensionExecutable(value) {
   return /\.(zip|rar|7z|pdf|jpg|jpeg|png|gif|txt|doc|docx|xls|xlsx|ppt|pptx)\.exe$/.test(name);
 }
 
-function downloadOriginKind(download) {
-  const values = [
+function downloadUrlCandidates(download) {
+  return [
     download?.sourceUrl,
     download?.finalUrl,
     download?.referrerUrl,
     download?.siteUrl,
     download?.pageUrl,
     ...(Array.isArray(download?.urlChain) ? download.urlChain : [])
-  ]
-    .filter(Boolean)
+  ].filter(Boolean);
+}
+
+function isOfficialDiscordInstallerOrUpdate(download) {
+  const name = path.basename(
+    String(download?.fileName || download?.targetPath || "")
+  ).toLowerCase();
+
+  const target = String(
+    download?.targetPath ||
+    download?.currentPath ||
+    ""
+  )
+    .replaceAll("/", "\\")
+    .toLowerCase();
+
+  if (
+    target.includes("\\appdata\\local\\discord\\") &&
+    ["update.exe", "discord.exe", "discordsetup.exe", "squirrel.exe"].includes(name)
+  ) {
+    return true;
+  }
+
+  return downloadUrlCandidates(download).some((value) => {
+    try {
+      const url = new URL(String(value || ""));
+      const host = url.hostname.toLowerCase();
+      const pathname = url.pathname.toLowerCase();
+
+      const officialHost =
+        host === "discord.com" ||
+        host === "www.discord.com" ||
+        host === "discordapp.com" ||
+        host === "www.discordapp.com" ||
+        host === "dl.discordapp.net" ||
+        host === "stable.dl2.discordapp.net";
+
+      return officialHost && (
+        pathname.includes("/api/download") ||
+        pathname.includes("/apps/") ||
+        pathname.includes("/download")
+      );
+    } catch {
+      return false;
+    }
+  });
+}
+
+function isDiscordAttachmentDownload(download) {
+  if (isOfficialDiscordInstallerOrUpdate(download))
+    return false;
+
+  return downloadUrlCandidates(download).some((value) => {
+    try {
+      const url = new URL(String(value || ""));
+      const host = url.hostname.toLowerCase();
+      const pathname = url.pathname.toLowerCase();
+
+      return (
+        (
+          host === "cdn.discordapp.com" ||
+          host === "media.discordapp.net" ||
+          host.endsWith(".discordattachments.com")
+        ) &&
+        (
+          pathname.includes("/attachments/") ||
+          host.endsWith(".discordattachments.com")
+        )
+      );
+    } catch {
+      return false;
+    }
+  });
+}
+
+function downloadOriginKind(download) {
+  const values = downloadUrlCandidates(download)
     .map((value) => String(value).toLowerCase());
 
   const joined = values.join(" ");
@@ -613,6 +688,7 @@ function isKnownBenignPeNoise(value) {
     name === "openhardwaremonitorlib.dll" ||
     name === "librehardwaremonitor.exe" ||
     name === "librehardwaremonitorlib.dll" ||
+    name === "dnsjumper.exe" ||
     name === "vorken.agent.exe" ||
     /^vorken[-_.].*\.exe$/i.test(name)
   );
@@ -1245,6 +1321,22 @@ function forceInformationalFinding(artifactType, evidence = {}, title = "") {
   }
 
   const lowerTitle = String(title || "").toLowerCase();
+  const evidenceName = String(
+    evidence?.name ||
+    evidence?.serviceName ||
+    evidence?.kind ||
+    ""
+  ).toLowerCase();
+
+  if (
+    artifactType === "system_integrity_expansion" &&
+    (
+      evidenceName === "pcasvc" ||
+      lowerTitle.includes("pcasvc")
+    )
+  ) {
+    return true;
+  }
 
   return (
     lowerTitle.includes("prefetch apagado") ||
@@ -1269,6 +1361,7 @@ async function rebuildFindings(analysisId, report) {
   for (const rule of rulesResult.rows) {
     for (const artifact of artifacts) {
       if (!matchesRule(rule, artifact)) continue;
+      if (isKnownBenignPeNoise(artifact.value)) continue;
 
       const severity = forceInformationalFinding(
         artifact.type,
@@ -1439,6 +1532,10 @@ async function downgradeUnexecutedExeFindings(analysisId, report) {
       continue;
 
     const evidence = finding.evidence || {};
+
+    if (evidence.priorityMaximum === true)
+      continue;
+
     const candidates = [
       finding.artifact_value,
       evidence.name,
@@ -1637,6 +1734,11 @@ async function addBuiltInReviewFindings(analysisId, report) {
           : "high";
       }
 
+      const directCatalogPriority =
+        ["browser_history", "browser_recovery", "browser_download"]
+          .includes(artifactType) &&
+        isDirectCatalogWebMatch(match, evidence);
+
       const fileLikeArtifact =
         ["file", "browser_download", "usn_delete", "recycle_bin"]
           .includes(artifactType);
@@ -1664,7 +1766,7 @@ async function addBuiltInReviewFindings(analysisId, report) {
           evidence?.originalPath
         );
 
-      if (unexecutedExe) {
+      if (unexecutedExe && !directCatalogPriority) {
         catalogSeverity = "info";
       }
 
@@ -1677,6 +1779,7 @@ async function addBuiltInReviewFindings(analysisId, report) {
         {
           ...evidence,
           catalogMatch: match,
+          priorityMaximum: directCatalogPriority,
           confidence:
             catalogSeverity === "info"
               ? "info"
@@ -2502,6 +2605,25 @@ async function addBuiltInReviewFindings(analysisId, report) {
 
   // System integrity expansion.
   for (const item of report.systemIntegrityExpansion || []) {
+    const itemName = String(item.name || item.kind || "").toLowerCase();
+    const isPcaSvc = itemName === "pcasvc";
+
+    if (isPcaSvc) {
+      await insertReviewFinding(
+        analysisId,
+        "Integridade do sistema: PcaSvc (informativo)",
+        "info",
+        "system_integrity_expansion",
+        item.detail || item.name || item.kind,
+        {
+          ...item,
+          confidence: "info",
+          note: "PcaSvc é um serviço legítimo do Windows. Mantido somente como contexto de integridade, sem gerar alerta."
+        }
+      );
+      continue;
+    }
+
     const severity =
       String(item.severityHint || "info").toLowerCase();
 
