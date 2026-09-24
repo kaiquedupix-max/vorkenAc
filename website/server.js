@@ -1434,6 +1434,25 @@ async function addBuiltInReviewFindings(analysisId, report) {
     const matchedRiskTerms = deletedRiskTerms.filter((term) =>
       lower.includes(term));
 
+    if (
+      String(item.driveType || "").toLowerCase() === "removable"
+    ) {
+      await insertReviewFinding(
+        analysisId,
+        "Arquivo apagado de dispositivo externo",
+        "high",
+        "usn_delete",
+        name || item.volume || "arquivo apagado",
+        {
+          ...item,
+          catalogMatches,
+          matchedRiskTerms,
+          confidence: "high",
+          note: "O USN Journal de uma unidade removível registrou a exclusão de um executável/script/arquivo compactado."
+        }
+      );
+    }
+
     const critical =
       item.randomLikeName === true ||
       item.deceptiveDoubleExtension === true ||
