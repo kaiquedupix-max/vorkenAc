@@ -239,7 +239,7 @@ async function loadAnalyses() {
 async function openReport(id) {
   currentReportId = id;
   const data = await api("/api/admin/analyses/" + encodeURIComponent(id));
-  const { analysis, report, findings } = data;
+  const { analysis, report, findings, relatedAnalyses = [] } = data;
   const payload = report?.payload || {};
 
   document.getElementById("reportTitle").textContent =
@@ -366,6 +366,25 @@ async function openReport(id) {
     <div class="kv"><span>Amcache presente</span><span>${payload.systemArtifacts?.amcacheExists ? "Sim" : "Não"}</span></div>
     <div class="kv"><span>Erros parciais</span><span>${(payload.errors || []).length}</span></div>
   `;
+
+  document.getElementById("relatedAnalysesList").innerHTML = relatedAnalyses.length
+    ? relatedAnalyses.map((item) => \`
+        <div class="finding">
+          <div class="finding-head">
+            <h4>#\${escapeHtml(item.id)} · \${escapeHtml(item.label || "Análise")}</h4>
+            <span class="tag \${escapeHtml(item.status || "info")}">\${escapeHtml(statusLabel(item.status))}</span>
+          </div>
+          <div class="kv"><span>Data</span><span>\${escapeHtml(formatDate(item.created_at))}</span></div>
+          <div class="kv"><span>Computador</span><span>\${escapeHtml(item.machine_name || "—")}</span></div>
+          <div class="kv"><span>Agente</span><span>\${escapeHtml(item.agent_version || "—")}</span></div>
+          <button class="button ghost open-related-report" data-id="\${escapeHtml(item.id)}">Abrir relatório</button>
+        </div>
+      \`).join("")
+    : '<div class="message">Nenhuma análise anterior associada a este fingerprint.</div>';
+
+  document.querySelectorAll(".open-related-report").forEach((button) => {
+    button.addEventListener("click", () => openReport(button.dataset.id));
+  });
 
   const disconnected = arrays.usbHistory.filter((item) => item.present === false);
   document.getElementById("disconnectedUsbList").innerHTML = disconnected.length
