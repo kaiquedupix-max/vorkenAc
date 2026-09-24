@@ -124,9 +124,12 @@ function cleanText(value, max = 250) {
 
 function looksRandomExecutableName(value) {
   const name = path.basename(String(value || ""));
-  const stem = path.basename(name, path.extname(name));
+  let stem = path.basename(name, path.extname(name));
 
-  if (stem.length < 7 || stem.length > 28) return false;
+  // abc123.zip.exe / xyz789.rar.exe -> evaluate the real-looking stem too.
+  stem = stem.replace(/\.(zip|rar|7z|pdf|jpg|jpeg|png|txt)$/i, "");
+
+  if (stem.length < 6 || stem.length > 28) return false;
   if (!/^[a-z0-9]+$/i.test(stem)) return false;
 
   const letters = [...stem].filter((ch) => /[a-z]/i.test(ch));
@@ -162,6 +165,76 @@ function looksRandomExecutableName(value) {
     digits.length >= 2 &&
     distinct >= 8
   );
+}
+
+function isDeceptiveDoubleExtensionExecutable(value) {
+  const name = path.basename(String(value || "")).toLowerCase();
+  return /\.(zip|rar|7z|pdf|jpg|jpeg|png|gif|txt|doc|docx|xls|xlsx|ppt|pptx)\.exe$/.test(name);
+}
+
+function downloadOriginKind(download) {
+  const values = [
+    download?.sourceUrl,
+    download?.finalUrl,
+    download?.referrerUrl,
+    download?.siteUrl,
+    download?.pageUrl,
+    ...(Array.isArray(download?.urlChain) ? download.urlChain : [])
+  ]
+    .filter(Boolean)
+    .map((value) => String(value).toLowerCase());
+
+  const joined = values.join(" ");
+
+  const discord =
+    joined.includes("discord.com/") ||
+    joined.includes("discord.gg/") ||
+    joined.includes("discordapp.com/") ||
+    joined.includes("cdn.discordapp.com/") ||
+    joined.includes("media.discordapp.net/") ||
+    joined.includes("discordattachments.com/");
+
+  if (discord) return "Discord";
+
+  const telegram =
+    joined.includes("t.me/") ||
+    joined.includes("telegram.me/") ||
+    joined.includes("telegram.org/") ||
+    joined.includes("web.telegram.org/") ||
+    joined.includes("telegram-cdn.org/") ||
+    joined.includes("cdn-telegram.org/");
+
+  if (telegram) return "Telegram";
+
+  return "";
+}
+
+function chromiumDangerInfo(value) {
+  const code = Number(value ?? 0);
+
+  const map = new Map([
+    [1, ["Arquivo perigoso", "high"]],
+    [2, ["URL perigosa", "high"]],
+    [3, ["Conteúdo perigoso", "high"]],
+    [4, ["Conteúdo possivelmente perigoso", "medium"]],
+    [5, ["Download incomum", "medium"]],
+    [6, ["Alerta validado/ignorado pelo usuário", "medium"]],
+    [7, ["Host perigoso", "high"]],
+    [8, ["Software potencialmente indesejado", "high"]],
+    [16, ["Deep Scan: perigoso", "high"]],
+    [19, ["Risco de comprometimento de conta", "high"]],
+  ]);
+
+  const hit = map.get(code);
+  return hit
+    ? { code, label: hit[0], severity: hit[1], suspicious: true }
+    : { code, label: code ? "DangerType " + code : "Sem alerta", severity: "info", suspicious: false };
+}
+
+function isRiskyDownloadName(value) {
+  const name = String(value || "").toLowerCase();
+  return /\.(exe|com|scr|dll|msi|bat|cmd|ps1|zip|rar|7z)$/.test(name) ||
+    isDeceptiveDoubleExtensionExecutable(name);
 }
 
 function findRustCatalogMatches(...values) {
@@ -937,36 +1010,119 @@ async function addBuiltInReviewFindings(analysisId, report) {
       await insertReviewFinding(
         analysisId,
         "Executável com nome aleatório em pasta de risco",
-        item.prefetchEvidenceUtc ? "high" : "medium",
+        "critical",
         "file",
         item.path || item.name || "EXE",
         {
           ...item,
-          confidence: item.prefetchEvidenceUtc ? "high" : "medium",
-          note: "Nome com padrão aleatório, arquivo não assinado e localizado em Downloads/Desktop/Temp. Execução por Prefetch aumenta a severidade.",
+          confidence: "high",
+          note: "Nome com padrão de alta aleatoriedade, arquivo não assinado e localizado em Downloads/Desktop/Temp. Tratado como crítico para revisão manual.",
         }
       );
     }
   }
 
   for (const download of report.browserDownloads || []) {
-    if (download.fileMissing !== true)
-      continue;
-
     const name = download.fileName || download.targetPath || "";
     const ext = path.extname(name).toLowerCase();
+    const originKind = downloadOriginKind(download);
+    const doubleExtension = isDeceptiveDoubleExtensionExecutable(name);
+    const randomExecutable =
+      ext === ".exe" && looksRandomExecutableName(name);
+    const danger = chromiumDangerInfo(download.dangerType);
+
+    if (originKind && isRiskyDownloadName(name)) {
+      const severity =
+        randomExecutable ? "critical" :
+        doubleExtension ? "high" :
+        "medium";
+
+      await insertReviewFinding(
+        analysisId,
+        "Arquivo baixado do " + originKind,
+        severity,
+        "browser_download",
+        download.targetPath || download.fileName || "download",
+        {
+          ...download,
+          originKind,
+          doubleExtension,
+          randomExecutable,
+          confidence: severity === "critical" ? "high" : "medium",
+          note: doubleExtension
+            ? "Download originado do " + originKind + " usa dupla extensão que termina em .exe. Deve ser revisado."
+            : "Download executável/compactado originado do " + originKind + ". Classificado no mínimo como ocorrência média para revisão.",
+        }
+      );
+    }
+
+    if (danger.suspicious) {
+      const severity =
+        randomExecutable ? "critical" :
+        danger.severity;
+
+      await insertReviewFinding(
+        analysisId,
+        "Download sinalizado pelo navegador",
+        severity,
+        "browser_download",
+        download.targetPath || download.fileName || "download",
+        {
+          ...download,
+          browserDanger: danger,
+          confidence: severity === "critical" || severity === "high" ? "high" : "medium",
+          note: "O histórico Chromium marcou este download com indicador de risco: " + danger.label + ".",
+        }
+      );
+    }
+
+    if (randomExecutable) {
+      await insertReviewFinding(
+        analysisId,
+        "Executável baixado com nome aleatório",
+        "critical",
+        "browser_download",
+        download.targetPath || download.fileName || "download",
+        {
+          ...download,
+          originKind,
+          browserDanger: danger,
+          confidence: "high",
+          note: "Nome do executável apresenta padrão de alta aleatoriedade. Tratado como crítico para revisão.",
+        }
+      );
+    }
+
+    if (doubleExtension) {
+      await insertReviewFinding(
+        analysisId,
+        "Executável com dupla extensão disfarçada",
+        originKind ? "high" : "medium",
+        "browser_download",
+        download.targetPath || download.fileName || "download",
+        {
+          ...download,
+          originKind,
+          confidence: originKind ? "high" : "medium",
+          note: "O arquivo termina em .exe, mas usa extensão anterior de arquivo/documento (ex.: .zip.exe).",
+        }
+      );
+    }
+
+    if (download.fileMissing !== true)
+      continue;
 
     if (ext === ".exe" && looksRandomExecutableName(name)) {
       await insertReviewFinding(
         analysisId,
         "Executável baixado com nome aleatório e depois não localizado",
-        "medium",
+        "critical",
         "browser_download",
         download.targetPath || download.fileName || "download",
         {
           ...download,
-          confidence: "medium",
-          note: "O histórico do navegador preservou um EXE com nome aleatório que não está mais no destino original. A severidade sobe se houver evidência separada de execução.",
+          confidence: "high",
+          note: "O histórico do navegador preservou um EXE com nome aleatório que não está mais no destino original. Tratado como crítico para revisão.",
         }
       );
     }
@@ -1024,7 +1180,7 @@ async function addBuiltInReviewFindings(analysisId, report) {
       await insertReviewFinding(
         analysisId,
         "EXE com nome aleatório executado e depois não localizado",
-        "high",
+        "critical",
         "prefetch_execution",
         executionPath,
         {
