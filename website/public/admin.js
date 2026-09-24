@@ -5,6 +5,9 @@ const analysesBody = document.getElementById("analysesBody");
 const rulesList = document.getElementById("rulesList");
 const reportCard = document.getElementById("reportCard");
 let currentReportId = null;
+let showWithoutAiResult = false;
+let dashboardPollTimer = null;
+let lastOpenReportProcessing = null;
 
 async function api(url, options = {}) {
   const response = await fetch(url, {
@@ -254,12 +257,131 @@ function looksRandomExecutableNameClient(value) {
   );
 }
 
-async function openReportSafe(id) {
+async function openReportSafe(id, options = {}) {
   try {
+    if (options.resetAiView !== false)
+      showWithoutAiResult = false;
+
     await openReport(id);
   } catch (error) {
     console.error("Falha ao abrir relatório", error);
     alert("Erro ao abrir relatório: " + (error?.message || "erro desconhecido"));
+  }
+}
+
+function processingStageLabel(stage, status) {
+  const map = {
+    waiting: "Aguardando cliente",
+    collecting: "Coletando evidências",
+    preparing: "Preparando análise",
+    normal_filter: "Aplicando filtro técnico",
+    ai_filter: "Filtrando falsos positivos com IA",
+    finalizing: "Preparando resultado final",
+    completed: "Concluído com IA",
+    ai_error: "IA indisponível · resultado técnico",
+  };
+
+  return map[stage] || statusLabel(status);
+}
+
+function processingStageTag(stage, status) {
+  if (stage === "completed") return "low";
+  if (stage === "ai_error") return "high";
+  if (stage === "ai_filter") return "medium";
+  if (
+    ["collecting", "preparing", "normal_filter", "finalizing"]
+      .includes(stage)
+  ) {
+    return "info";
+  }
+
+  if (status === "completed") return "low";
+  if (status === "waiting") return "medium";
+  return "info";
+}
+
+function isProcessingStage(stage) {
+  return [
+    "collecting",
+    "preparing",
+    "normal_filter",
+    "ai_filter",
+    "finalizing",
+  ].includes(String(stage || ""));
+}
+
+function updateAnalysisProcessingBanner(status) {
+  const banner = document.getElementById("analysisProcessingBanner");
+  if (!banner) return;
+
+  const stage = status?.processingStage || status?.processing_stage || "waiting";
+  const message =
+    status?.processingMessage ||
+    status?.processing_message ||
+    processingStageLabel(stage, status?.status);
+
+  if (showWithoutAiResult) {
+    banner.className = "message";
+    banner.textContent =
+      "Visualizando o resultado técnico SEM o filtro da IA. " +
+      (isProcessingStage(stage) ? message : "");
+    return;
+  }
+
+  if (isProcessingStage(stage)) {
+    banner.className = "message";
+    banner.textContent = message;
+    return;
+  }
+
+  if (stage === "ai_error") {
+    banner.className = "message error";
+    banner.textContent =
+      message ||
+      "A revisão por IA não foi concluída. O resultado técnico continua disponível.";
+    return;
+  }
+
+  if (stage === "completed") {
+    banner.className = "message ok";
+    banner.textContent =
+      message ||
+      "Análise concluída. O resultado abaixo já passou pelo filtro da IA.";
+    return;
+  }
+
+  banner.className = "message hidden";
+  banner.textContent = "";
+}
+
+async function pollAdminProgress() {
+  if (dashboardView.classList.contains("hidden"))
+    return;
+
+  try {
+    await loadAnalyses();
+
+    if (!currentReportId)
+      return;
+
+    const status = await api(
+      "/api/admin/analyses/" +
+      encodeURIComponent(currentReportId) +
+      "/rebuild-status"
+    );
+
+    updateAnalysisProcessingBanner(status);
+
+    if (
+      lastOpenReportProcessing === true &&
+      status.processing === false
+    ) {
+      await openReport(currentReportId);
+    }
+
+    lastOpenReportProcessing = status.processing === true;
+  } catch (error) {
+    console.debug("Polling do painel temporariamente indisponível", error);
   }
 }
 
@@ -288,6 +410,19 @@ function setLoggedIn(logged) {
   loginView.classList.toggle("hidden", logged);
   dashboardView.classList.toggle("hidden", !logged);
   logoutBtn.classList.toggle("hidden", !logged);
+
+  if (logged && !dashboardPollTimer) {
+    dashboardPollTimer =
+      setInterval(
+        () => pollAdminProgress(),
+        4000
+      );
+  }
+
+  if (!logged && dashboardPollTimer) {
+    clearInterval(dashboardPollTimer);
+    dashboardPollTimer = null;
+  }
 }
 
 document.getElementById("loginForm").addEventListener("submit", async (event) => {
@@ -386,6 +521,17 @@ document.getElementById("refreshBtn").addEventListener("click", refreshAll);
 document.getElementById("closeReportBtn").addEventListener("click", () => {
   reportCard.classList.add("hidden");
   currentReportId = null;
+  showWithoutAiResult = false;
+  lastOpenReportProcessing = null;
+});
+
+document.getElementById("toggleAiViewBtn").addEventListener("click", async () => {
+  if (!currentReportId) return;
+
+  showWithoutAiResult =
+    !showWithoutAiResult;
+
+  await openReport(currentReportId);
 });
 
 document.getElementById("rebuildFindingsBtn").addEventListener("click", async () => {
