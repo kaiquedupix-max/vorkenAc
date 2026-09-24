@@ -1,6 +1,6 @@
 {
-  "version": "2026-09-24.5",
-  "notes": "Catálogo defensivo de nomes/domínios publicamente associados a cheats/scripts/spoofers de Rust. Nomes genéricos usam aliases com contexto de Rust/cheat para reduzir falso positivo; correspondência isolada nunca substitui revisão.",
+  "version": "2026-09-24.6",
+  "notes": "Catálogo defensivo de nomes, domínios e convites publicamente associados a cheats/scripts/spoofers de Rust. Indicadores exatos/fortes recebem prioridade; nomes genéricos exigem contexto para reduzir falsos positivos.",
   "brands": [
     {
       "name": "Lethality",
@@ -86,10 +86,14 @@
       "name": "Disconnect Cheats",
       "aliases": [
         "disconnect cheats",
-        "disconnect rust"
+        "disconnect rust",
+        "disconnect.wtf",
+        "disconnect external",
+        "disconnect internal"
       ],
       "domains": [
-        "disconnectcheats.com"
+        "disconnectcheats.com",
+        "disconnect.wtf"
       ],
       "severity": "critical",
       "source": "public_web",
@@ -327,12 +331,17 @@
       "aliases": [
         "moonlight rust",
         "moonlight script",
-        "moonlights rust"
+        "moonlights rust",
+        "moonlightpublic",
+        "moonlightus",
+        "moonlight scripts"
       ],
       "domains": [],
       "severity": "critical",
       "source": "public_mentions",
-      "discordInvites": []
+      "discordInvites": [
+        "moonlightpublic"
+      ]
     },
     {
       "name": "Poak",
@@ -1010,6 +1019,278 @@
       ],
       "severity": "high",
       "source": "public_web_2026",
+      "discordInvites": []
+    },
+    {
+      "name": "Ion Cheats",
+      "aliases": [
+        "ion cheats",
+        "ioncheats",
+        "ion ai",
+        "ionai",
+        "ion slotted",
+        "ion rust",
+        "ion rust cheat",
+        "ion private rust"
+      ],
+      "domains": [
+        "ioncheats.com"
+      ],
+      "severity": "critical",
+      "source": "public_web_2026",
+      "discordInvites": []
+    },
+    {
+      "name": "Ascend Scripts",
+      "aliases": [
+        "ascend scripts",
+        "ascendscripts",
+        "ascend rust",
+        "ascend rust scripts",
+        "ascend ai",
+        "ascend external",
+        "ascend radar"
+      ],
+      "domains": [
+        "ascendscripts.com",
+        "checkout.ascendscripts.com"
+      ],
+      "discordInvites": [
+        "poac"
+      ],
+      "severity": "critical",
+      "source": "public_web_2026"
+    },
+    {
+      "name": "Aether Scripts",
+      "aliases": [
+        "aether scripts",
+        "aetherscripts",
+        "aether rust",
+        "aether rust scripts",
+        "aether ai",
+        "aether external",
+        "aether radar"
+      ],
+      "domains": [
+        "aetherscripts.io",
+        "checkout.aetherscripts.io"
+      ],
+      "severity": "critical",
+      "source": "public_web_2026",
+      "discordInvites": []
+    },
+    {
+      "name": "Poac",
+      "aliases": [
+        "poac",
+        "poacy",
+        "poac's shop",
+        "poac shop",
+        "daddy poacy"
+      ],
+      "domains": [
+        "checkout.ascendscripts.com"
+      ],
+      "discordInvites": [
+        "poac"
+      ],
+      "severity": "critical",
+      "source": "public_web_2026"
+    },
+    {
+      "name": "Recoil WTF",
+      "aliases": [
+        "recoil.wtf",
+        "recoil rust script",
+        "recoil script rust"
+      ],
+      "domains": [
+        "recoil.wtf"
+      ],
+      "severity": "critical",
+      "source": "public_web_2026",
+      "discordInvites": []
+    },
+    {
+      "name": "Iconic Ink",
+      "aliases": [
+        "iconicink",
+        "iconic ink",
+        "iconic rust script",
+        "iconic recoil"
+      ],
+      "domains": [
+        "iconicink.store"
+      ],
+      "severity": "critical",
+      "source": "public_web_2026",
+      "discordInvites": []
+    },
+    {
+      "name": "Evicted",
+      "aliases": [
+        "evicted rust",
+        "evicted script",
+        "evicted cheats",
+        "evicted.wtf"
+      ],
+      "domains": [
+        "evicted.wtf"
+      ],
+      "severity": "critical",
+      "source": "public_web_2026",
+      "discordInvites": []
+    },
+    {
+      "name": "Vanuri",
+      "aliases": [
+        "vanuri",
+        "vanuri rust",
+        "vanuriclient",
+        "vanuri client",
+        "vanuri rust pro"
+      ],
+      "domains": [
+        "vanuri.to"
+      ],
+      "severity": "critical",
+      "source": "public_web_2026",
+      "discordInvites": []
+    },
+    {
+      "name": "RustSense",
+      "aliases": [
+        "rustsense",
+        "rustsense.pub",
+        "rust sense"
+      ],
+      "domains": [
+        "rustsense.pub"
+      ],
+      "severity": "critical",
+      "source": "public_forum",
+      "discordInvites": []
+    },
+    {
+      "name": "Monolith",
+      "aliases": [
+        "monolith.wtf",
+        "monolith rust",
+        "monolith rust script",
+        "monolith script"
+      ],
+      "domains": [
+        "monolith.wtf"
+      ],
+      "severity": "high",
+      "source": "public_forum_historical",
+      "discordInvites": []
+    },
+    {
+      "name": "Recoil Club",
+      "aliases": [
+        "recoil.club",
+        "recoil club",
+        "recoil club rust"
+      ],
+      "domains": [
+        "recoil.club"
+      ],
+      "severity": "high",
+      "source": "public_forum_historical",
+      "discordInvites": []
+    },
+    {
+      "name": "Diablo",
+      "aliases": [
+        "diablo.pub",
+        "diablo rust script",
+        "diablo rust"
+      ],
+      "domains": [
+        "diablo.pub"
+      ],
+      "severity": "high",
+      "source": "public_forum_historical",
+      "discordInvites": []
+    },
+    {
+      "name": "Drain",
+      "aliases": [
+        "drain.cx",
+        "drain rust script",
+        "drain rust"
+      ],
+      "domains": [
+        "drain.cx"
+      ],
+      "severity": "high",
+      "source": "public_forum_historical",
+      "discordInvites": []
+    },
+    {
+      "name": "Pegasus",
+      "aliases": [
+        "pegasus rust",
+        "pegasus rust script",
+        "pegasus script"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_forum",
+      "discordInvites": []
+    },
+    {
+      "name": "Axios",
+      "aliases": [
+        "axios rust",
+        "axios rust script",
+        "axios script"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_forum",
+      "discordInvites": []
+    },
+    {
+      "name": "CSMacro",
+      "aliases": [
+        "csmacro",
+        "cs macro rust",
+        "csmacro rust"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_forum",
+      "discordInvites": []
+    },
+    {
+      "name": "Infamous",
+      "aliases": [
+        "infamous.pw",
+        "infamous rust script",
+        "infamous rust"
+      ],
+      "domains": [
+        "infamous.pw"
+      ],
+      "severity": "high",
+      "source": "public_forum_historical",
+      "discordInvites": []
+    },
+    {
+      "name": "DeprimereShop",
+      "aliases": [
+        "deprimereshop",
+        "deprimere rust script",
+        "deprimereshop rust"
+      ],
+      "domains": [
+        "deprimereshop.com"
+      ],
+      "severity": "high",
+      "source": "public_forum_historical",
       "discordInvites": []
     }
   ]
