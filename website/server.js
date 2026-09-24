@@ -736,6 +736,10 @@ function flattenArtifacts(report) {
     push("module_integrity", item.modulePath || item.moduleName, item);
   }
 
+  for (const item of report.processMemoryIntegrity || []) {
+    push("memory_integrity", item.processPath || item.processName || item.baseAddress, item);
+  }
+
   for (const item of report.protectedWindows || []) {
     push("protected_window", item.processPath || item.processName, item);
   }
@@ -1096,6 +1100,9 @@ function matchesRule(rule, artifact) {
         JSON.stringify(evidence).toLowerCase().includes(pattern);
     case "module_integrity_contains":
       return artifact.type === "module_integrity" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "memory_integrity_contains":
+      return artifact.type === "memory_integrity" &&
         JSON.stringify(evidence).toLowerCase().includes(pattern);
     case "crash_contains":
       return artifact.type === "crash_artifact" &&
@@ -1749,6 +1756,35 @@ async function addBuiltInReviewFindings(analysisId, report) {
         ...item,
         confidence: gameProcess ? "high" : "medium",
         note: "Módulo vindo do perfil do usuário/Temp foi carregado em processo relevante e não possui assinatura Authenticode confiável."
+      }
+    );
+  }
+
+  // Targeted live-memory integrity. Vorken only reads the two-byte PE
+  // signature from executable private regions; it does not dump arbitrary RAM.
+  for (const item of report.processMemoryIntegrity || []) {
+    if (item.potentialManualMap !== true)
+      continue;
+
+    const processName =
+      String(item.processName || "").toLowerCase();
+
+    const rustProcess =
+      processName === "rust" ||
+      processName === "rustclient";
+
+    await insertReviewFinding(
+      analysisId,
+      rustProcess
+        ? "Possível PE manual-mapped em memória do Rust"
+        : "Região privada executável com cabeçalho PE",
+      rustProcess ? "critical" : "high",
+      "memory_integrity",
+      (item.processName || "processo") + " @ " + (item.baseAddress || "memória"),
+      {
+        ...item,
+        confidence: rustProcess ? "high" : "medium",
+        note: "Foi encontrada região MEM_PRIVATE executável iniciando com cabeçalho MZ. O scanner registra apenas metadados e dois bytes de assinatura, sem fazer dump da memória."
       }
     );
   }
@@ -3191,6 +3227,7 @@ app.post("/api/admin/rules", requireAdmin, async (req, res) => {
     "usn_activity_contains",
     "system_integrity_contains",
     "module_integrity_contains",
+    "memory_integrity_contains",
     "crash_contains",
   ]);
 
