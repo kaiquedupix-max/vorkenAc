@@ -676,13 +676,15 @@ internal static class Program
 
     private static bool IsRetryableUploadStatus(HttpStatusCode statusCode)
     {
-        return statusCode is
-            HttpStatusCode.RequestTimeout or
-            HttpStatusCode.RequestEntityTooLarge or
-            HttpStatusCode.BadGateway or
-            HttpStatusCode.ServiceUnavailable or
-            HttpStatusCode.GatewayTimeout or
-            HttpStatusCode.TooManyRequests;
+        int code = (int)statusCode;
+
+        return code is
+            408 or
+            413 or
+            429 or
+            502 or
+            503 or
+            504;
     }
 
     private static void CompactLowValueTelemetry(
