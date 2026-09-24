@@ -2397,24 +2397,10 @@ async function addBuiltInReviewFindings(analysisId, report) {
       continue;
     }
 
-    if (
-      item.signed !== true &&
-      isSuspiciousUserPath(item.path) &&
-      ageDays(item.lastWriteUtc) <= 120
-    ) {
-      await insertReviewFinding(
-        analysisId,
-        "Aplicativo desconhecido / não assinado",
-        looksRandomExecutableName(item.name || item.path) ? "critical" : "medium",
-        "unknown_app",
-        item.path || item.name || "executável",
-        {
-          ...item,
-          confidence: looksRandomExecutableName(item.name || item.path) ? "high" : "medium",
-          note: "Executável recente em Downloads/Desktop/Temp que não corresponde ao catálogo de aplicativos comuns e não possui assinatura digital confirmada.",
-        }
-      );
-    }
+    // Executável desconhecido e não assinado, por si só, fica apenas no
+    // inventário técnico. Ele só sobe para achado quando existe outro sinal
+    // forte (nome aleatório, origem suspeita, catálogo, execução removível,
+    // reputação, dupla extensão etc.).
   }
 
   for (const download of report.browserDownloads || []) {
