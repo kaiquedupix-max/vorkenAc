@@ -51,6 +51,91 @@ function safeArray(value) {
   return Array.isArray(value) ? value.filter(Boolean) : [];
 }
 
+function downloadUrlCandidatesClient(item) {
+  return [
+    item?.sourceUrl,
+    item?.finalUrl,
+    item?.referrerUrl,
+    item?.siteUrl,
+    item?.pageUrl,
+    ...safeArray(item?.urlChain)
+  ].filter(Boolean);
+}
+
+function isOfficialDiscordInstallerOrUpdateClient(item) {
+  const name = String(
+    item?.fileName ||
+    item?.targetPath ||
+    ""
+  ).split(/[\\/]/).at(-1)?.toLowerCase() || "";
+
+  const target = String(
+    item?.targetPath ||
+    item?.currentPath ||
+    ""
+  )
+    .replaceAll("/", "\\")
+    .toLowerCase();
+
+  if (
+    target.includes("\\appdata\\local\\discord\\") &&
+    ["update.exe", "discord.exe", "discordsetup.exe", "squirrel.exe"].includes(name)
+  ) {
+    return true;
+  }
+
+  return downloadUrlCandidatesClient(item).some((value) => {
+    try {
+      const url = new URL(String(value || ""));
+      const host = url.hostname.toLowerCase();
+      const pathname = url.pathname.toLowerCase();
+
+      const officialHost =
+        host === "discord.com" ||
+        host === "www.discord.com" ||
+        host === "discordapp.com" ||
+        host === "www.discordapp.com" ||
+        host === "dl.discordapp.net" ||
+        host === "stable.dl2.discordapp.net";
+
+      return officialHost && (
+        pathname.includes("/api/download") ||
+        pathname.includes("/apps/") ||
+        pathname.includes("/download")
+      );
+    } catch {
+      return false;
+    }
+  });
+}
+
+function isDiscordAttachmentDownloadClient(item) {
+  if (isOfficialDiscordInstallerOrUpdateClient(item))
+    return false;
+
+  return downloadUrlCandidatesClient(item).some((value) => {
+    try {
+      const url = new URL(String(value || ""));
+      const host = url.hostname.toLowerCase();
+      const pathname = url.pathname.toLowerCase();
+
+      return (
+        (
+          host === "cdn.discordapp.com" ||
+          host === "media.discordapp.net" ||
+          host.endsWith(".discordattachments.com")
+        ) &&
+        (
+          pathname.includes("/attachments/") ||
+          host.endsWith(".discordattachments.com")
+        )
+      );
+    } catch {
+      return false;
+    }
+  });
+}
+
 function downloadOriginKind(item) {
   const urls = [
     item?.sourceUrl,
@@ -641,7 +726,7 @@ async function openReport(id) {
         safeArray(x.suspiciousApis).length > 0),
       (item) => `
         <div class="finding">
-          <div class="finding-head"><h4>${escapeHtml(item.name || "PE")}</h4><span class="tag ${item.randomLikeName ? "critical" : "info"}">${item.randomLikeName ? "ALEATÓRIO" : item.packedLike ? "PACKER · INVENTÁRIO" : item.highEntropy ? "ENTROPIA · INVENTÁRIO" : "PE · INVENTÁRIO"}</span></div>
+          <div class="finding-head"><h4>${escapeHtml(item.name || "PE")}</h4><span class="tag ${item.randomLikeName ? "medium" : "info"}">${item.randomLikeName ? "ALEATÓRIO · REVISAR" : item.packedLike ? "PACKER · INVENTÁRIO" : item.highEntropy ? "ENTROPIA · INVENTÁRIO" : "PE · INVENTÁRIO"}</span></div>
           <code>${escapeHtml(item.path || "—")}</code>
           <div class="kv"><span>Entropia</span><span>${escapeHtml(item.entropy ?? "—")}</span></div>
           <div class="kv"><span>Assinado</span><span>${item.signed ? "Sim" : "Não"}</span></div>
@@ -688,7 +773,7 @@ async function openReport(id) {
       arrays.autorunIntegrity.filter((x) => x.suspicious === true),
       (item) => `
         <div class="finding">
-          <div class="finding-head"><h4>${escapeHtml(item.name || item.source || "Autorun")}</h4><span class="tag ${item.fileExists && !item.signed ? "high" : "medium"}">AUTORUN</span></div>
+          <div class="finding-head"><h4>${escapeHtml(item.name || item.source || "Autorun")}</h4><span class="tag medium">AUTORUN · REVISAR</span></div>
           <code>${escapeHtml(item.command || item.executablePath || "—")}</code>
           <div class="kv"><span>Fonte</span><span>${escapeHtml(item.source || "—")}</span></div>
           <div class="kv"><span>Assinado</span><span>${item.signed ? "Sim" : "Não"}</span></div>
@@ -703,7 +788,7 @@ async function openReport(id) {
       arrays.alternateDataStreams,
       (item) => `
         <div class="finding">
-          <div class="finding-head"><h4>${escapeHtml(item.streamName || "ADS")}</h4><span class="tag ${item.suspicious ? "high" : "info"}">ADS</span></div>
+          <div class="finding-head"><h4>${escapeHtml(item.streamName || "ADS")}</h4><span class="tag ${item.suspicious ? "medium" : "info"}">ADS</span></div>
           <code>${escapeHtml(item.path || "—")}</code>
           <div class="kv"><span>Tamanho</span><span>${escapeHtml(item.streamSize ?? 0)} bytes</span></div>
         </div>
@@ -717,7 +802,7 @@ async function openReport(id) {
       arrays.processModuleIntegrity.filter((x) => x.suspicious === true),
       (item) => `
         <div class="finding">
-          <div class="finding-head"><h4>${escapeHtml((item.processName || "processo") + " → " + (item.moduleName || "módulo"))}</h4><span class="tag high">DLL</span></div>
+          <div class="finding-head"><h4>${escapeHtml((item.processName || "processo") + " → " + (item.moduleName || "módulo"))}</h4><span class="tag medium">DLL · REVISAR</span></div>
           <code>${escapeHtml(item.modulePath || "—")}</code>
           <div class="kv"><span>Assinado</span><span>${item.moduleSigned ? "Sim" : "Não"}</span></div>
         </div>
@@ -746,7 +831,7 @@ async function openReport(id) {
       arrays.protectedWindows,
       (item) => `
         <div class="finding">
-          <div class="finding-head"><h4>${escapeHtml(item.processName || "Processo")}</h4><span class="tag ${item.signed ? "medium" : "high"}">CAPTURE EXCLUSION</span></div>
+          <div class="finding-head"><h4>${escapeHtml(item.processName || "Processo")}</h4><span class="tag medium">CAPTURE EXCLUSION</span></div>
           <code>${escapeHtml(item.processPath || "—")}</code>
           <div class="kv"><span>Classe</span><span>${escapeHtml(item.windowClass || "—")}</span></div>
           <div class="kv"><span>Assinado</span><span>${item.signed ? "Sim" : "Não"}</span></div>
@@ -766,7 +851,7 @@ async function openReport(id) {
       networkInteresting,
       (item) => `
         <div class="finding">
-          <div class="finding-head"><h4>${escapeHtml(item.domain || item.processName || item.remoteAddress || "Rede")}</h4><span class="tag ${safeArray(item.matchedIndicators).length ? "high" : "medium"}">${escapeHtml(item.source || "REDE")}</span></div>
+          <div class="finding-head"><h4>${escapeHtml(item.domain || item.processName || item.remoteAddress || "Rede")}</h4><span class="tag medium">${escapeHtml(item.source || "REDE")}</span></div>
           <div class="kv"><span>Processo</span><span>${escapeHtml(item.processPath || item.processName || "—")}</span></div>
           <div class="kv"><span>Destino</span><span>${escapeHtml(item.domain || ((item.remoteAddress || "—") + ":" + (item.remotePort || "")))}</span></div>
           <div class="kv"><span>Indicadores</span><span>${escapeHtml(safeArray(item.matchedIndicators).join(", ") || "—")}</span></div>
@@ -848,7 +933,7 @@ async function openReport(id) {
       arrays.systemIntegrityExpansion,
       (item) => `
         <div class="finding">
-          <div class="finding-head"><h4>${escapeHtml(item.name || item.kind || "Integridade")}</h4><span class="tag ${["high","critical"].includes(String(item.severityHint || "").toLowerCase()) ? "high" : String(item.severityHint || "").toLowerCase() === "medium" ? "medium" : "info"}">${escapeHtml(String(item.kind || "INTEGRITY").toUpperCase())}</span></div>
+          <div class="finding-head"><h4>${escapeHtml(item.name || item.kind || "Integridade")}</h4><span class="tag ${String(item.severityHint || "").toLowerCase() === "info" ? "info" : "medium"}">${escapeHtml(String(item.kind || "INTEGRITY").toUpperCase())}</span></div>
           <code>${escapeHtml(item.detail || "—")}</code>
           <div class="kv"><span>Data</span><span>${escapeHtml(formatDate(item.timestampUtc))}</span></div>
         </div>
@@ -916,18 +1001,51 @@ async function openReport(id) {
   `;
 
   const hw = payload.hardwareSummary || {};
-  const connectedStorage = arrays.usbCurrent.filter((item) => {
-    const haystack = [item.name, item.deviceId, item.pnpDeviceId, item.manufacturer]
-      .join(" ").toLowerCase();
-    return haystack.includes("disk") ||
-      haystack.includes("mass storage") ||
+  const isUsbStorageLikeClient = (item) => {
+    const haystack = [
+      item?.name,
+      item?.deviceId,
+      item?.pnpDeviceId,
+      item?.deviceClass,
+      item?.instanceId,
+      item?.friendlyName,
+      item?.deviceDescription,
+      item?.manufacturer
+    ].filter(Boolean).join(" ").toLowerCase();
+
+    return (
       haystack.includes("usbstor") ||
-      haystack.includes("storage");
-  }).length;
+      haystack.includes("mass storage") ||
+      haystack.includes("diskdrive") ||
+      haystack.includes("usb disk") ||
+      haystack.includes("flash drive") ||
+      haystack.includes("pendrive")
+    );
+  };
+
+  const connectedStorage = arrays.usbCurrent
+    .filter(isUsbStorageLikeClient)
+    .length;
+
+  const recentDisconnectedStorage = arrays.usbHistory.filter((item) => {
+    if (item.present !== false || !isUsbStorageLikeClient(item))
+      return false;
+
+    const time = new Date(
+      item.lastDisconnectedUtc ||
+      item.lastConnectedUtc ||
+      0
+    ).getTime();
+
+    return Number.isFinite(time) &&
+      time > 0 &&
+      Date.now() - time <= 3 * 86400000;
+  });
 
   document.getElementById("deviceOverviewList").innerHTML = `
     <div class="metric-grid">
       <div class="metric"><small>PENDRIVES CONECTADOS</small><strong>${connectedStorage}</strong></div>
+      <div class="metric warning-metric"><small>PENDRIVE DESCONECTADO ≤ 3 DIAS</small><strong>${recentDisconnectedStorage.length}</strong></div>
       <div class="metric"><small>USB DESCONECTADOS</small><strong>${disconnectedUsb}</strong></div>
       <div class="metric"><small>ARDUINO</small><strong>${Number(hw.arduinoCount ?? 0)}</strong></div>
       <div class="metric"><small>MAKCU / MOKU</small><strong>${Number(hw.makcuCount ?? 0)}</strong></div>
@@ -965,20 +1083,35 @@ async function openReport(id) {
         .sort((a, b) =>
           new Date(b.lastDisconnectedUtc || b.lastConnectedUtc || 0) -
           new Date(a.lastDisconnectedUtc || a.lastConnectedUtc || 0))
-        .map((item) => `
-        <div class="finding">
-          <div class="finding-head">
-            <h4>${escapeHtml(item.friendlyName || item.deviceDescription || item.deviceClass || "Dispositivo USB")}</h4>
-            <span class="tag medium">DESCONECTADO</span>
-          </div>
-          <div class="kv"><span>Fabricante</span><span>${escapeHtml(item.manufacturer || "—")}</span></div>
-          <div class="kv"><span>Instância / serial</span><span>${escapeHtml(item.instanceId || "—")}</span></div>
-          <div class="kv"><span>Última conexão</span><span>${escapeHtml(formatDate(item.lastConnectedUtc))}</span></div>
-          <div class="kv"><span>Última desconexão</span><span>${escapeHtml(formatDate(item.lastDisconnectedUtc))}</span></div>
-          <div class="kv"><span>Fonte do horário</span><span>${escapeHtml(item.timelineSource || "Não registrado pelo Windows")}</span></div>
-          <code>${escapeHtml(item.deviceClass || "")}</code>
-        </div>
-      `).join("")
+        .map((item) => {
+          const time = new Date(
+            item.lastDisconnectedUtc ||
+            item.lastConnectedUtc ||
+            0
+          ).getTime();
+
+          const recentStorage =
+            isUsbStorageLikeClient(item) &&
+            Number.isFinite(time) &&
+            time > 0 &&
+            Date.now() - time <= 3 * 86400000;
+
+          return `
+            <div class="finding ${recentStorage ? "severity-card medium" : ""}">
+              <div class="finding-head">
+                <h4>${escapeHtml(item.friendlyName || item.deviceDescription || item.deviceClass || "Dispositivo USB")}</h4>
+                <span class="tag ${recentStorage ? "medium" : "info"}">${recentStorage ? "PENDRIVE RECENTE" : "DESCONECTADO"}</span>
+              </div>
+              <div class="kv"><span>Fabricante</span><span>${escapeHtml(item.manufacturer || "—")}</span></div>
+              <div class="kv"><span>Instância / serial</span><span>${escapeHtml(item.instanceId || "—")}</span></div>
+              <div class="kv"><span>Última conexão</span><span>${escapeHtml(formatDate(item.lastConnectedUtc))}</span></div>
+              <div class="kv"><span>Última desconexão</span><span>${escapeHtml(formatDate(item.lastDisconnectedUtc))}</span></div>
+              <div class="kv"><span>Fonte do horário</span><span>${escapeHtml(item.timelineSource || "Não registrado pelo Windows")}</span></div>
+              ${recentStorage ? '<div class="kv"><span>Alerta</span><span>Armazenamento USB desconectado nos últimos 3 dias.</span></div>' : ""}
+              <code>${escapeHtml(item.deviceClass || "")}</code>
+            </div>
+          `;
+        }).join("")
     : '<div class="message ok">Nenhum dispositivo USB histórico marcado como desconectado.</div>';
 
   document.getElementById("serialDeviceList").innerHTML = `
@@ -998,15 +1131,23 @@ async function openReport(id) {
     .map((item) => ({
       item,
       origin: downloadOriginKind(item),
-      name: item.fileName || item.targetPath || ""
+      name: item.fileName || item.targetPath || "",
+      strictDiscord: isDiscordAttachmentDownloadClient(item),
+      officialDiscordUpdate: isOfficialDiscordInstallerOrUpdateClient(item)
     }))
-    .filter((entry) => entry.origin && isRiskyDownloadName(entry.name))
+    .filter((entry) =>
+      isRiskyDownloadName(entry.name) &&
+      !entry.officialDiscordUpdate &&
+      (
+        entry.origin === "Telegram" ||
+        entry.strictDiscord
+      ))
     .sort((a, b) => new Date(b.item.startTimeUtc || 0) - new Date(a.item.startTimeUtc || 0))
     .slice(0, 300);
 
   document.getElementById("socialDownloadsCountBadge").textContent = socialDownloads.length;
   document.getElementById("socialDownloadsList").innerHTML = socialDownloads.length
-    ? socialDownloads.map(({ item, origin, name }) => {
+    ? socialDownloads.map(({ item, origin, name, strictDiscord }) => {
         const sourceUrl =
           safeExternalUrl(item.sourceUrl) ||
           safeExternalUrl(item.finalUrl) ||
@@ -1014,7 +1155,7 @@ async function openReport(id) {
           safeExternalUrl(item.referrerUrl);
 
         const doubleExtension = isDeceptiveDoubleExtension(name);
-        const tag = doubleExtension ? "high" : "medium";
+        const tag = strictDiscord ? "critical" : "medium";
 
         return `
           <div class="finding severity-card ${tag}">
@@ -1048,10 +1189,10 @@ async function openReport(id) {
           safeExternalUrl(item.referrerUrl);
 
         return `
-          <div class="finding severity-card ${escapeHtml(danger.severity)}">
+          <div class="finding severity-card medium">
             <div class="finding-head">
               <h4>${escapeHtml(item.fileName || "Download")}</h4>
-              <span class="tag ${escapeHtml(danger.severity)}">${escapeHtml(danger.label)}</span>
+              <span class="tag medium">${escapeHtml(danger.label)} · REVISAR</span>
             </div>
             <div class="kv"><span>DangerType</span><span>${Number(danger.code)}</span></div>
             <div class="kv"><span>Baixado em</span><span>${escapeHtml(formatDate(item.startTimeUtc))}</span></div>
@@ -1071,9 +1212,9 @@ async function openReport(id) {
     if (!/\.(exe|com|scr|dll|bat|cmd|ps1|msi)$/i.test(name)) continue;
 
     priorityFiles.push({
-      priority: 5,
+      priority: 2,
       status: "BAIXADO E APAGADO / MOVIDO",
-      tag: "high",
+      tag: "medium",
       name: item.fileName || "Executável",
       path: item.targetPath || item.currentPath || "—",
       time: item.startTimeUtc,
@@ -1083,52 +1224,11 @@ async function openReport(id) {
     });
   }
 
-  for (const item of arrays.deletedUsnRecords) {
-    const lower = String(item.fileName || "").toLowerCase();
-    const highInterest =
-      item.randomLikeName === true ||
-      item.deceptiveDoubleExtension === true ||
-      ["loader", "injector", "cheat", "hack", "script", "aimbot", "recoil", "spoofer", "bypass", "eac"]
-        .some((term) => lower.includes(term));
+  // Arquivo apagado no USN, sem prova de execução, não entra na prioridade vermelha.
+  // Achados válidos de execução aleatória são adicionados pelo motor de findings.
 
-    if (!highInterest) continue;
-
-    priorityFiles.push({
-      priority: item.randomLikeName || item.deceptiveDoubleExtension ? 10 : 8,
-      status: item.randomLikeName || item.deceptiveDoubleExtension
-        ? "APAGADO · CRÍTICO"
-        : "APAGADO · ALTO INTERESSE",
-      tag: item.randomLikeName || item.deceptiveDoubleExtension ? "critical" : "high",
-      name: item.fileName || "Arquivo apagado",
-      path: item.volume || "NTFS",
-      time: item.timestampUtc,
-      source: "USN Journal",
-      url: "",
-      detail: "O NTFS registrou a exclusão mesmo sem haver execução do arquivo."
-    });
-  }
-
-  for (const item of arrays.browserRecoveredArtifacts) {
-    const critical =
-      item.randomLikeName === true ||
-      item.deceptiveDoubleExtension === true ||
-      safeArray(item.catalogMatches).length > 0;
-
-    if (!critical && Number(item.riskScore || 0) < 4)
-      continue;
-
-    priorityFiles.push({
-      priority: critical ? 10 : 7,
-      status: critical ? "HISTÓRICO APAGADO · CRÍTICO" : "HISTÓRICO APAGADO",
-      tag: critical ? "critical" : "high",
-      name: item.recoveredFileName || item.recoveredUrl || "Vestígio recuperado",
-      path: item.sourceArtifact || "SQLite",
-      time: null,
-      source: item.recoveryKind || "SQLite",
-      url: item.recoveredUrl || "",
-      detail: item.note || "Vestígio recuperado do banco do navegador."
-    });
-  }
+  // Vestígios recuperados do navegador só entram aqui quando o servidor
+  // confirmar acesso/download crítico no catálogo. O SQLite bruto não gera vermelho.
 
   for (const item of arrays.prefetchExecutions) {
     if (item.likelyDetachedOrRemovable !== true) continue;
@@ -1140,9 +1240,11 @@ async function openReport(id) {
         lower.includes("\\steamapps\\common\\")) continue;
 
     priorityFiles.push({
-      priority: 6,
-      status: "EXECUTADO / VOLUME REMOVIDO",
-      tag: "high",
+      priority: item.currentRemovable === true ? 100 : 3,
+      status: item.currentRemovable === true
+        ? "PENDRIVE · PRIORIDADE MÁXIMA"
+        : "EXECUTADO / VOLUME NÃO MONTADO",
+      tag: item.currentRemovable === true ? "critical" : "medium",
       name: item.executableName || item.prefetchFile || "Executável",
       path: pathValue || "—",
       time: item.lastRunUtc,
@@ -1212,9 +1314,9 @@ async function openReport(id) {
     if (zipTerms.length < 2 && !randomExeInside) continue;
 
     priorityFiles.push({
-      priority: randomExeInside ? 7 : 5,
-      status: ext === ".zip" ? "ZIP SUSPEITO" : "ARQUIVO COMPACTADO SUSPEITO",
-      tag: randomExeInside ? "high" : "medium",
+      priority: randomExeInside ? 4 : 3,
+      status: ext === ".zip" ? "ZIP PARA REVISÃO" : "ARQUIVO COMPACTADO PARA REVISÃO",
+      tag: "medium",
       name: item.name || "Arquivo ZIP",
       path: item.path || "—",
       time: item.lastWriteUtc || item.createdUtc,
@@ -1235,22 +1337,30 @@ async function openReport(id) {
       "usn_delete",
       "unknown_app",
       "prefetch_execution",
+      "executed_random_exe",
+      "usb_execution",
       "bam",
       "recycle_bin"
     ].includes(finding.artifact_type)) {
       continue;
     }
 
+    const usbPriority =
+      finding.artifact_type === "usb_execution" ||
+      finding.evidence?.usbPriorityMaximum === true;
+
     priorityFiles.push({
-      priority: finding.severity === "critical" ? 10 :
-        finding.severity === "high" ? 8 : 4,
-      status: finding.severity === "critical"
-        ? "CATÁLOGO / CRÍTICO"
-        : finding.severity === "high"
-          ? "ALTO RISCO"
+      priority: usbPriority
+        ? 100
+        : finding.severity === "critical"
+          ? 90
+          : 4,
+      status: usbPriority
+        ? "PENDRIVE · PRIORIDADE MÁXIMA"
+        : finding.severity === "critical"
+          ? "CRÍTICO"
           : "REVISAR",
-      tag: finding.severity === "critical" ? "critical" :
-        finding.severity === "high" ? "high" : "medium",
+      tag: finding.severity === "critical" ? "critical" : "medium",
       name: finding.title || "Arquivo suspeito",
       path: finding.artifact_value || "—",
       time: finding.created_at,
@@ -1317,7 +1427,7 @@ async function openReport(id) {
           <div class="finding">
             <div class="finding-head">
               <h4>${escapeHtml(item.searchQuery || item.host || item.title || "Histórico do navegador")}</h4>
-              <span class="tag ${escapeHtml(risk === "high" ? "high" : risk === "medium" ? "medium" : "info")}">${label}</span>
+              <span class="tag ${escapeHtml(["high","medium"].includes(risk) ? "medium" : "info")}">${label}</span>
             </div>
             <div class="kv"><span>Navegador</span><span>${escapeHtml((item.browser || "—") + " · " + (item.profile || "perfil"))}</span></div>
             <div class="kv"><span>Visitado em</span><span>${escapeHtml(formatDate(item.visitTimeUtc))}</span></div>
@@ -1403,7 +1513,7 @@ async function openReport(id) {
     timeline.push({
       time: item.lastRunUtc,
       action: "EXECUTADO",
-      tag: item.likelyDetachedOrRemovable ? "high" : "info",
+      tag: item.currentRemovable === true ? "critical" : item.likelyDetachedOrRemovable ? "medium" : "info",
       path: item.resolvedExecutablePath || item.nativeExecutablePath || item.executableName || "Executável",
       detail: "Prefetch · " + Number(item.runCount || 0) + " execução(ões)"
     });
@@ -1597,7 +1707,7 @@ async function openReport(id) {
           <div class="finding">
             <div class="finding-head">
               <h4>${escapeHtml(item.executableName || item.prefetchFile || "Executável")}</h4>
-              <span class="tag ${risky ? "high" : "info"}">${escapeHtml(status)}</span>
+              <span class="tag ${item.currentRemovable === true ? "critical" : risky ? "medium" : "info"}">${escapeHtml(status)}</span>
             </div>
             <div class="kv"><span>Última execução</span><span>${escapeHtml(formatDate(item.lastRunUtc))}</span></div>
             <div class="kv"><span>Quantidade de execuções</span><span>${Number(item.runCount || 0)}</span></div>
@@ -1755,7 +1865,7 @@ async function openReport(id) {
         <div class="finding">
           <div class="finding-head">
             <h4>${escapeHtml(item.moduleName || "DLL")}</h4>
-            <span class="tag high">EXTERNO / NÃO ASSINADO</span>
+            <span class="tag medium">EXTERNO / NÃO ASSINADO · REVISAR</span>
           </div>
           <div class="kv"><span>Processo</span><span>${escapeHtml((item.processName || "Rust") + " #" + (item.processId || ""))}</span></div>
           <div class="kv"><span>Caminho</span><span>${escapeHtml(item.path || "—")}</span></div>
