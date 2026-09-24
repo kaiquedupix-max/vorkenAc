@@ -16,7 +16,7 @@ namespace Vorken.Agent;
 
 internal static class Program
 {
-    private const string AgentVersion = "1.0.2";
+    private const string AgentVersion = "1.0.3";
     private const string DefaultServerUrl = "https://vorkenac.guerrafriarust.com.br";
 
     private static readonly JsonSerializerOptions JsonOptions =
@@ -1435,6 +1435,9 @@ internal static class Program
         {
             string stem = Path.GetFileNameWithoutExtension(fileName);
 
+            if (IsGenericInstallerStem(stem))
+                return false;
+
             stem = System.Text.RegularExpressions.Regex.Replace(
                 stem,
                 @"\.(zip|rar|7z|pdf|jpg|jpeg|png|txt)$",
@@ -1470,8 +1473,11 @@ internal static class Program
             if (
                 allUpperOrDigits &&
                 distinct >= Math.Min(6, stem.Length - 1) &&
-                vowelRatio <= 0.35 &&
-                (digits >= 1 || letters >= 5))
+                (
+                    digits >= 1
+                        ? vowelRatio <= 0.35
+                        : vowelRatio <= 0.12
+                ))
             {
                 return true;
             }
@@ -1499,6 +1505,24 @@ internal static class Program
         }
     }
 
+
+    private static bool IsGenericInstallerStem(string value)
+    {
+        string stem = (value ?? "").Trim().ToLowerInvariant();
+
+        return stem is
+            "installer" or
+            "install" or
+            "setup" or
+            "setup64" or
+            "setup32" or
+            "updater" or
+            "update" or
+            "uninstall" or
+            "uninstaller" or
+            "bootstrapper" or
+            "launcherinstaller";
+    }
 
     private static List<string> TryListZipEntries(string path)
     {

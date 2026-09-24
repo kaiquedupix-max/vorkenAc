@@ -523,11 +523,35 @@ function isTrustedInstalledPathForCommonApp(value) {
   );
 }
 
+function isGenericInstallerExecutableName(value) {
+  const stem = path
+    .basename(String(value || ""), path.extname(String(value || "")))
+    .toLowerCase()
+    .trim();
+
+  return new Set([
+    "installer",
+    "install",
+    "setup",
+    "setup64",
+    "setup32",
+    "updater",
+    "update",
+    "uninstall",
+    "uninstaller",
+    "bootstrapper",
+    "launcherinstaller",
+  ]).has(stem);
+}
+
 function looksRandomExecutableName(value) {
   const name = path.basename(String(value || ""));
   let stem = path.basename(name, path.extname(name));
 
   stem = stem.replace(/\.(zip|rar|7z|pdf|jpg|jpeg|png|txt)$/i, "");
+
+  if (isGenericInstallerExecutableName(name))
+    return false;
 
   if (stem.length < 4 || stem.length > 28) return false;
   if (!/^[a-z0-9]+$/i.test(stem)) return false;
@@ -556,10 +580,10 @@ function looksRandomExecutableName(value) {
   if (
     allUpperOrDigits &&
     distinct >= Math.min(6, stem.length - 1) &&
-    vowelRatio <= 0.35 &&
     (
-      digits.length >= 1 ||
-      letters.length >= 5
+      digits.length >= 1
+        ? vowelRatio <= 0.35
+        : vowelRatio <= 0.12
     )
   ) {
     return true;
@@ -2225,6 +2249,7 @@ async function addBuiltInReviewFindings(analysisId, report) {
 
     const recentRandomExecutable =
       item.randomLikeName === true &&
+      !isGenericInstallerExecutableName(name) &&
       ageDays(item.timestampUtc) <= 3;
 
     // Deleted/present EXEs are not detections unless there is independent
@@ -3168,6 +3193,7 @@ async function addBuiltInReviewFindings(analysisId, report) {
 
     const isRandomExe =
       ext === ".exe" &&
+      !isGenericInstallerExecutableName(item.name || item.path) &&
       (item.randomLikeName === true ||
        looksRandomExecutableName(item.name || item.path)) &&
       item.signed !== true &&
