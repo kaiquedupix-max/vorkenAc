@@ -5623,6 +5623,8 @@ app.post("/api/agent/:token/report", async (req, res) => {
           await pool.query(
             `UPDATE analyses
              SET status='completed',
+                 processing_stage='ai_error',
+                 processing_message='Falha ao concluir os filtros. O relatório bruto e o resultado técnico disponível foram preservados.',
                  finished_at=COALESCE(finished_at, NOW())
              WHERE id=$1`,
             [analysis.id]
