@@ -11,7 +11,7 @@ namespace Vorken.Agent;
 
 internal static class Program
 {
-    private const string AgentVersion = "0.5.0";
+    private const string AgentVersion = "0.6.0";
 
     private static readonly JsonSerializerOptions JsonOptions =
         new(JsonSerializerDefaults.Web)
@@ -217,6 +217,27 @@ internal static class Program
                 DeepForensicCollector.CollectRecentShortcuts,
                 errors);
 
+            List<RecycleBinRecord> recycleBin = SafeCollect(
+                "Lixeira do Windows",
+                EchoEnvironmentCollector.CollectRecycleBin,
+                errors);
+
+            VmEnvironmentRecord vmEnvironment;
+            try
+            {
+                vmEnvironment = EchoEnvironmentCollector.CollectVmEnvironment();
+                Console.WriteLine(
+                    vmEnvironment.IsVirtualMachine
+                        ? $"  ✓ Ambiente virtual: {vmEnvironment.DetectedPlatform}"
+                        : "  ✓ Ambiente virtual: não detectado");
+            }
+            catch (Exception ex)
+            {
+                errors.Add("Ambiente virtual: " + ex.Message);
+                vmEnvironment = new VmEnvironmentRecord();
+                Console.WriteLine("  ! Ambiente virtual: indisponível");
+            }
+
             List<BrowserDownloadRecord> browserDownloads = SafeCollect(
                 "Histórico de downloads",
                 BrowserDownloadsCollector.Collect,
@@ -319,6 +340,8 @@ internal static class Program
                 ProcessCreationEvents = processCreationEvents,
                 DefenderDetections = defenderDetections,
                 RecentShortcuts = recentShortcuts,
+                RecycleBin = recycleBin,
+                VmEnvironment = vmEnvironment,
                 BrowserDownloads = browserDownloads,
                 ExtensionMismatches = extensionMismatches,
                 DefenderExclusions = defenderExclusions,
@@ -725,6 +748,7 @@ internal static class Program
                         Signed = signed,
                         SignerSubject = signer,
                         PrefetchEvidenceUtc = executionEvidence,
+                        CompilationTimeUtc = TryPeCompileTimeUtc(info.FullName),
                         DriveType = GetDriveType(info.FullName)
                     });
                 }
@@ -1008,6 +1032,56 @@ internal static class Program
         }
     }
 
+    private static DateTime? TryPeCompileTimeUtc(string path)
+    {
+        try
+        {
+            using var stream = new FileStream(
+                path,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete);
+
+            if (stream.Length < 256)
+                return null;
+
+            using var reader = new BinaryReader(stream);
+
+            if (reader.ReadUInt16() != 0x5A4D)
+                return null;
+
+            stream.Position = 0x3C;
+            int peOffset = reader.ReadInt32();
+
+            if (peOffset <= 0 || peOffset + 12 > stream.Length)
+                return null;
+
+            stream.Position = peOffset;
+            if (reader.ReadUInt32() != 0x00004550)
+                return null;
+
+            _ = reader.ReadUInt16();
+            _ = reader.ReadUInt16();
+            uint timestamp = reader.ReadUInt32();
+
+            if (timestamp == 0)
+                return null;
+
+            DateTime utc = DateTimeOffset
+                .FromUnixTimeSeconds(timestamp)
+                .UtcDateTime;
+
+            if (utc.Year < 1990 || utc > DateTime.UtcNow.AddYears(2))
+                return null;
+
+            return utc;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private static (bool Signed, string? Subject) TrySigner(string path)
     {
         try
@@ -1112,6 +1186,8 @@ internal sealed class ScanReport
     public List<ProcessCreationRecord> ProcessCreationEvents { get; set; } = new();
     public List<DefenderDetectionRecord> DefenderDetections { get; set; } = new();
     public List<RecentShortcutRecord> RecentShortcuts { get; set; } = new();
+    public List<RecycleBinRecord> RecycleBin { get; set; } = new();
+    public VmEnvironmentRecord VmEnvironment { get; set; } = new();
     public List<BrowserDownloadRecord> BrowserDownloads { get; set; } = new();
     public List<ExtensionMismatchRecord> ExtensionMismatches { get; set; } = new();
     public List<DefenderExclusionRecord> DefenderExclusions { get; set; } = new();
@@ -1178,6 +1254,7 @@ internal sealed class FileRecord
     public bool Signed { get; set; }
     public string? SignerSubject { get; set; }
     public DateTime? PrefetchEvidenceUtc { get; set; }
+    public DateTime? CompilationTimeUtc { get; set; }
     public string DriveType { get; set; } = "";
 }
 
