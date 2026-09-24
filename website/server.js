@@ -2738,37 +2738,28 @@ function artifactFileExtension(artifactValue, evidence = {}) {
 }
 
 function isVorkenOwnedArtifact(value, evidence = {}) {
-  const candidates = [
+  // Regra absoluta solicitada para evitar auto-detecção:
+  // qualquer artefato cujo valor OU qualquer metadado contenha "vorken"
+  // é considerado pertencente ao próprio scanner, independentemente
+  // do diretório, extensão, estado do arquivo ou origem da evidência.
+  const haystack = [
     value,
-    evidence?.name,
-    evidence?.fileName,
-    evidence?.path,
-    evidence?.fullPath,
-    evidence?.processPath,
-    evidence?.modulePath,
-    evidence?.originalPath,
-    evidence?.targetPath,
-    evidence?.currentPath,
-    evidence?.sourceUrl,
-    evidence?.finalUrl,
-    evidence?.pageUrl,
-    evidence?.siteUrl,
-    evidence?.referrerUrl,
-    evidence?.hostUrl,
-    evidence?.recoveredUrl,
-    ...(Array.isArray(evidence?.urlChain) ? evidence.urlChain : [])
+    (() => {
+      try {
+        return JSON.stringify(evidence || {});
+      } catch {
+        return String(evidence || "");
+      }
+    })()
   ]
     .filter(Boolean)
-    .map((item) => String(item).replaceAll("/", "\\").toLowerCase());
+    .join(" ")
+    .replaceAll("/", "\\")
+    .toLowerCase();
 
-  return candidates.some((item) =>
-    item.includes("vorkenac.guerrafriarust.com.br") ||
-    item.includes("\\vorken\\") ||
-    item.includes("\\vorken.") ||
-    item.includes("\\vorken-") ||
-    item.includes("\\vorken_") ||
-    /(^|\\)vorken(?:[._-][^\\]+)?\.(exe|dll|json|log|tmp|zip)$/i.test(item) ||
-    /(^|\\)vorken(?:\.agent)?\.exe$/i.test(item)
+  return (
+    haystack.includes("vorken") ||
+    haystack.includes("vorkenac.guerrafriarust.com.br")
   );
 }
 
@@ -2880,6 +2871,18 @@ function forceInformationalFinding(artifactType, evidence = {}, title = "") {
   );
 }
 
+async function removeVorkenFindings(analysisId) {
+  await pool.query(
+    `DELETE FROM scan_findings
+     WHERE analysis_id=$1
+       AND (
+         LOWER(COALESCE(artifact_value, '')) LIKE '%vorken%'
+         OR LOWER(COALESCE(evidence::text, '')) LIKE '%vorken%'
+       )`,
+    [analysisId]
+  );
+}
+
 async function rebuildFindings(analysisId, report) {
   await pool.query(
     `UPDATE analyses
@@ -2942,6 +2945,7 @@ async function rebuildFindings(analysisId, report) {
 
   await addBuiltInReviewFindings(analysisId, report);
   await downgradeUnexecutedExeFindings(analysisId, report);
+  await removeVorkenFindings(analysisId);
 
   await pool.query(
     `UPDATE analyses
@@ -2969,6 +2973,8 @@ async function rebuildFindings(analysisId, report) {
         : "A revisão final não pôde ser concluída. O resultado técnico continua disponível.",
     ]
   );
+
+  await removeVorkenFindings(analysisId);
 
   return aiResult;
 }
@@ -4965,10 +4971,7 @@ async function addBuiltInReviewFindings(analysisId, report) {
       execution.volumeNotMounted === true &&
       execution.nonSystemVolume === true &&
       execution.executablePresent !== true &&
-      (
-        isVolumeRootExecutable(execution.nativeExecutablePath) ||
-        isSuspiciousUserPath(executionPath)
-      );
+      execution.likelyDetachedOrRemovable === true;
 
     const disconnectedUsb =
       strongDetachedEvidence
@@ -5910,6 +5913,8 @@ app.get("/api/admin/analyses", requireAdmin, async (_req, res) => {
         COUNT(DISTINCT LOWER(sf.artifact_type) || '|' || LOWER(TRIM(sf.artifact_value)))
           FILTER (
             WHERE sf.severity IN ('medium','high','critical')
+              AND LOWER(COALESCE(sf.artifact_value,'')) NOT LIKE '%vorken%'
+              AND LOWER(COALESCE(sf.evidence::text,'')) NOT LIKE '%vorken%'
               AND (
                 sf.evidence->>'priorityMaximum' = 'true'
                 OR ar.verdict IS DISTINCT FROM 'likely_false_positive'
@@ -5918,6 +5923,8 @@ app.get("/api/admin/analyses", requireAdmin, async (_req, res) => {
         COUNT(DISTINCT LOWER(sf.artifact_type) || '|' || LOWER(TRIM(sf.artifact_value)))
           FILTER (
             WHERE sf.severity IN ('high','critical')
+              AND LOWER(COALESCE(sf.artifact_value,'')) NOT LIKE '%vorken%'
+              AND LOWER(COALESCE(sf.evidence::text,'')) NOT LIKE '%vorken%'
               AND (
                 sf.evidence->>'priorityMaximum' = 'true'
                 OR ar.verdict IS DISTINCT FROM 'likely_false_positive'
@@ -6038,6 +6045,8 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
        ON ar.analysis_id = sf.analysis_id
       AND ar.finding_id = sf.id
      WHERE sf.analysis_id = $1
+       AND LOWER(COALESCE(sf.artifact_value,'')) NOT LIKE '%vorken%'
+       AND LOWER(COALESCE(sf.evidence::text,'')) NOT LIKE '%vorken%'
        AND (
          sf.evidence->>'priorityMaximum' = 'true'
          OR ar.verdict IS DISTINCT FROM 'likely_false_positive'
@@ -6075,6 +6084,8 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
        ON ar.analysis_id = sf.analysis_id
       AND ar.finding_id = sf.id
      WHERE sf.analysis_id = $1
+       AND LOWER(COALESCE(sf.artifact_value,'')) NOT LIKE '%vorken%'
+       AND LOWER(COALESCE(sf.evidence::text,'')) NOT LIKE '%vorken%'
        AND ar.verdict = 'likely_false_positive'
        AND COALESCE(sf.evidence->>'priorityMaximum', 'false') <> 'true'
      ORDER BY sf.id ASC`,
@@ -7092,6 +7103,8 @@ app.get("/api/agent/:token/result", async (req, res) => {
          ON ar.analysis_id = sf.analysis_id
         AND ar.finding_id = sf.id
        WHERE sf.analysis_id = $1
+         AND LOWER(COALESCE(sf.artifact_value,'')) NOT LIKE '%vorken%'
+         AND LOWER(COALESCE(sf.evidence::text,'')) NOT LIKE '%vorken%'
          AND (
            sf.evidence->>'priorityMaximum' = 'true'
            OR ar.verdict IS DISTINCT FROM 'likely_false_positive'
