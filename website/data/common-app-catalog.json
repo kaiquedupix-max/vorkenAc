@@ -1,0 +1,209 @@
+{
+  "version": "2026-09-24.1",
+  "notes": "Allowlist defensiva de aplicativos comuns. Um nome conhecido só é ignorado quando a assinatura digital esperada e/ou uma origem oficial de download é confirmada. Nome conhecido vindo de origem não oficial continua sendo reportado.",
+  "apps": [
+    {
+      "name": "Discord",
+      "filenames": ["discord.exe", "discordsetup.exe", "discordptb.exe", "discordcanary.exe"],
+      "filenamePrefixes": ["discordsetup", "discordptbsetup", "discordcanarysetup"],
+      "signerContains": ["discord inc"],
+      "officialUrlIncludes": ["discord.com/download", "discord.com/api/download", "dl.discordapp.net/apps/", "dl.discordapp.net/distro/app/", "stable.dl2.discordapp.net/"]
+    },
+    {
+      "name": "Steam",
+      "filenames": ["steam.exe", "steamsetup.exe"],
+      "filenamePrefixes": ["steamsetup"],
+      "signerContains": ["valve corp", "valve corporation"],
+      "officialUrlIncludes": ["store.steampowered.com/about", "media.steampowered.com/client/installer/", "cdn.akamai.steamstatic.com/client/installer/"]
+    },
+    {
+      "name": "Google Chrome",
+      "filenames": ["chrome.exe", "chromesetup.exe"],
+      "filenamePrefixes": ["chromesetup", "googlechromestandaloneenterprise"],
+      "signerContains": ["google llc"],
+      "officialUrlIncludes": ["google.com/chrome", "dl.google.com/chrome/", "dl.google.com/tag/", "edgedl.me.gvt1.com/edgedl/chrome/"]
+    },
+    {
+      "name": "Microsoft Edge",
+      "filenames": ["msedge.exe", "microsoftedgesetup.exe"],
+      "filenamePrefixes": ["microsoftedgesetup"],
+      "signerContains": ["microsoft corporation"],
+      "officialUrlIncludes": ["microsoft.com/edge", "microsoftedge.microsoft.com", "msedge.sf.dl.delivery.mp.microsoft.com/"]
+    },
+    {
+      "name": "Mozilla Firefox",
+      "filenames": ["firefox.exe"],
+      "filenamePrefixes": ["firefox installer", "firefox setup"],
+      "signerContains": ["mozilla corporation"],
+      "officialUrlIncludes": ["mozilla.org/firefox", "download.mozilla.org/"]
+    },
+    {
+      "name": "AnyDesk",
+      "filenames": ["anydesk.exe"],
+      "filenamePrefixes": ["anydesk"],
+      "signerContains": ["anydesk software gmbh", "philandro software gmbh"],
+      "officialUrlIncludes": ["anydesk.com/download", "anydesk.com/en/downloads", "anydesk.com/pt/downloads", "download.anydesk.com/"]
+    },
+    {
+      "name": "Spotify",
+      "filenames": ["spotify.exe", "spotifysetup.exe"],
+      "filenamePrefixes": ["spotifysetup"],
+      "signerContains": ["spotify ab"],
+      "officialUrlIncludes": ["spotify.com/download", "spotify.com/br/download", "download.scdn.co/"]
+    },
+    {
+      "name": "OBS Studio",
+      "filenames": ["obs64.exe", "obs32.exe"],
+      "filenamePrefixes": ["obs-studio"],
+      "signerContains": ["obs project"],
+      "officialUrlIncludes": ["obsproject.com/download", "github.com/obsproject/obs-studio/releases/"]
+    },
+    {
+      "name": "VLC",
+      "filenames": ["vlc.exe"],
+      "filenamePrefixes": ["vlc-"],
+      "signerContains": ["videolan"],
+      "officialUrlIncludes": ["videolan.org/vlc", "get.videolan.org/vlc/"]
+    },
+    {
+      "name": "WinRAR",
+      "filenames": ["winrar.exe"],
+      "filenamePrefixes": ["winrar-", "winrar-x", "wrar", "winrar"],
+      "signerContains": ["win.rar gmbh"],
+      "officialUrlIncludes": ["rarlab.com/rar/", "win-rar.com/download.html"]
+    },
+    {
+      "name": "7-Zip",
+      "filenames": ["7z.exe", "7zfm.exe", "7zg.exe"],
+      "filenamePrefixes": ["7z"],
+      "signerContains": ["igor pavlov"],
+      "officialUrlIncludes": ["7-zip.org/a/", "7-zip.org/download.html", "github.com/ip7z/7zip/releases/"]
+    },
+    {
+      "name": "TeamViewer",
+      "filenames": ["teamviewer.exe", "teamviewer_setup.exe"],
+      "filenamePrefixes": ["teamviewer"],
+      "signerContains": ["teamviewer germany gmbh", "teamviewer gmbh"],
+      "officialUrlIncludes": ["teamviewer.com/download", "download.teamviewer.com/"]
+    },
+    {
+      "name": "Telegram Desktop",
+      "filenames": ["telegram.exe"],
+      "filenamePrefixes": ["tsetup"],
+      "signerContains": ["telegram fz-llc"],
+      "officialUrlIncludes": ["desktop.telegram.org", "telegram.org/apps", "updates.tdesktop.com/"]
+    },
+    {
+      "name": "WhatsApp",
+      "filenames": ["whatsapp.exe"],
+      "filenamePrefixes": ["whatsappinstaller"],
+      "signerContains": ["whatsapp llc", "microsoft corporation"],
+      "officialUrlIncludes": ["whatsapp.com/download", "apps.microsoft.com/"]
+    },
+    {
+      "name": "Epic Games Launcher",
+      "filenames": ["epicgameslauncher.exe"],
+      "filenamePrefixes": ["epicinstaller"],
+      "signerContains": ["epic games, inc", "epic games inc"],
+      "officialUrlIncludes": ["store.epicgames.com/download", "epicgames.com/download"]
+    },
+    {
+      "name": "Battle.net",
+      "filenames": ["battle.net.exe", "battle.net launcher.exe"],
+      "filenamePrefixes": ["battle.net-setup", "battle-net-setup"],
+      "signerContains": ["blizzard entertainment"],
+      "officialUrlIncludes": ["battle.net/download", "blizzard.com/download"]
+    },
+    {
+      "name": "Riot Client",
+      "filenames": ["riotclientservices.exe", "riotclientux.exe", "riotclientuxrender.exe"],
+      "filenamePrefixes": ["install valorant", "install league of legends"],
+      "signerContains": ["riot games, inc", "riot games inc"],
+      "officialUrlIncludes": ["riotgames.com", "playvalorant.com/download", "leagueoflegends.com/"]
+    },
+    {
+      "name": "NVIDIA App / GeForce",
+      "filenames": ["nvidia app.exe", "nvidia share.exe", "nvcontainer.exe"],
+      "filenamePrefixes": ["nvidiaapp", "geforce_experience", "geforce-experience"],
+      "signerContains": ["nvidia corporation"],
+      "officialUrlIncludes": ["nvidia.com/download", "us.download.nvidia.com/", "international.download.nvidia.com/"]
+    },
+    {
+      "name": "AMD Software",
+      "filenames": ["radeonsoftware.exe", "amdsoftwareinstaller.exe"],
+      "filenamePrefixes": ["whql-amd-software", "amd-software-adrenalin-edition"],
+      "signerContains": ["advanced micro devices, inc", "advanced micro devices inc"],
+      "officialUrlIncludes": ["amd.com/en/support/download", "drivers.amd.com/"]
+    },
+    {
+      "name": "Logitech G HUB",
+      "filenames": ["lghub.exe", "lghub_agent.exe", "lghub_updater.exe"],
+      "filenamePrefixes": ["lghub_installer"],
+      "signerContains": ["logitech", "logi"],
+      "officialUrlIncludes": ["logitechg.com/ghub", "download01.logi.com/"]
+    },
+    {
+      "name": "Razer Synapse",
+      "filenames": ["razer synapse 3.exe", "razerappengine.exe"],
+      "filenamePrefixes": ["razer synapse"],
+      "signerContains": ["razer usa ltd", "razer"],
+      "officialUrlIncludes": ["razer.com/synapse", "dl.razerzone.com/"]
+    },
+    {
+      "name": "SteelSeries GG",
+      "filenames": ["steelseriesgg.exe", "steelseries gg.exe"],
+      "filenamePrefixes": ["steelseriesgg"],
+      "signerContains": ["steelseries aps", "steelseries"],
+      "officialUrlIncludes": ["steelseries.com/gg", "engine.steelseriescdn.com/"]
+    },
+    {
+      "name": "Visual Studio Code",
+      "filenames": ["code.exe"],
+      "filenamePrefixes": ["vscodesetup", "vscodeusersetup"],
+      "signerContains": ["microsoft corporation"],
+      "officialUrlIncludes": ["code.visualstudio.com/download", "update.code.visualstudio.com/"]
+    },
+    {
+      "name": "Python",
+      "filenames": ["python.exe", "pythonw.exe"],
+      "filenamePrefixes": ["python-"],
+      "signerContains": ["python software foundation"],
+      "officialUrlIncludes": ["python.org/downloads", "python.org/ftp/python/"]
+    },
+    {
+      "name": "Node.js",
+      "filenames": ["node.exe"],
+      "filenamePrefixes": ["node-v"],
+      "signerContains": ["openjs foundation", "node.js foundation"],
+      "officialUrlIncludes": ["nodejs.org/dist/", "nodejs.org/en/download"]
+    },
+    {
+      "name": "Java",
+      "filenames": ["java.exe", "javaw.exe"],
+      "filenamePrefixes": ["jre-", "jdk-"],
+      "signerContains": ["oracle america, inc", "oracle corporation", "eclipse foundation"],
+      "officialUrlIncludes": ["java.com/download", "oracle.com/java/technologies/downloads", "adoptium.net/temurin/releases/"]
+    },
+    {
+      "name": "CapCut",
+      "filenames": ["capcut.exe"],
+      "filenamePrefixes": ["capcut_installer", "capcut"],
+      "signerContains": ["bytedance", "bytedance pte"],
+      "officialUrlIncludes": ["capcut.com/download"]
+    },
+    {
+      "name": "Microsoft PowerToys",
+      "filenames": ["powertoys.exe"],
+      "filenamePrefixes": ["powertoyssetup"],
+      "signerContains": ["microsoft corporation"],
+      "officialUrlIncludes": ["github.com/microsoft/powertoys/releases/", "learn.microsoft.com/windows/powertoys/install"]
+    },
+    {
+      "name": "Everything",
+      "filenames": ["everything.exe"],
+      "filenamePrefixes": ["everything-"],
+      "signerContains": ["voidtools"],
+      "officialUrlIncludes": ["voidtools.com/downloads/"]
+    }
+  ]
+}
