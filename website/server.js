@@ -562,6 +562,8 @@ async function reviewFindingsWithAi(analysisId) {
 
     const pending = [];
     let reused = 0;
+    let batchFailures = 0;
+    const batchFailureMessages = [];
 
     for (const group of grouped.values()) {
       const cached =
@@ -646,6 +648,14 @@ async function reviewFindingsWithAi(analysisId) {
             analysisId,
             message: error?.message,
           }
+        );
+
+        batchFailures++;
+        batchFailureMessages.push(
+          trimAiString(
+            error?.message || "Falha desconhecida na API de IA.",
+            300
+          )
         );
 
         reviews = [];
@@ -744,18 +754,36 @@ async function reviewFindingsWithAi(analysisId) {
         [analysisId]
       );
 
+    const finalAiStatus =
+      batchFailures > 0
+        ? "partial_error"
+        : "completed";
+
+    const finalAiError =
+      batchFailures > 0
+        ? trimAiString(
+            batchFailureMessages.join(" | "),
+            1000
+          )
+        : null;
+
     await pool.query(
       `UPDATE analyses
-       SET ai_review_status = 'completed',
-           ai_review_error = NULL,
+       SET ai_review_status = $2,
+           ai_review_error = $3,
            ai_reviewed_at = NOW()
        WHERE id = $1`,
-      [analysisId]
+      [
+        analysisId,
+        finalAiStatus,
+        finalAiError,
+      ]
     );
 
     return {
-      status: "completed",
+      status: finalAiStatus,
       reused,
+      batchFailures,
       ...(summary.rows[0] || {}),
     };
   } catch (error) {
@@ -1793,6 +1821,28 @@ async function initDb() {
 
     ALTER TABLE analyses
       ADD COLUMN IF NOT EXISTS processing_message TEXT NULL;
+
+    UPDATE analyses
+    SET
+      processing_stage = CASE
+        WHEN status='completed' AND ai_review_status='completed'
+          THEN 'completed'
+        WHEN status='completed' AND ai_review_status<>'completed'
+          THEN 'needs_ai'
+        WHEN status='running'
+          THEN 'collecting'
+        ELSE processing_stage
+      END,
+      processing_message = CASE
+        WHEN status='completed' AND ai_review_status='completed'
+          THEN COALESCE(processing_message, 'Análise concluída e filtrada pela IA.')
+        WHEN status='completed' AND ai_review_status<>'completed'
+          THEN COALESCE(processing_message, 'Análise antiga ainda não revisada pela IA. Use Recalcular com IA.')
+        WHEN status='running'
+          THEN COALESCE(processing_message, 'Análise em andamento.')
+        ELSE processing_message
+      END
+    WHERE processing_stage='waiting';
 
     ALTER TABLE scan_reports
       ADD COLUMN IF NOT EXISTS payload_raw BYTEA NULL;
