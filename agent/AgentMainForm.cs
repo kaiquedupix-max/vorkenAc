@@ -684,21 +684,24 @@ internal sealed class AnimatedSurface : Panel
             Height * 0.28f +
             (float)Math.Cos(Motion * 0.32f) * 24f;
 
-        using (var path = new GraphicsPath())
+        int glowR = Mode == AnimatedSurfaceMode.Error ? 239 : 92;
+        int glowG = Mode == AnimatedSurfaceMode.Error ? 104 : 240;
+        int glowB = Mode == AnimatedSurfaceMode.Error ? 104 : 192;
+
+        for (int layer = 6; layer >= 1; layer--)
         {
-            path.AddEllipse(glowX - 170, glowY - 170, 340, 340);
+            int size = 80 + (layer * 42);
+            int alpha = Math.Max(3, 18 - (layer * 2));
 
-            using var glow = new PathGradientBrush(path)
-            {
-                CenterColor = Color.FromArgb(
-                    Mode == AnimatedSurfaceMode.Error ? 28 : 34,
-                    Mode == AnimatedSurfaceMode.Error ? 239 : 92,
-                    Mode == AnimatedSurfaceMode.Error ? 104 : 240,
-                    Mode == AnimatedSurfaceMode.Error ? 104 : 192),
-                SurroundColors = new[] { Color.Transparent }
-            };
+            using var glowBrush =
+                new SolidBrush(Color.FromArgb(alpha, glowR, glowG, glowB));
 
-            g.FillEllipse(glow, glowX - 170, glowY - 170, 340, 340);
+            g.FillEllipse(
+                glowBrush,
+                glowX - (size / 2f),
+                glowY - (size / 2f),
+                size,
+                size);
         }
 
         if (Mode == AnimatedSurfaceMode.Scanning)
