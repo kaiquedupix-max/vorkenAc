@@ -123,15 +123,18 @@ internal static class BrowserHistoryCollector
         "cheatsheet"
     };
 
-    public static List<BrowserHistoryRecord> CollectSuspicious()
+    public static List<BrowserHistoryRecord> CollectSuspicious(
+        IEnumerable<RustThreatIndicator>? threatCatalog = null)
     {
         var result = new List<BrowserHistoryRecord>();
+        IReadOnlyCollection<string> catalogTerms =
+            BuildCatalogTerms(threatCatalog);
 
         foreach (HistoryProfile profile in EnumerateChromiumProfiles())
         {
             try
             {
-                result.AddRange(ReadChromium(profile));
+                result.AddRange(ReadChromium(profile, catalogTerms));
             }
             catch
             {
@@ -142,7 +145,7 @@ internal static class BrowserHistoryCollector
         {
             try
             {
-                result.AddRange(ReadFirefox(profile));
+                result.AddRange(ReadFirefox(profile, catalogTerms));
             }
             catch
             {
@@ -221,7 +224,8 @@ internal static class BrowserHistoryCollector
                     visitTime,
                     visitCount,
                     typedCount,
-                    "Chromium History/urls+visits");
+                    "Chromium History/urls+visits",
+                    catalogTerms);
 
                 if (record is not null)
                     result.Add(record);
@@ -292,7 +296,8 @@ internal static class BrowserHistoryCollector
                     visitTime,
                     visitCount,
                     typedCount,
-                    "Firefox places.sqlite");
+                    "Firefox places.sqlite",
+                    catalogTerms);
 
                 if (record is not null)
                     result.Add(record);
@@ -314,7 +319,8 @@ internal static class BrowserHistoryCollector
         DateTime? visitTime,
         int visitCount,
         int typedCount,
-        string source)
+        string source,
+        IReadOnlyCollection<string> catalogTerms)
     {
         if (string.IsNullOrWhiteSpace(url))
             return null;
@@ -348,14 +354,20 @@ internal static class BrowserHistoryCollector
         }
 
         bool knownBrand =
-            KnownRustCheatBrands.Any(term =>
-            {
-                if (!combined.Contains(term, StringComparison.OrdinalIgnoreCase))
-                    return false;
+            KnownRustCheatBrands
+                .Concat(catalogTerms)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Any(term =>
+                {
+                    if (string.IsNullOrWhiteSpace(term) ||
+                        !combined.Contains(term, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return false;
+                    }
 
-                matches.Add(term);
-                return true;
-            });
+                    matches.Add(term);
+                    return true;
+                });
 
         bool hasGameTerm =
             GameTerms.Any(term =>
@@ -443,6 +455,46 @@ internal static class BrowserHistoryCollector
             Reason = reason,
             DatabaseSource = source
         };
+    }
+
+    private static IReadOnlyCollection<string> BuildCatalogTerms(
+        IEnumerable<RustThreatIndicator>? threatCatalog)
+    {
+        var terms = new HashSet<string>(
+            StringComparer.OrdinalIgnoreCase);
+
+        if (threatCatalog is null)
+            return terms;
+
+        foreach (RustThreatIndicator item in threatCatalog)
+        {
+            foreach (string alias in item.Aliases ?? new List<string>())
+            {
+                string value = alias.Trim();
+                if (!string.IsNullOrWhiteSpace(value))
+                    terms.Add(value);
+            }
+
+            foreach (string domain in item.Domains ?? new List<string>())
+            {
+                string value = domain.Trim();
+                if (!string.IsNullOrWhiteSpace(value))
+                    terms.Add(value);
+            }
+
+            foreach (string invite in item.DiscordInvites ?? new List<string>())
+            {
+                string value = invite.Trim();
+                if (string.IsNullOrWhiteSpace(value))
+                    continue;
+
+                terms.Add("discord.gg/" + value);
+                terms.Add("discord.com/invite/" + value);
+                terms.Add("discord.me/" + value);
+            }
+        }
+
+        return terms;
     }
 
     private static string ExtractSearchQuery(string url)
