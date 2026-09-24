@@ -1034,10 +1034,7 @@ internal sealed class AgentMainForm : Form
         List<AgentFindingSnapshot> items)
     {
         var card = MakeCard(bounds);
-        card.BorderColor = Color.FromArgb(
-            Math.Min(255, color.R),
-            Math.Min(255, color.G),
-            Math.Min(255, color.B));
+        card.BorderColor = color;
 
         card.Controls.Add(MakeLabel(icon, new Rectangle(18, 18, 42, 42), 21F, color, FontStyle.Bold));
         card.Controls.Add(MakeLabel(title, new Rectangle(67, 17, 160, 26), 13.5F, color, FontStyle.Bold));
