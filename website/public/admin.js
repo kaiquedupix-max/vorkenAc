@@ -447,6 +447,156 @@ async function openReport(id) {
       }).join("")
     : '<div class="message ok">Nenhum download apagado/movido foi preservado no histórico dos navegadores suportados.</div>';
 
+  const timeline = [];
+
+  for (const item of arrays.browserDownloads) {
+    if (!item.startTimeUtc) continue;
+    timeline.push({
+      time: item.startTimeUtc,
+      action: "BAIXADO",
+      tag: item.fileMissing ? "medium" : "info",
+      path: item.targetPath || item.fileName || "Download",
+      detail: [item.browser, item.sourceUrl || item.finalUrl].filter(Boolean).join(" · ")
+    });
+  }
+
+  for (const item of arrays.prefetchExecutions) {
+    if (!item.lastRunUtc) continue;
+    timeline.push({
+      time: item.lastRunUtc,
+      action: "EXECUTADO",
+      tag: item.likelyDetachedOrRemovable ? "high" : "info",
+      path: item.resolvedExecutablePath || item.nativeExecutablePath || item.executableName || "Executável",
+      detail: "Prefetch · " + Number(item.runCount || 0) + " execução(ões)"
+    });
+  }
+
+  for (const item of arrays.recycleBin) {
+    if (!item.deletedAtUtc) continue;
+    timeline.push({
+      time: item.deletedAtUtc,
+      action: "EXCLUÍDO",
+      tag: /\.(exe|dll|com|scr|bat|cmd|ps1|msi)$/i.test(item.fileName || "") ? "medium" : "info",
+      path: item.originalPath || item.fileName || "Lixeira",
+      detail: item.recycledDataPresent ? "Ainda presente na Lixeira" : "Dados reciclados não localizados"
+    });
+  }
+
+  for (const item of arrays.usbTimeline) {
+    if (!item.timeCreatedUtc) continue;
+    timeline.push({
+      time: item.timeCreatedUtc,
+      action: item.eventType === "disconnect" ? "USB DESCONECTADO" : item.eventType === "connect" ? "USB CONECTADO" : "USB",
+      tag: item.eventType === "disconnect" ? "medium" : "info",
+      path: item.deviceId || item.evidence || "Dispositivo USB",
+      detail: (item.provider || "Windows") + (item.eventId ? " · Event " + item.eventId : "")
+    });
+  }
+
+  for (const item of arrays.processCreationEvents) {
+    if (!item.timeCreatedUtc) continue;
+    timeline.push({
+      time: item.timeCreatedUtc,
+      action: "PROCESSO",
+      tag: item.processPresent === false ? "medium" : "info",
+      path: item.processPath || item.processName || "Processo",
+      detail: item.parentProcessName ? "Pai: " + item.parentProcessName : "Event 4688"
+    });
+  }
+
+  timeline.sort((a, b) => new Date(b.time) - new Date(a.time));
+
+  document.getElementById("forensicTimelineList").innerHTML = timeline.length
+    ? timeline.slice(0, 300).map((item) => \`
+        <div class="finding">
+          <div class="finding-head">
+            <h4>\${escapeHtml(item.action)}</h4>
+            <span class="tag \${escapeHtml(item.tag)}">\${escapeHtml(formatDate(item.time))}</span>
+          </div>
+          <code>\${escapeHtml(item.path || "—")}</code>
+          <div class="kv"><span>Fonte / detalhe</span><span>\${escapeHtml(item.detail || "—")}</span></div>
+        </div>
+      \`).join("")
+    : '<div class="message">Nenhum evento suficiente para montar a linha do tempo.</div>';
+
+  const recycleEntries = [...arrays.recycleBin]
+    .sort((a, b) => new Date(b.deletedAtUtc || 0) - new Date(a.deletedAtUtc || 0))
+    .slice(0, 500);
+
+  document.getElementById("recycleBinList").innerHTML = recycleEntries.length
+    ? recycleEntries.map((item) => {
+        const executable = /\.(exe|dll|com|scr|bat|cmd|ps1|msi)$/i.test(item.fileName || "");
+        return \`
+          <div class="finding">
+            <div class="finding-head">
+              <h4>\${escapeHtml(item.fileName || "Arquivo excluído")}</h4>
+              <span class="tag \${executable ? "medium" : "info"}">LIXEIRA</span>
+            </div>
+            <div class="kv"><span>Excluído em</span><span>\${escapeHtml(formatDate(item.deletedAtUtc))}</span></div>
+            <div class="kv"><span>Caminho original</span><span>\${escapeHtml(item.originalPath || "—")}</span></div>
+            <div class="kv"><span>Tamanho original</span><span>\${Number(item.originalSize || 0).toLocaleString("pt-BR")} bytes</span></div>
+            <div class="kv"><span>Dados ainda na Lixeira</span><span>\${item.recycledDataPresent ? "Sim" : "Não"}</span></div>
+          </div>
+        \`;
+      }).join("")
+    : '<div class="message ok">Nenhum metadado de arquivo excluído foi encontrado na Lixeira.</div>';
+
+  const processStarts = [...arrays.processes]
+    .filter((item) => item.startTimeUtc)
+    .sort((a, b) => new Date(b.startTimeUtc) - new Date(a.startTimeUtc))
+    .slice(0, 250);
+
+  document.getElementById("processStartList").innerHTML = processStarts.length
+    ? processStarts.map((item) => \`
+        <div class="finding">
+          <div class="finding-head">
+            <h4>\${escapeHtml(item.name || "Processo")}</h4>
+            <span class="tag info">PID \${Number(item.pid || 0)}</span>
+          </div>
+          <div class="kv"><span>Iniciado em</span><span>\${escapeHtml(formatDate(item.startTimeUtc))}</span></div>
+          <div class="kv"><span>Caminho</span><span>\${escapeHtml(item.path || "—")}</span></div>
+          <div class="kv"><span>Assinado</span><span>\${item.signed ? "Sim" : "Não"}\${item.signerSubject ? " · " + escapeHtml(item.signerSubject) : ""}</span></div>
+        </div>
+      \`).join("")
+    : '<div class="message">Nenhum horário de início de processo disponível.</div>';
+
+  const compileTimes = [];
+
+  for (const item of arrays.files) {
+    if (!item.compilationTimeUtc) continue;
+    compileTimes.push({
+      path: item.path || item.name,
+      time: item.compilationTimeUtc,
+      source: "PE Header",
+      signer: item.signerSubject || ""
+    });
+  }
+
+  for (const item of arrays.amcache) {
+    if (!item.linkDateUtc) continue;
+    compileTimes.push({
+      path: item.fullPath || item.name,
+      time: item.linkDateUtc,
+      source: "Amcache LinkDate",
+      signer: item.publisher || ""
+    });
+  }
+
+  compileTimes.sort((a, b) => new Date(b.time) - new Date(a.time));
+
+  document.getElementById("compilationTimesList").innerHTML = compileTimes.length
+    ? compileTimes.slice(0, 300).map((item) => \`
+        <div class="finding">
+          <div class="finding-head">
+            <h4>\${escapeHtml(item.source)}</h4>
+            <span class="tag info">\${escapeHtml(formatDate(item.time))}</span>
+          </div>
+          <code>\${escapeHtml(item.path || "—")}</code>
+          \${item.signer ? '<div class="kv"><span>Publisher / assinante</span><span>' + escapeHtml(item.signer) + '</span></div>' : ""}
+        </div>
+      \`).join("")
+    : '<div class="message">Nenhum timestamp de compilação PE disponível.</div>';
+
   const reviewFiles = [...arrays.files]
     .sort((a, b) => {
       const aExec = a.prefetchEvidenceUtc ? 1 : 0;
