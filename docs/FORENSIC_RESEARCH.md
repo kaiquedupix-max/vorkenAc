@@ -186,3 +186,41 @@ The following upstream libraries have explicit MIT licensing and are integrated 
 - EricZimmerman/AppCompatCacheParser -> NuGet `AppCompatCache`
 
 These parsers are preferable to fragile hand-written binary parsing and improve support across Windows 10/11 versions.
+
+
+## Echo.ac public research
+
+Public pages reviewed:
+
+- https://echo.ac/
+- https://dash.echo.ac/handbook/detail/how-to-use-echo
+- public scan result pages under https://dash.echo.ac/scan/
+
+Publicly documented capabilities that influenced Vorken design:
+
+- chronological file logs;
+- executed/deleted/replaced-file correlation;
+- Explorer/PcaClient context;
+- process start-time review;
+- executable compilation timestamps;
+- Recycle Bin context;
+- VM detection;
+- warnings when key Windows forensic services/features are disabled;
+- previous scans tied to a device/HWID;
+- custom detections/strings.
+
+Vorken implements these ideas independently. Echo is proprietary; no Echo code, private signatures or proprietary detection database is copied.
+
+### Vorken 0.6.0 additions inspired by public Echo concepts
+
+- unified forensic timeline from browser downloads, Prefetch executions, Event 4688, USB events and Recycle Bin metadata;
+- Windows Recycle Bin $I metadata parser preserving original path, deletion timestamp and original size;
+- execution + Recycle Bin correlation so deletion alone is not treated as cheating;
+- live process start-time view;
+- PE COFF compilation timestamp extraction for collected candidate binaries;
+- Amcache LinkDate shown alongside current PE timestamps;
+- VM/environment identification as context, not proof of cheating;
+- PcaSvc, DiagTrack and EventLog disabled-state context;
+- recent explorer.exe restart + empty PCA context warning;
+- locally generated SHA-256 machine fingerprint from hardware identifiers; raw identifiers are not sent;
+- previous-scan association by the hashed fingerprint.
