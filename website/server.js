@@ -20,6 +20,51 @@ const pool = new Pool({
   ssl: process.env.DATABASE_SSL === "true" ? { rejectUnauthorized: false } : undefined,
 });
 
+let agentHashCache = {
+  mtimeMs: -1,
+  size: 0,
+  sha256: ""
+};
+
+function getAgentVerification() {
+  try {
+    const stat = fs.statSync(agentBinaryPath);
+
+    if (
+      agentHashCache.mtimeMs === stat.mtimeMs &&
+      agentHashCache.size === stat.size &&
+      agentHashCache.sha256
+    ) {
+      return {
+        sha256: agentHashCache.sha256,
+        sizeBytes: agentHashCache.size
+      };
+    }
+
+    const binary = fs.readFileSync(agentBinaryPath);
+    const sha256 = crypto
+      .createHash("sha256")
+      .update(binary)
+      .digest("hex");
+
+    agentHashCache = {
+      mtimeMs: stat.mtimeMs,
+      size: stat.size,
+      sha256
+    };
+
+    return {
+      sha256,
+      sizeBytes: stat.size
+    };
+  } catch {
+    return {
+      sha256: "",
+      sizeBytes: 0
+    };
+  }
+}
+
 const ADMIN_COOKIE = "vorken_admin";
 const ADMIN_SESSION_MS = 12 * 60 * 60 * 1000;
 
@@ -3036,6 +3081,7 @@ app.get("/api/public/analyses/:token", async (req, res) => {
     },
     downloadUrl: "/api/public/analyses/" + token + "/download",
     packageUrl: "/api/public/analyses/" + token + "/download",
+    agentVerification: getAgentVerification(),
   });
 });
 
@@ -3053,7 +3099,8 @@ app.get("/api/public/analyses/:token/download", async (req, res) => {
   }
 
   const binary = fs.readFileSync(agentBinaryPath);
-  const sha256 = crypto
+  const verification = getAgentVerification();
+  const sha256 = verification.sha256 || crypto
     .createHash("sha256")
     .update(binary)
     .digest("hex");
