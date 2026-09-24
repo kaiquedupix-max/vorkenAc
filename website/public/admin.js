@@ -1251,6 +1251,14 @@ async function openReport(id) {
         if (!Number.isInteger(findingId)) return;
         if (checkbox.checked) selectedBanEvidenceIds.add(findingId); else selectedBanEvidenceIds.delete(findingId);
         document.querySelectorAll('.ban-evidence-checkbox[data-finding-id="' + findingId + '"]').forEach((item) => { item.checked = selectedBanEvidenceIds.has(findingId); });
+
+        const banButton = document.getElementById("gfBanBtn");
+        if (banButton && !banButton.disabled) {
+          const count = selectedBanEvidenceIds.size;
+          banButton.textContent = count > 0
+            ? "⚠ Banir jogador · " + count + " prova(s)"
+            : "⚠ Banir jogador";
+        }
       });
       target.appendChild(element);
     }
