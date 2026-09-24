@@ -6,7 +6,7 @@
     <Nullable>enable</Nullable>
     <AssemblyName>Vorken.Agent</AssemblyName>
     <RootNamespace>Vorken.Agent</RootNamespace>
-    <Version>1.0.0</Version>
+    <Version>1.0.1</Version>
     <PublishSingleFile>true</PublishSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <SelfContained>true</SelfContained>
@@ -17,9 +17,9 @@
     <Company>Vorken</Company>
     <Description>Consent-based defensive forensic scanner for competitive game investigations.</Description>
     <Copyright>Copyright © Vorken 2026</Copyright>
-    <AssemblyVersion>1.0.0.0</AssemblyVersion>
-    <FileVersion>1.0.0.0</FileVersion>
-    <InformationalVersion>1.0.0</InformationalVersion>
+    <AssemblyVersion>1.0.1.0</AssemblyVersion>
+    <FileVersion>1.0.1.0</FileVersion>
+    <InformationalVersion>1.0.1</InformationalVersion>
     <Deterministic>true</Deterministic>
   </PropertyGroup>
 
