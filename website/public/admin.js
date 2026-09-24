@@ -271,6 +271,7 @@ async function openReport(id) {
     processCreationEvents: payload.processCreationEvents || [],
     defenderDetections: payload.defenderDetections || [],
     recentShortcuts: payload.recentShortcuts || [],
+    recycleBin: payload.recycleBin || [],
     browserDownloads: payload.browserDownloads || [],
     extensionMismatches: payload.extensionMismatches || [],
     defenderExclusions: payload.defenderExclusions || [],
@@ -356,6 +357,8 @@ async function openReport(id) {
     <div class="kv"><span>Atalhos recentes</span><span>${arrays.recentShortcuts.length}</span></div>
     <div class="kv"><span>Downloads no histórico</span><span>${arrays.browserDownloads.length}</span></div>
     <div class="kv"><span>Downloads não localizados</span><span>${arrays.browserDownloads.filter((x) => x.fileMissing === true).length}</span></div>
+    <div class="kv"><span>Lixeira</span><span>${arrays.recycleBin.length}</span></div>
+    <div class="kv"><span>Ambiente virtual</span><span>${payload.vmEnvironment?.isVirtualMachine ? escapeHtml(payload.vmEnvironment?.detectedPlatform || "Sim") : "Não detectado"}</span></div>
     <div class="kv"><span>Extensões modificadas</span><span>${arrays.extensionMismatches.length}</span></div>
     <div class="kv"><span>Módulos do Rust</span><span>${arrays.rustModules.length}</span></div>
     <div class="kv"><span>Discos virtuais</span><span>${arrays.virtualDisks.length}</span></div>
