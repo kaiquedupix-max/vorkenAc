@@ -737,6 +737,246 @@ async function addBuiltInReviewFindings(analysisId, report) {
     return parts.at(-1) || "";
   };
 
+  const catalogFindingKeys = new Set();
+
+  const addCatalogFindings = async (artifactType, artifactValue, evidence, values) => {
+    const matches = findRustCatalogMatches(values);
+
+    for (const match of matches) {
+      const key = [
+        artifactType,
+        match.name,
+        String(artifactValue || "").toLowerCase()
+      ].join("|");
+
+      if (catalogFindingKeys.has(key))
+        continue;
+
+      catalogFindingKeys.add(key);
+
+      await insertReviewFinding(
+        analysisId,
+        "Catálogo Rust: " + match.name,
+        match.severity === "critical" ? "critical" : "high",
+        artifactType,
+        artifactValue || match.name,
+        {
+          ...evidence,
+          catalogMatch: match,
+          confidence: "high",
+          note: "Nome, domínio ou convite público associado a software/comunidade de cheat/script para Rust foi encontrado. Esta assinatura é tratada como evidência de alta prioridade, mas ainda deve ser revisada no contexto completo.",
+        }
+      );
+    }
+  };
+
+  for (const item of report.files || []) {
+    await addCatalogFindings(
+      "file",
+      item.path || item.name,
+      item,
+      [item.name, item.path, item.archiveEntries]
+    );
+  }
+
+  for (const item of report.browserDownloads || []) {
+    await addCatalogFindings(
+      "browser_download",
+      item.targetPath || item.fileName || item.sourceUrl,
+      item,
+      [
+        item.fileName,
+        item.targetPath,
+        item.currentPath,
+        item.sourceUrl,
+        item.finalUrl,
+        item.pageUrl,
+        item.referrerUrl,
+        item.siteUrl
+      ]
+    );
+  }
+
+  for (const item of report.browserHistorySignals || []) {
+    await addCatalogFindings(
+      "browser_history",
+      item.searchQuery || item.url || item.host,
+      item,
+      [
+        item.url,
+        item.host,
+        item.title,
+        item.searchQuery,
+        item.matchedTerms
+      ]
+    );
+  }
+
+  for (const item of report.recycleBin || []) {
+    await addCatalogFindings(
+      "recycle_bin",
+      item.originalPath || item.fileName,
+      item,
+      [item.fileName, item.originalPath, item.recycledDataPath]
+    );
+  }
+
+  for (const item of report.prefetchExecutions || []) {
+    await addCatalogFindings(
+      "prefetch_execution",
+      item.resolvedExecutablePath ||
+        item.nativeExecutablePath ||
+        item.executableName,
+      item,
+      [
+        item.executableName,
+        item.resolvedExecutablePath,
+        item.nativeExecutablePath,
+        item.prefetchFile
+      ]
+    );
+  }
+
+  for (const item of report.bam || []) {
+    await addCatalogFindings(
+      "bam",
+      item.path,
+      item,
+      [item.path]
+    );
+  }
+
+  const archiveRiskTerms = [
+    "rust",
+    "cheat",
+    "hack",
+    "script",
+    "loader",
+    "injector",
+    "aimbot",
+    "recoil",
+    "macro",
+    "spoofer",
+    "bypass",
+    "eac"
+  ];
+
+  for (const item of report.files || []) {
+    const ext = String(item.extension || path.extname(item.path || item.name || ""))
+      .toLowerCase();
+
+    if (ext === ".zip") {
+      const archiveText = [
+        item.name,
+        item.path,
+        ...(Array.isArray(item.archiveEntries) ? item.archiveEntries : [])
+      ].join(" ").toLowerCase();
+
+      const matchedTerms = archiveRiskTerms.filter((term) =>
+        archiveText.includes(term));
+
+      const randomExecutables = (item.archiveEntries || [])
+        .filter((entry) =>
+          /\.exe$/i.test(String(entry || "")) &&
+          looksRandomExecutableName(entry))
+        .slice(0, 20);
+
+      if (
+        matchedTerms.length >= 2 ||
+        randomExecutables.length > 0
+      ) {
+        await insertReviewFinding(
+          analysisId,
+          "ZIP suspeito em pasta de usuário",
+          randomExecutables.length > 0 ? "high" : "medium",
+          "archive",
+          item.path || item.name || "ZIP",
+          {
+            ...item,
+            matchedTerms,
+            randomExecutables,
+            confidence: randomExecutables.length > 0 ? "high" : "medium",
+            note: "ZIP recente contém combinação de termos associados a cheat/script ou executáveis com nome aleatório. O conteúdo é apenas listado; nada é extraído ou executado.",
+          }
+        );
+      }
+    }
+
+    const isRandomExe =
+      ext === ".exe" &&
+      (item.randomLikeName === true ||
+       looksRandomExecutableName(item.name || item.path)) &&
+      item.signed !== true &&
+      isSuspiciousUserPath(item.path);
+
+    if (isRandomExe) {
+      await insertReviewFinding(
+        analysisId,
+        "Executável com nome aleatório em pasta de risco",
+        item.prefetchEvidenceUtc ? "high" : "medium",
+        "file",
+        item.path || item.name || "EXE",
+        {
+          ...item,
+          confidence: item.prefetchEvidenceUtc ? "high" : "medium",
+          note: "Nome com padrão aleatório, arquivo não assinado e localizado em Downloads/Desktop/Temp. Execução por Prefetch aumenta a severidade.",
+        }
+      );
+    }
+  }
+
+  for (const download of report.browserDownloads || []) {
+    if (download.fileMissing !== true)
+      continue;
+
+    const name = download.fileName || download.targetPath || "";
+    const ext = path.extname(name).toLowerCase();
+
+    if (ext === ".exe" && looksRandomExecutableName(name)) {
+      await insertReviewFinding(
+        analysisId,
+        "Executável baixado com nome aleatório e depois não localizado",
+        "medium",
+        "browser_download",
+        download.targetPath || download.fileName || "download",
+        {
+          ...download,
+          confidence: "medium",
+          note: "O histórico do navegador preservou um EXE com nome aleatório que não está mais no destino original. A severidade sobe se houver evidência separada de execução.",
+        }
+      );
+    }
+
+    if (ext === ".zip") {
+      const zipText = [
+        download.fileName,
+        download.targetPath,
+        download.sourceUrl,
+        download.finalUrl,
+        download.pageUrl,
+      ].join(" ").toLowerCase();
+
+      const zipTerms = archiveRiskTerms.filter((term) =>
+        zipText.includes(term));
+
+      if (zipTerms.length >= 2) {
+        await insertReviewFinding(
+          analysisId,
+          "ZIP suspeito baixado e depois não localizado",
+          "high",
+          "browser_download",
+          download.targetPath || download.fileName || "ZIP",
+          {
+            ...download,
+            matchedTerms: zipTerms,
+            confidence: "high",
+            note: "ZIP apagado/movido possui combinação forte de termos ligados a cheat/script no nome, caminho ou URL de origem.",
+          }
+        );
+      }
+    }
+  }
+
   // HIGH-SIGNAL EXECUTION: confirmed removable drive, or a recent executable
   // from a detached non-system volume at the root/user-temporary location.
   // A generic unresolved Prefetch volume alone is NOT a finding.
