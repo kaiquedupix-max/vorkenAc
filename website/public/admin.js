@@ -275,11 +275,11 @@ function processingStageLabel(stage, status) {
     collecting: "Coletando evidências",
     preparing: "Preparando análise",
     normal_filter: "Aplicando filtro técnico",
-    ai_filter: "Filtrando falsos positivos com IA",
+    ai_filter: "Filtrando falsos positivos com Gemini",
     finalizing: "Preparando resultado final",
-    completed: "Concluído com IA",
-    needs_ai: "Pendente de filtro IA",
-    ai_error: "IA indisponível · resultado técnico",
+    completed: "Concluído com Gemini",
+    needs_ai: "Pendente de filtro Gemini",
+    ai_error: "Gemini indisponível · resultado técnico",
   };
 
   return map[stage] || statusLabel(status);
@@ -325,7 +325,7 @@ function updateAnalysisProcessingBanner(status) {
   if (showWithoutAiResult) {
     banner.className = "message";
     banner.textContent =
-      "Visualizando o resultado técnico SEM o filtro da IA. " +
+      "Visualizando o resultado técnico SEM o filtro do Gemini. " +
       (isProcessingStage(stage) ? message : "");
     return;
   }
@@ -340,7 +340,7 @@ function updateAnalysisProcessingBanner(status) {
     banner.className = "message";
     banner.textContent =
       message ||
-      "Esta análise ainda não passou pela segunda camada de IA. Use Recalcular com IA.";
+      "Esta análise ainda não passou pela segunda camada Gemini. Use Recalcular com IA.";
     return;
   }
 
@@ -356,7 +356,7 @@ function updateAnalysisProcessingBanner(status) {
     banner.className = "message ok";
     banner.textContent =
       message ||
-      "Análise concluída. O resultado abaixo já passou pelo filtro da IA.";
+      "Análise concluída. O resultado abaixo já passou pelo filtro do Gemini.";
     return;
   }
 
@@ -564,7 +564,7 @@ document.getElementById("rebuildFindingsBtn").addEventListener("click", async ()
     const timeoutMs = 5 * 60 * 1000;
 
     while (Date.now() - startedAt < timeoutMs) {
-      button.textContent = "Recalculando + IA...";
+      button.textContent = "Recalculando + Gemini...";
 
       const status = await api(
         "/api/admin/analyses/" +
@@ -578,7 +578,7 @@ document.getElementById("rebuildFindingsBtn").addEventListener("click", async ()
 
         if (status.aiReviewStatus === "error") {
           alert(
-            "O filtro normal foi recalculado, mas a revisão por IA encontrou um erro. " +
+            "O filtro normal foi recalculado, mas a revisão pelo Gemini encontrou um erro. " +
             (status.aiReviewError || "O resultado normal foi mantido.")
           );
         }
@@ -827,10 +827,10 @@ async function openReport(id) {
 
   document.getElementById("reportMetrics").innerHTML = `
     <div class="metric"><small>STATUS</small><strong>${escapeHtml(currentStageLabel)}</strong></div>
-    <div class="metric"><small>VISUALIZAÇÃO</small><strong>${showWithoutAiResult ? "SEM IA" : "COM IA"}</strong><span>${showWithoutAiResult ? "Filtro técnico original" : "Resultado final filtrado"}</span></div>
-    <div class="metric danger-metric"><small>VERMELHO · CRÍTICO/ALTO</small><strong>${criticalFindings.length}</strong><span>${showWithoutAiResult ? "Antes da IA" : "Resultado final pós-IA"}</span></div>
-    <div class="metric warning-metric"><small>AMARELO · REVISAR</small><strong>${mediumFindings.length}</strong><span>${showWithoutAiResult ? "Antes da IA" : "Resultado final pós-IA"}</span></div>
-    <div class="metric info-metric"><small>IA FILTROU</small><strong>${aiFilteredFindings.length}</strong><span>Prováveis falsos positivos</span></div>
+    <div class="metric"><small>VISUALIZAÇÃO</small><strong>${showWithoutAiResult ? "SEM GEMINI" : aiReview.status === "completed" ? "COM GEMINI" : aiReview.status === "partial_error" ? "GEMINI PARCIAL" : "TÉCNICO"}</strong><span>${showWithoutAiResult ? "Filtro técnico original" : aiReview.status === "completed" ? "Resultado final filtrado" : aiReview.status === "partial_error" ? "Filtro parcial; revise o aviso" : "Gemini ainda não concluiu"}</span></div>
+    <div class="metric danger-metric"><small>VERMELHO · CRÍTICO/ALTO</small><strong>${criticalFindings.length}</strong><span>${showWithoutAiResult ? "Antes do Gemini" : "Resultado final pós-Gemini"}</span></div>
+    <div class="metric warning-metric"><small>AMARELO · REVISAR</small><strong>${mediumFindings.length}</strong><span>${showWithoutAiResult ? "Antes do Gemini" : "Resultado final pós-Gemini"}</span></div>
+    <div class="metric info-metric"><small>GEMINI FILTROU</small><strong>${aiFilteredFindings.length}</strong><span>Prováveis falsos positivos</span></div>
     <div class="metric hardware-metric"><small>HARDWARE / USB</small><strong>${hardwareCount}</strong><span>Pendrives e placas separados</span></div>
     <div class="metric priority-metric"><small>ARQUIVOS PRIORITÁRIOS</small><strong id="summaryPriorityCount">0</strong><span>EXE/ZIP/RAR/7Z suspeitos</span></div>
     <div class="metric"><small>MÓDULOS FORENSES</small><strong>${advancedForensicsCount}</strong><span>PE · USN · rede · PowerShell · WER</span></div>
@@ -856,8 +856,9 @@ async function openReport(id) {
     <div class="kv"><span>Computador</span><span>${escapeHtml(analysis.machine_name || "—")}</span></div>
     <div class="kv"><span>Sistema</span><span>${escapeHtml(analysis.os_version || "—")}</span></div>
     <div class="kv"><span>Agente</span><span>${escapeHtml(analysis.agent_version || "—")}</span></div>
-    <div class="kv"><span>Filtro IA</span><span>${escapeHtml(aiStatusLabel)}</span></div>
-    <div class="kv"><span>Revisão IA</span><span>${escapeHtml(formatDate(aiReview.reviewedAt))}</span></div>
+    <div class="kv"><span>Filtro Gemini</span><span>${escapeHtml(aiStatusLabel)}</span></div>
+    <div class="kv"><span>Modelo Gemini</span><span>${escapeHtml(aiReview.model || "—")}</span></div>
+    <div class="kv"><span>Revisão Gemini</span><span>${escapeHtml(formatDate(aiReview.reviewedAt))}</span></div>
     <div class="kv"><span>Início</span><span>${escapeHtml(formatDate(analysis.started_at))}</span></div>
     <div class="kv"><span>Conclusão</span><span>${escapeHtml(formatDate(analysis.finished_at))}</span></div>
   `;
@@ -892,10 +893,10 @@ async function openReport(id) {
 
       const aiLabel = ai
         ? ai.verdict === "likely_cheat"
-          ? "IA CONFIRMOU"
+          ? "GEMINI CONFIRMOU"
           : ai.verdict === "likely_false_positive"
-            ? "IA FILTROU"
-            : "IA · REVISAR"
+            ? "GEMINI FILTROU"
+            : "GEMINI · REVISAR"
         : "";
 
       const aiConfidence = ai
