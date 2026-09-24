@@ -80,6 +80,7 @@ internal static class UsnActivityCollector
                 result.AddRange(
                     CollectVolume(
                         volume,
+                        drive.DriveType.ToString(),
                         prefetchIndex,
                         12000));
             }
@@ -104,6 +105,7 @@ internal static class UsnActivityCollector
 
     private static List<UsnActivityRecord> CollectVolume(
         string volume,
+        string driveType,
         ulong? prefetchIndex,
         int maxRecords)
     {
@@ -233,6 +235,7 @@ internal static class UsnActivityCollector
                         offset,
                         recordLength,
                         volume,
+                        driveType,
                         prefetchIndex,
                         cutoff,
                         result);
@@ -260,6 +263,7 @@ internal static class UsnActivityCollector
         int offset,
         uint recordLength,
         string volume,
+        string driveType,
         ulong? prefetchIndex,
         DateTime cutoff,
         List<UsnActivityRecord> target)
@@ -391,6 +395,7 @@ internal static class UsnActivityCollector
                 new UsnActivityRecord
                 {
                     Volume = volume,
+                    DriveType = driveType,
                     FileName = name,
                     Extension = extension,
                     TimestampUtc = timestamp,
@@ -610,6 +615,7 @@ internal static class UsnActivityCollector
 internal sealed class UsnActivityRecord
 {
     public string Volume { get; set; } = "";
+    public string DriveType { get; set; } = "";
     public string FileName { get; set; } = "";
     public string Extension { get; set; } = "";
     public DateTime TimestampUtc { get; set; }
