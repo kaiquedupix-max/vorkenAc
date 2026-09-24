@@ -988,6 +988,39 @@ async function addBuiltInReviewFindings(analysisId, report) {
     }
   }
 
+  for (const execution of report.prefetchExecutions || []) {
+    const executionPath =
+      execution.resolvedExecutablePath ||
+      execution.nativeExecutablePath ||
+      execution.executableName ||
+      "";
+
+    if (
+      looksRandomExecutableName(
+        execution.executableName || executionPath
+      ) &&
+      execution.executablePresent !== true &&
+      !isTrustedInstalledPath(executionPath) &&
+      (
+        isSuspiciousUserPath(executionPath) ||
+        isVolumeRootExecutable(execution.nativeExecutablePath)
+      )
+    ) {
+      await insertReviewFinding(
+        analysisId,
+        "EXE com nome aleatório executado e depois não localizado",
+        "high",
+        "prefetch_execution",
+        executionPath,
+        {
+          ...execution,
+          confidence: "high",
+          note: "O Prefetch registra execução de um EXE com nome de alta aleatoriedade; o arquivo não está mais presente em pasta de usuário/volume removido.",
+        }
+      );
+    }
+  }
+
   // HIGH-SIGNAL EXECUTION: confirmed removable drive, or a recent executable
   // from a detached non-system volume at the root/user-temporary location.
   // A generic unresolved Prefetch volume alone is NOT a finding.
