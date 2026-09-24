@@ -613,11 +613,14 @@ async function queueGuerraFriaDecision(action) {
     const data = await api(
       "/api/admin/analyses/" +
       encodeURIComponent(currentReportId) +
-      "/guerra-fria-action",
+      "/guerra-fria-decision",
       {
         method: "POST",
         body: JSON.stringify({
-          action,
+          decision:
+            action === "ban"
+              ? "deny"
+              : "approve",
           reason,
         }),
       }
@@ -625,8 +628,8 @@ async function queueGuerraFriaDecision(action) {
 
     alert(
       isBan
-        ? "Banimento enviado para o Guerra Fria. O bot aplicará a ação em alguns segundos."
-        : "Liberação enviada para o Guerra Fria. O bot aplicará a ação em alguns segundos."
+        ? "Banimento confirmado pelo Guerra Fria."
+        : "Liberação confirmada pelo Guerra Fria."
     );
 
     await openReport(currentReportId);
@@ -891,7 +894,17 @@ async function openReport(id) {
     );
 
   currentIntegrationDecision =
-    data.integrationDecision || null;
+    analysis.external_decision
+      ? {
+          action:
+            analysis.external_decision === "deny"
+              ? "ban"
+              : "release",
+          status: "completed",
+          result:
+            analysis.external_decision_result || "",
+        }
+      : null;
 
   const gfActions =
     document.getElementById("gfIntegrationActions");
