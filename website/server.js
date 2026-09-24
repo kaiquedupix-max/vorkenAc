@@ -1772,6 +1772,7 @@ app.get("/api/agent/:token/rules", async (req, res) => {
   res.json({
     analysisId: Number(analysis.id),
     rules: result.rows,
+    threatCatalog: rustThreatCatalog,
   });
 });
 
