@@ -726,7 +726,7 @@ async function openReport(id) {
         safeArray(x.suspiciousApis).length > 0),
       (item) => `
         <div class="finding">
-          <div class="finding-head"><h4>${escapeHtml(item.name || "PE")}</h4><span class="tag ${item.randomLikeName ? "critical" : "info"}">${item.randomLikeName ? "ALEATÓRIO" : item.packedLike ? "PACKER · INVENTÁRIO" : item.highEntropy ? "ENTROPIA · INVENTÁRIO" : "PE · INVENTÁRIO"}</span></div>
+          <div class="finding-head"><h4>${escapeHtml(item.name || "PE")}</h4><span class="tag ${item.randomLikeName ? "medium" : "info"}">${item.randomLikeName ? "ALEATÓRIO · REVISAR" : item.packedLike ? "PACKER · INVENTÁRIO" : item.highEntropy ? "ENTROPIA · INVENTÁRIO" : "PE · INVENTÁRIO"}</span></div>
           <code>${escapeHtml(item.path || "—")}</code>
           <div class="kv"><span>Entropia</span><span>${escapeHtml(item.entropy ?? "—")}</span></div>
           <div class="kv"><span>Assinado</span><span>${item.signed ? "Sim" : "Não"}</span></div>
@@ -773,7 +773,7 @@ async function openReport(id) {
       arrays.autorunIntegrity.filter((x) => x.suspicious === true),
       (item) => `
         <div class="finding">
-          <div class="finding-head"><h4>${escapeHtml(item.name || item.source || "Autorun")}</h4><span class="tag ${item.fileExists && !item.signed ? "high" : "medium"}">AUTORUN</span></div>
+          <div class="finding-head"><h4>${escapeHtml(item.name || item.source || "Autorun")}</h4><span class="tag medium">AUTORUN · REVISAR</span></div>
           <code>${escapeHtml(item.command || item.executablePath || "—")}</code>
           <div class="kv"><span>Fonte</span><span>${escapeHtml(item.source || "—")}</span></div>
           <div class="kv"><span>Assinado</span><span>${item.signed ? "Sim" : "Não"}</span></div>
@@ -788,7 +788,7 @@ async function openReport(id) {
       arrays.alternateDataStreams,
       (item) => `
         <div class="finding">
-          <div class="finding-head"><h4>${escapeHtml(item.streamName || "ADS")}</h4><span class="tag ${item.suspicious ? "high" : "info"}">ADS</span></div>
+          <div class="finding-head"><h4>${escapeHtml(item.streamName || "ADS")}</h4><span class="tag ${item.suspicious ? "medium" : "info"}">ADS</span></div>
           <code>${escapeHtml(item.path || "—")}</code>
           <div class="kv"><span>Tamanho</span><span>${escapeHtml(item.streamSize ?? 0)} bytes</span></div>
         </div>
@@ -802,7 +802,7 @@ async function openReport(id) {
       arrays.processModuleIntegrity.filter((x) => x.suspicious === true),
       (item) => `
         <div class="finding">
-          <div class="finding-head"><h4>${escapeHtml((item.processName || "processo") + " → " + (item.moduleName || "módulo"))}</h4><span class="tag high">DLL</span></div>
+          <div class="finding-head"><h4>${escapeHtml((item.processName || "processo") + " → " + (item.moduleName || "módulo"))}</h4><span class="tag medium">DLL · REVISAR</span></div>
           <code>${escapeHtml(item.modulePath || "—")}</code>
           <div class="kv"><span>Assinado</span><span>${item.moduleSigned ? "Sim" : "Não"}</span></div>
         </div>
@@ -831,7 +831,7 @@ async function openReport(id) {
       arrays.protectedWindows,
       (item) => `
         <div class="finding">
-          <div class="finding-head"><h4>${escapeHtml(item.processName || "Processo")}</h4><span class="tag ${item.signed ? "medium" : "high"}">CAPTURE EXCLUSION</span></div>
+          <div class="finding-head"><h4>${escapeHtml(item.processName || "Processo")}</h4><span class="tag medium">CAPTURE EXCLUSION</span></div>
           <code>${escapeHtml(item.processPath || "—")}</code>
           <div class="kv"><span>Classe</span><span>${escapeHtml(item.windowClass || "—")}</span></div>
           <div class="kv"><span>Assinado</span><span>${item.signed ? "Sim" : "Não"}</span></div>
@@ -851,7 +851,7 @@ async function openReport(id) {
       networkInteresting,
       (item) => `
         <div class="finding">
-          <div class="finding-head"><h4>${escapeHtml(item.domain || item.processName || item.remoteAddress || "Rede")}</h4><span class="tag ${safeArray(item.matchedIndicators).length ? "high" : "medium"}">${escapeHtml(item.source || "REDE")}</span></div>
+          <div class="finding-head"><h4>${escapeHtml(item.domain || item.processName || item.remoteAddress || "Rede")}</h4><span class="tag medium">${escapeHtml(item.source || "REDE")}</span></div>
           <div class="kv"><span>Processo</span><span>${escapeHtml(item.processPath || item.processName || "—")}</span></div>
           <div class="kv"><span>Destino</span><span>${escapeHtml(item.domain || ((item.remoteAddress || "—") + ":" + (item.remotePort || "")))}</span></div>
           <div class="kv"><span>Indicadores</span><span>${escapeHtml(safeArray(item.matchedIndicators).join(", ") || "—")}</span></div>
@@ -933,7 +933,7 @@ async function openReport(id) {
       arrays.systemIntegrityExpansion,
       (item) => `
         <div class="finding">
-          <div class="finding-head"><h4>${escapeHtml(item.name || item.kind || "Integridade")}</h4><span class="tag ${["high","critical"].includes(String(item.severityHint || "").toLowerCase()) ? "high" : String(item.severityHint || "").toLowerCase() === "medium" ? "medium" : "info"}">${escapeHtml(String(item.kind || "INTEGRITY").toUpperCase())}</span></div>
+          <div class="finding-head"><h4>${escapeHtml(item.name || item.kind || "Integridade")}</h4><span class="tag ${String(item.severityHint || "").toLowerCase() === "info" ? "info" : "medium"}">${escapeHtml(String(item.kind || "INTEGRITY").toUpperCase())}</span></div>
           <code>${escapeHtml(item.detail || "—")}</code>
           <div class="kv"><span>Data</span><span>${escapeHtml(formatDate(item.timestampUtc))}</span></div>
         </div>
@@ -1189,10 +1189,10 @@ async function openReport(id) {
           safeExternalUrl(item.referrerUrl);
 
         return `
-          <div class="finding severity-card ${escapeHtml(danger.severity)}">
+          <div class="finding severity-card medium">
             <div class="finding-head">
               <h4>${escapeHtml(item.fileName || "Download")}</h4>
-              <span class="tag ${escapeHtml(danger.severity)}">${escapeHtml(danger.label)}</span>
+              <span class="tag medium">${escapeHtml(danger.label)} · REVISAR</span>
             </div>
             <div class="kv"><span>DangerType</span><span>${Number(danger.code)}</span></div>
             <div class="kv"><span>Baixado em</span><span>${escapeHtml(formatDate(item.startTimeUtc))}</span></div>
@@ -1427,7 +1427,7 @@ async function openReport(id) {
           <div class="finding">
             <div class="finding-head">
               <h4>${escapeHtml(item.searchQuery || item.host || item.title || "Histórico do navegador")}</h4>
-              <span class="tag ${escapeHtml(risk === "high" ? "high" : risk === "medium" ? "medium" : "info")}">${label}</span>
+              <span class="tag ${escapeHtml(["high","medium"].includes(risk) ? "medium" : "info")}">${label}</span>
             </div>
             <div class="kv"><span>Navegador</span><span>${escapeHtml((item.browser || "—") + " · " + (item.profile || "perfil"))}</span></div>
             <div class="kv"><span>Visitado em</span><span>${escapeHtml(formatDate(item.visitTimeUtc))}</span></div>
@@ -1513,7 +1513,7 @@ async function openReport(id) {
     timeline.push({
       time: item.lastRunUtc,
       action: "EXECUTADO",
-      tag: item.likelyDetachedOrRemovable ? "high" : "info",
+      tag: item.currentRemovable === true ? "critical" : item.likelyDetachedOrRemovable ? "medium" : "info",
       path: item.resolvedExecutablePath || item.nativeExecutablePath || item.executableName || "Executável",
       detail: "Prefetch · " + Number(item.runCount || 0) + " execução(ões)"
     });
@@ -1707,7 +1707,7 @@ async function openReport(id) {
           <div class="finding">
             <div class="finding-head">
               <h4>${escapeHtml(item.executableName || item.prefetchFile || "Executável")}</h4>
-              <span class="tag ${risky ? "high" : "info"}">${escapeHtml(status)}</span>
+              <span class="tag ${item.currentRemovable === true ? "critical" : risky ? "medium" : "info"}">${escapeHtml(status)}</span>
             </div>
             <div class="kv"><span>Última execução</span><span>${escapeHtml(formatDate(item.lastRunUtc))}</span></div>
             <div class="kv"><span>Quantidade de execuções</span><span>${Number(item.runCount || 0)}</span></div>
@@ -1865,7 +1865,7 @@ async function openReport(id) {
         <div class="finding">
           <div class="finding-head">
             <h4>${escapeHtml(item.moduleName || "DLL")}</h4>
-            <span class="tag high">EXTERNO / NÃO ASSINADO</span>
+            <span class="tag medium">EXTERNO / NÃO ASSINADO · REVISAR</span>
           </div>
           <div class="kv"><span>Processo</span><span>${escapeHtml((item.processName || "Rust") + " #" + (item.processId || ""))}</span></div>
           <div class="kv"><span>Caminho</span><span>${escapeHtml(item.path || "—")}</span></div>
