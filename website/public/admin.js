@@ -120,6 +120,55 @@ function isRiskyDownloadName(value) {
     isDeceptiveDoubleExtension(name);
 }
 
+function looksRandomExecutableNameClient(value) {
+  const name = String(value || "").split(/[\\/]/).at(-1) || "";
+  if (!/\.exe$/i.test(name)) return false;
+
+  let stem = name.replace(/\.exe$/i, "");
+  stem = stem.replace(/\.(zip|rar|7z|pdf|jpg|jpeg|png|txt)$/i, "");
+
+  if (stem.length < 4 || stem.length > 28 || !/^[a-z0-9]+$/i.test(stem))
+    return false;
+
+  const chars = [...stem];
+  const letters = chars.filter((ch) => /[a-z]/i.test(ch));
+  const digits = chars.filter((ch) => /[0-9]/.test(ch));
+  const vowels = letters.filter((ch) => /[aeiou]/i.test(ch));
+  const distinct = new Set(stem.toUpperCase()).size;
+  const allUpperOrDigits = /^[A-Z0-9]+$/.test(stem);
+  const vowelRatio = letters.length ? vowels.length / letters.length : 0;
+
+  if (stem.length <= 5) {
+    return allUpperOrDigits &&
+      distinct >= Math.max(4, stem.length - 1) &&
+      (digits.length >= 1 || vowels.length === 0) &&
+      vowelRatio <= 0.25;
+  }
+
+  return (
+    (
+      allUpperOrDigits &&
+      distinct >= Math.min(6, stem.length - 1) &&
+      vowelRatio <= 0.35 &&
+      (digits.length >= 1 || letters.length >= 5)
+    ) ||
+    (
+      stem.length >= 8 &&
+      stem.length <= 18 &&
+      digits.length === 0 &&
+      letters.length === stem.length &&
+      distinct >= 7 &&
+      vowelRatio <= 0.22
+    ) ||
+    (
+      stem.length >= 10 &&
+      letters.length >= 6 &&
+      digits.length >= 2 &&
+      distinct >= 8
+    )
+  );
+}
+
 async function openReportSafe(id) {
   try {
     await openReport(id);
@@ -368,6 +417,8 @@ async function openReport(id) {
     recycleBin: safeArray(payload.recycleBin),
     browserDownloads: safeArray(payload.browserDownloads),
     browserHistorySignals: safeArray(payload.browserHistorySignals),
+    browserRecoveredArtifacts: safeArray(payload.browserRecoveredArtifacts),
+    deletedUsnRecords: safeArray(payload.deletedUsnRecords),
     extensionMismatches: safeArray(payload.extensionMismatches),
     defenderExclusions: safeArray(payload.defenderExclusions),
     bootIntegrity: safeArray(payload.bootIntegrity),
@@ -397,7 +448,9 @@ async function openReport(id) {
     infoFindings.length +
     arrays.files.length +
     arrays.browserDownloads.length +
-    arrays.recycleBin.length;
+    arrays.recycleBin.length +
+    arrays.browserRecoveredArtifacts.length +
+    arrays.deletedUsnRecords.length;
 
   document.getElementById("reportMetrics").innerHTML = `
     <div class="metric"><small>STATUS</small><strong>${escapeHtml(statusLabel(analysis.status))}</strong></div>
@@ -475,6 +528,91 @@ async function openReport(id) {
     "Nenhum achado informativo/baixo."
   );
 
+  const unknownAppFindings = findings.filter((item) =>
+    item.artifact_type === "unknown_app"
+  );
+
+  document.getElementById("unknownAppsCountBadge").textContent =
+    unknownAppFindings.length;
+
+  renderFindings(
+    "unknownAppsList",
+    unknownAppFindings,
+    "Nenhum aplicativo desconhecido ou aplicativo conhecido com assinatura/origem inválida."
+  );
+
+  const recoveredHistory = [...arrays.browserRecoveredArtifacts]
+    .sort((a, b) => Number(b.riskScore || 0) - Number(a.riskScore || 0))
+    .slice(0, 500);
+
+  document.getElementById("recoveredHistoryCountBadge").textContent =
+    recoveredHistory.length;
+
+  document.getElementById("recoveredHistoryList").innerHTML = recoveredHistory.length
+    ? recoveredHistory.map((item) => {
+        const critical =
+          item.randomLikeName === true ||
+          item.deceptiveDoubleExtension === true ||
+          safeArray(item.catalogMatches).length > 0 ||
+          Number(item.riskScore || 0) >= 5;
+
+        const tag = critical ? "critical" : "medium";
+        const url = safeExternalUrl(item.recoveredUrl);
+
+        return `
+          <div class="finding severity-card ${tag}">
+            <div class="finding-head">
+              <h4>${escapeHtml(item.recoveredFileName || item.recoveredUrl || "Vestígio recuperado")}</h4>
+              <span class="tag ${tag}">${critical ? "RECUPERADO · ALTO" : "RECUPERADO"}</span>
+            </div>
+            <div class="kv"><span>Navegador</span><span>${escapeHtml((item.browser || "—") + " · " + (item.profile || "perfil"))}</span></div>
+            <div class="kv"><span>Fonte forense</span><span>${escapeHtml((item.recoveryKind || "SQLite") + " · " + (item.sourceArtifact || "—"))}</span></div>
+            <div class="kv"><span>Catálogo</span><span>${escapeHtml(safeArray(item.catalogMatches).join(", ") || "—")}</span></div>
+            <div class="kv"><span>Termos</span><span>${escapeHtml(safeArray(item.matchedTerms).join(", ") || "—")}</span></div>
+            ${url ? `<div class="kv"><span>URL recuperada</span><span><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.recoveredUrl)}</a></span></div>` : ""}
+            <div class="kv"><span>Observação</span><span>${escapeHtml(item.note || "—")}</span></div>
+          </div>
+        `;
+      }).join("")
+    : '<div class="message ok">Nenhum vestígio suspeito recuperado de páginas SQLite/WAL/journal.</div>';
+
+  const deletedUsn = [...arrays.deletedUsnRecords]
+    .sort((a, b) => new Date(b.timestampUtc || 0) - new Date(a.timestampUtc || 0))
+    .slice(0, 1000);
+
+  document.getElementById("deletedUsnCountBadge").textContent =
+    deletedUsn.length;
+
+  document.getElementById("deletedUsnList").innerHTML = deletedUsn.length
+    ? deletedUsn.map((item) => {
+        const critical =
+          item.randomLikeName === true ||
+          item.deceptiveDoubleExtension === true;
+
+        const lower = String(item.fileName || "").toLowerCase();
+        const highInterest =
+          critical ||
+          ["loader", "injector", "cheat", "hack", "script", "aimbot", "recoil", "spoofer", "bypass", "eac"]
+            .some((term) => lower.includes(term));
+
+        const tag = critical ? "critical" : highInterest ? "high" : "info";
+
+        return `
+          <div class="finding severity-card ${tag}">
+            <div class="finding-head">
+              <h4>${escapeHtml(item.fileName || "Arquivo apagado")}</h4>
+              <span class="tag ${tag}">${escapeHtml(item.reason || "USN")}</span>
+            </div>
+            <div class="kv"><span>Apagado/alterado em</span><span>${escapeHtml(formatDate(item.timestampUtc))}</span></div>
+            <div class="kv"><span>Volume</span><span>${escapeHtml(item.volume || "—")}</span></div>
+            <div class="kv"><span>Nome aleatório</span><span>${item.randomLikeName ? "SIM" : "Não"}</span></div>
+            <div class="kv"><span>Dupla extensão</span><span>${item.deceptiveDoubleExtension ? "SIM" : "Não"}</span></div>
+            <div class="kv"><span>USN</span><span>${escapeHtml(item.usn ?? "—")}</span></div>
+          </div>
+        `;
+      }).join("")
+    : '<div class="message ok">Nenhum EXE/ZIP/RAR/7Z/script apagado foi encontrado no trecho recente do USN Journal.</div>';
+
   document.getElementById("artifactSummary").innerHTML = `
     <div class="kv"><span>USB conectados</span><span>${arrays.usbCurrent.length}</span></div>
     <div class="kv"><span>USB no histórico</span><span>${arrays.usbHistory.length} (${disconnectedUsb} desconectados)</span></div>
@@ -506,6 +644,8 @@ async function openReport(id) {
     <div class="kv"><span>Downloads no histórico</span><span>${arrays.browserDownloads.length}</span></div>
     <div class="kv"><span>Downloads não localizados</span><span>${arrays.browserDownloads.filter((x) => x.fileMissing === true).length}</span></div>
     <div class="kv"><span>Histórico suspeito do navegador</span><span>${arrays.browserHistorySignals.length}</span></div>
+    <div class="kv"><span>Vestígios de histórico apagado</span><span>${arrays.browserRecoveredArtifacts.length}</span></div>
+    <div class="kv"><span>Arquivos apagados no USN</span><span>${arrays.deletedUsnRecords.length}</span></div>
     <div class="kv"><span>Lixeira</span><span>${arrays.recycleBin.length}</span></div>
     <div class="kv"><span>Ambiente virtual</span><span>${payload.vmEnvironment?.isVirtualMachine ? escapeHtml(payload.vmEnvironment?.detectedPlatform || "Sim") : "Não detectado"}</span></div>
     <div class="kv"><span>Extensões modificadas</span><span>${arrays.extensionMismatches.length}</span></div>
@@ -684,6 +824,53 @@ async function openReport(id) {
     });
   }
 
+  for (const item of arrays.deletedUsnRecords) {
+    const lower = String(item.fileName || "").toLowerCase();
+    const highInterest =
+      item.randomLikeName === true ||
+      item.deceptiveDoubleExtension === true ||
+      ["loader", "injector", "cheat", "hack", "script", "aimbot", "recoil", "spoofer", "bypass", "eac"]
+        .some((term) => lower.includes(term));
+
+    if (!highInterest) continue;
+
+    priorityFiles.push({
+      priority: item.randomLikeName || item.deceptiveDoubleExtension ? 10 : 8,
+      status: item.randomLikeName || item.deceptiveDoubleExtension
+        ? "APAGADO · CRÍTICO"
+        : "APAGADO · ALTO INTERESSE",
+      tag: item.randomLikeName || item.deceptiveDoubleExtension ? "critical" : "high",
+      name: item.fileName || "Arquivo apagado",
+      path: item.volume || "NTFS",
+      time: item.timestampUtc,
+      source: "USN Journal",
+      url: "",
+      detail: "O NTFS registrou a exclusão mesmo sem haver execução do arquivo."
+    });
+  }
+
+  for (const item of arrays.browserRecoveredArtifacts) {
+    const critical =
+      item.randomLikeName === true ||
+      item.deceptiveDoubleExtension === true ||
+      safeArray(item.catalogMatches).length > 0;
+
+    if (!critical && Number(item.riskScore || 0) < 4)
+      continue;
+
+    priorityFiles.push({
+      priority: critical ? 10 : 7,
+      status: critical ? "HISTÓRICO APAGADO · CRÍTICO" : "HISTÓRICO APAGADO",
+      tag: critical ? "critical" : "high",
+      name: item.recoveredFileName || item.recoveredUrl || "Vestígio recuperado",
+      path: item.sourceArtifact || "SQLite",
+      time: null,
+      source: item.recoveryKind || "SQLite",
+      url: item.recoveredUrl || "",
+      detail: item.note || "Vestígio recuperado do banco do navegador."
+    });
+  }
+
   for (const item of arrays.prefetchExecutions) {
     if (item.likelyDetachedOrRemovable !== true) continue;
     const pathValue = item.resolvedExecutablePath || item.nativeExecutablePath || "";
@@ -760,11 +947,8 @@ async function openReport(id) {
       "aimbot", "recoil", "macro", "spoofer", "bypass", "eac"
     ].filter((term) => zipText.includes(term));
 
-    const randomExeInside = ext === ".zip" && safeArray(item.archiveEntries).some((entry) =>
-      /\.exe$/i.test(String(entry || "")) &&
-      /^[A-Z0-9]{7,28}\.exe$/i.test(
-        String(entry || "").split(/[\\/]/).at(-1) || ""
-      ));
+    const randomExeInside = ext === ".zip" && safeArray(item.archiveEntries)
+      .some((entry) => looksRandomExecutableNameClient(entry));
 
     if (zipTerms.length < 2 && !randomExeInside) continue;
 
@@ -788,6 +972,9 @@ async function openReport(id) {
       "archive",
       "file",
       "browser_download",
+      "browser_recovery",
+      "usn_delete",
+      "unknown_app",
       "prefetch_execution",
       "bam",
       "recycle_bin"
