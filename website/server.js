@@ -1753,8 +1753,32 @@ async function initDb() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS ai_finding_reviews (
+      id BIGSERIAL PRIMARY KEY,
+      analysis_id BIGINT NOT NULL REFERENCES analyses(id) ON DELETE CASCADE,
+      finding_id BIGINT NOT NULL REFERENCES scan_findings(id) ON DELETE CASCADE,
+      fingerprint TEXT NOT NULL,
+      verdict TEXT NOT NULL,
+      confidence DOUBLE PRECISION NOT NULL DEFAULT 0,
+      reason TEXT NOT NULL DEFAULT '',
+      model TEXT NOT NULL DEFAULT '',
+      cached BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(analysis_id, finding_id)
+    );
+
     ALTER TABLE analyses
       ADD COLUMN IF NOT EXISTS machine_fingerprint TEXT NULL;
+
+    ALTER TABLE analyses
+      ADD COLUMN IF NOT EXISTS ai_review_status TEXT NOT NULL DEFAULT 'pending';
+
+    ALTER TABLE analyses
+      ADD COLUMN IF NOT EXISTS ai_review_error TEXT NULL;
+
+    ALTER TABLE analyses
+      ADD COLUMN IF NOT EXISTS ai_reviewed_at TIMESTAMPTZ NULL;
 
     ALTER TABLE scan_reports
       ADD COLUMN IF NOT EXISTS payload_raw BYTEA NULL;
@@ -1766,6 +1790,8 @@ async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_analyses_fingerprint ON analyses(machine_fingerprint);
     CREATE INDEX IF NOT EXISTS idx_findings_analysis ON scan_findings(analysis_id, id);
     CREATE INDEX IF NOT EXISTS idx_reports_analysis ON scan_reports(analysis_id, id DESC);
+    CREATE INDEX IF NOT EXISTS idx_ai_reviews_analysis ON ai_finding_reviews(analysis_id, finding_id);
+    CREATE INDEX IF NOT EXISTS idx_ai_reviews_fingerprint ON ai_finding_reviews(fingerprint, model, id DESC);
 
     INSERT INTO detection_rules(name, type, pattern, severity, description)
     SELECT 'Nome contendo loader', 'filename_contains', 'loader', 'medium',
@@ -2310,6 +2336,7 @@ async function rebuildFindings(analysisId, report) {
 
   await addBuiltInReviewFindings(analysisId, report);
   await downgradeUnexecutedExeFindings(analysisId, report);
+  await reviewFindingsWithAi(analysisId);
 }
 
 async function insertReviewFinding(
