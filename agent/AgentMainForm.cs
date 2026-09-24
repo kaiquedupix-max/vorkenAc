@@ -62,6 +62,83 @@ internal sealed class AgentMainForm : Form
     private static readonly Color Danger = Color.FromArgb(255, 72, 88);
     private static readonly Color Success = Color.FromArgb(43, 239, 201);
 
+
+    private static readonly ManualToolDefinition[] ManualTools =
+    {
+        new(
+            "ToolsDownloader++",
+            "Suite all-in-one da detect.ac para baixar as ferramentas forenses gratuitas.",
+            "https://detect.ac/tool/ToolsDownloader++"),
+        new(
+            "Autoruns++",
+            "Revisão de inicialização, assinaturas digitais e modificações relacionadas ao USN.",
+            "https://detect.ac/tool/Autoruns++"),
+        new(
+            "StringExplorer++",
+            "Exploração de strings, datas de compilação, entropia e indicadores anômalos.",
+            "https://detect.ac/tool/StringExplorer++"),
+        new(
+            "MOSS 2.0",
+            "Monitor de integridade em tempo real voltado ao Rainbow Six Siege.",
+            "https://detect.ac/tool/MOSS-2.0"),
+        new(
+            "WinPrefetchView++",
+            "Análise de Prefetch com detecções de bypass, assinaturas e YARA.",
+            "https://detect.ac/tool/WinPrefetchView++"),
+        new(
+            "USBDeview++",
+            "Correlação de dispositivos USB, histórico de conexão e firmware.",
+            "https://detect.ac/tool/USBDeview++"),
+        new(
+            "SavedFilesViewer++",
+            "Lista arquivos salvos em disco e correlaciona artefatos de download.",
+            "https://detect.ac/tool/SavedFilesViewer++"),
+        new(
+            "SRUMExplorer++",
+            "Mapeia caminhos, serviços, uso de rede, timestamps e artefatos SRUM.",
+            "https://detect.ac/tool/SRUMExplorer++"),
+        new(
+            "PowerShellParser++",
+            "Coleta e filtragem de artefatos de histórico do PowerShell.",
+            "https://detect.ac/tool/PowerShellParser++"),
+        new(
+            "PathsParser++",
+            "Parser de caminhos com YARA e visualização do USN Journal.",
+            "https://detect.ac/tool/PathsParser++"),
+        new(
+            "MFTExplorer++",
+            "Visualização do $MFT, ADS suspeitos e rastros históricos de arquivos.",
+            "https://detect.ac/tool/MFTExplorer++"),
+        new(
+            "KernelLiveDump++",
+            "Captura e análise de RAM kernel/user-mode com busca por strings.",
+            "https://detect.ac/tool/KernelLiveDump++"),
+        new(
+            "JournalTrace++",
+            "Análise de USN Journal com filtros por razão, palavras-chave e bypasses.",
+            "https://detect.ac/tool/JournalTrace++"),
+        new(
+            "CrashedFileViewer++",
+            "Consolida artefatos de crash do Windows e alterações relacionadas no USN.",
+            "https://detect.ac/tool/CrashedFileViewer++"),
+        new(
+            "BrowsingHistoryView++",
+            "Consolida histórico de navegação e destaca domínios para revisão.",
+            "https://detect.ac/tool/BrowsingHistoryView++"),
+        new(
+            "BrowserDownloadsView++",
+            "Consolida histórico de downloads, USN e verificações YARA.",
+            "https://detect.ac/tool/BrowserDownloadsView++"),
+        new(
+            "BamParser++",
+            "Extrai histórico de execução e timestamps do Background Activity Monitor.",
+            "https://detect.ac/tool/BamParser++"),
+        new(
+            "AmcacheParser++",
+            "Parser de Amcache com YARA, SHA1, filtros e apoio à reputação.",
+            "https://detect.ac/tool/AmcacheParser++")
+    };
+
     internal AgentMainForm(string[] args)
     {
         _args = args;
@@ -148,8 +225,8 @@ internal sealed class AgentMainForm : Form
             BackColor = Color.Transparent
         };
 
-        _nav.Location = new Point(430, 20);
-        _nav.Size = new Size(565, 58);
+        _nav.Location = new Point(360, 20);
+        _nav.Size = new Size(600, 58);
         _nav.BackColor = Color.Transparent;
         _nav.Visible = false;
 
@@ -161,7 +238,8 @@ internal sealed class AgentMainForm : Form
                 ShowResultsView(_lastRun);
         });
         AddNavButton("◷", "Histórico", 3, ShowHistoryView);
-        AddNavButton("⚙", "Configurações", 4, ShowSettingsView);
+        AddNavButton("⊞", "Análise Manual", 4, ShowManualAnalysisView);
+        AddNavButton("⚙", "Configurações", 5, ShowSettingsView);
 
         _headerStatus.Text = "●  READY";
         _headerStatus.AutoSize = false;
@@ -243,8 +321,8 @@ internal sealed class AgentMainForm : Form
         {
             Text = icon + Environment.NewLine + text,
             Tag = index,
-            Location = new Point(index * 108, 0),
-            Size = new Size(104, 58),
+            Location = new Point(index * 98, 0),
+            Size = new Size(94, 58),
             FlatStyle = FlatStyle.Flat,
             BackColor = Color.Transparent,
             ForeColor = TextSecondary,
@@ -1386,12 +1464,344 @@ internal sealed class AgentMainForm : Form
         SetHeaderState("READY", Accent);
     }
 
-    private void ShowSettingsView()
+    private void ShowManualAnalysisView()
     {
         _surface.Controls.Clear();
         _surface.Mode = AnimatedSurfaceMode.Idle;
         _nav.Visible = true;
         SetActiveNav(4);
+
+        var badge = MakeBadge("ANÁLISE MANUAL   ·   FERRAMENTAS FORENSES");
+        badge.Location = new Point(44, 28);
+        _surface.Controls.Add(badge);
+
+        _surface.Controls.Add(MakeLabel(
+            "Ferramentas manuais",
+            new Rectangle(44, 76, 680, 52),
+            30F,
+            TextPrimary,
+            FontStyle.Bold));
+
+        _surface.Controls.Add(MakeLabel(
+            "Ferramentas oficiais listadas pela detect.ac. Clique em baixar para o Vorken obter a versão atual e executá-la automaticamente.",
+            new Rectangle(47, 130, 1080, 42),
+            9.8F,
+            TextSecondary));
+
+        var notice = new BorderedPanel
+        {
+            Bounds = new Rectangle(44, 178, 1180, 58),
+            BackColor = Color.FromArgb(15, 24, 16),
+            BorderColor = Color.FromArgb(71, 97, 45),
+            CornerRadius = 10
+        };
+
+        notice.Controls.Add(MakeLabel(
+            "◆",
+            new Rectangle(16, 14, 28, 26),
+            14F,
+            Accent,
+            FontStyle.Bold));
+
+        notice.Controls.Add(MakeLabel(
+            "Downloads são feitos somente por HTTPS a partir do endpoint oficial da detect.ac e seus redirecionamentos oficiais do GitHub.",
+            new Rectangle(52, 12, 1085, 34),
+            8.3F,
+            TextSecondary));
+
+        _surface.Controls.Add(notice);
+
+        var toolsPanel = new FlowLayoutPanel
+        {
+            Bounds = new Rectangle(44, 252, 1180, 550),
+            AutoScroll = true,
+            BackColor = Color.Transparent,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = true,
+            Padding = new Padding(0, 0, 8, 10)
+        };
+
+        foreach (ManualToolDefinition tool in ManualTools)
+            toolsPanel.Controls.Add(MakeManualToolCard(tool));
+
+        _surface.Controls.Add(toolsPanel);
+        SetHeaderState("MANUAL", Accent);
+    }
+
+    private Control MakeManualToolCard(ManualToolDefinition tool)
+    {
+        var card = new VorkenCard
+        {
+            Size = new Size(558, 118),
+            Margin = new Padding(0, 0, 14, 14),
+            BackColor = Color.FromArgb(6, 20, 28),
+            BorderColor = Border
+        };
+
+        var name = MakeLabel(
+            tool.Name,
+            new Rectangle(18, 14, 320, 26),
+            11F,
+            TextPrimary,
+            FontStyle.Bold);
+
+        var description = MakeLabel(
+            tool.Description,
+            new Rectangle(18, 42, 348, 42),
+            8F,
+            TextSecondary);
+
+        var source = MakeLabel(
+            "detect.ac  ·  download oficial",
+            new Rectangle(18, 88, 300, 18),
+            7F,
+            AccentSoft,
+            FontStyle.Bold,
+            "Consolas");
+
+        var status = MakeLabel(
+            "Pronto",
+            new Rectangle(385, 18, 150, 18),
+            7.1F,
+            TextDim,
+            FontStyle.Bold,
+            "Consolas");
+        status.TextAlign = ContentAlignment.MiddleRight;
+
+        var downloadButton = new Button
+        {
+            Text = "⇩  Baixar e executar",
+            Bounds = new Rectangle(380, 51, 158, 42)
+        };
+        StylePrimaryButton(downloadButton);
+        downloadButton.Font = new Font("Segoe UI", 8.5F, FontStyle.Bold);
+
+        downloadButton.Click += async (_, _) =>
+            await DownloadAndRunManualToolAsync(
+                tool,
+                downloadButton,
+                status);
+
+        card.Controls.Add(name);
+        card.Controls.Add(description);
+        card.Controls.Add(source);
+        card.Controls.Add(status);
+        card.Controls.Add(downloadButton);
+
+        return card;
+    }
+
+    private async Task DownloadAndRunManualToolAsync(
+        ManualToolDefinition tool,
+        Button button,
+        Label status)
+    {
+        if (!button.Enabled)
+            return;
+
+        button.Enabled = false;
+        string originalText = button.Text;
+
+        try
+        {
+            status.Text = "Conectando...";
+            status.ForeColor = AccentSoft;
+            button.Text = "Baixando...";
+
+            using var handler = new HttpClientHandler
+            {
+                AllowAutoRedirect = true,
+                MaxAutomaticRedirections = 10
+            };
+
+            using var http = new HttpClient(handler)
+            {
+                Timeout = TimeSpan.FromMinutes(4)
+            };
+
+            http.DefaultRequestHeaders.UserAgent.ParseAdd(
+                "Vorken-AntiCheat/1.0.7");
+
+            using HttpResponseMessage response =
+                await http.GetAsync(
+                    tool.DownloadUrl,
+                    HttpCompletionOption.ResponseHeadersRead);
+
+            response.EnsureSuccessStatusCode();
+
+            Uri? finalUri =
+                response.RequestMessage?.RequestUri;
+
+            if (finalUri is null ||
+                !string.Equals(
+                    finalUri.Scheme,
+                    Uri.UriSchemeHttps,
+                    StringComparison.OrdinalIgnoreCase) ||
+                !IsTrustedManualToolHost(finalUri.Host))
+            {
+                throw new InvalidOperationException(
+                    "O download foi redirecionado para uma origem não autorizada.");
+            }
+
+            long? contentLength =
+                response.Content.Headers.ContentLength;
+
+            const long maxDownloadBytes =
+                300L * 1024L * 1024L;
+
+            if (contentLength.HasValue &&
+                contentLength.Value > maxDownloadBytes)
+            {
+                throw new InvalidOperationException(
+                    "O arquivo excede o limite de 300 MB.");
+            }
+
+            string downloadRoot =
+                Path.Combine(
+                    Environment.GetFolderPath(
+                        Environment.SpecialFolder.LocalApplicationData),
+                    "Vorken",
+                    "ManualTools");
+
+            Directory.CreateDirectory(downloadRoot);
+
+            string? headerName =
+                response.Content.Headers.ContentDisposition?.FileNameStar ??
+                response.Content.Headers.ContentDisposition?.FileName;
+
+            string fileName =
+                SanitizeManualToolFileName(
+                    headerName,
+                    tool.Name);
+
+            string destination =
+                Path.Combine(
+                    downloadRoot,
+                    fileName);
+
+            await using (
+                var file =
+                    new FileStream(
+                        destination,
+                        FileMode.Create,
+                        FileAccess.Write,
+                        FileShare.Read))
+            {
+                await response.Content.CopyToAsync(file);
+            }
+
+            var info = new FileInfo(destination);
+
+            if (!info.Exists ||
+                info.Length <= 0 ||
+                info.Length > maxDownloadBytes)
+            {
+                throw new InvalidOperationException(
+                    "O arquivo baixado é inválido.");
+            }
+
+            if (!LooksLikePortableExecutable(destination))
+            {
+                throw new InvalidOperationException(
+                    "O arquivo recebido não é um executável Windows válido.");
+            }
+
+            status.Text = "Executando...";
+            status.ForeColor = Accent;
+            button.Text = "Abrindo...";
+
+            Process.Start(
+                new ProcessStartInfo(destination)
+                {
+                    UseShellExecute = true,
+                    WorkingDirectory = downloadRoot
+                });
+
+            status.Text = "Executado ✓";
+            status.ForeColor = Success;
+        }
+        catch (Exception ex)
+        {
+            status.Text = "Falhou";
+            status.ForeColor = Danger;
+
+            MessageBox.Show(
+                this,
+                $"Não foi possível baixar/executar {tool.Name}.\n\n{ex.Message}",
+                "Vorken · Análise Manual",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            button.Text = originalText;
+            button.Enabled = true;
+        }
+    }
+
+    private static bool IsTrustedManualToolHost(string host)
+    {
+        if (string.IsNullOrWhiteSpace(host))
+            return false;
+
+        host = host.Trim().ToLowerInvariant();
+
+        return host == "detect.ac" ||
+               host.EndsWith(".detect.ac", StringComparison.Ordinal) ||
+               host == "github.com" ||
+               host.EndsWith(".github.com", StringComparison.Ordinal) ||
+               host == "githubusercontent.com" ||
+               host.EndsWith(".githubusercontent.com", StringComparison.Ordinal);
+    }
+
+    private static string SanitizeManualToolFileName(
+        string? headerName,
+        string toolName)
+    {
+        string candidate =
+            string.IsNullOrWhiteSpace(headerName)
+                ? toolName + ".exe"
+                : headerName.Trim().Trim('"');
+
+        foreach (char invalid in Path.GetInvalidFileNameChars())
+            candidate = candidate.Replace(invalid, '_');
+
+        if (!candidate.EndsWith(
+                ".exe",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            candidate += ".exe";
+        }
+
+        return candidate;
+    }
+
+    private static bool LooksLikePortableExecutable(
+        string path)
+    {
+        try
+        {
+            using var stream =
+                File.OpenRead(path);
+
+            if (stream.Length < 2)
+                return false;
+
+            return stream.ReadByte() == 'M' &&
+                   stream.ReadByte() == 'Z';
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private void ShowSettingsView()
+    {
+        _surface.Controls.Clear();
+        _surface.Mode = AnimatedSurfaceMode.Idle;
+        _nav.Visible = true;
+        SetActiveNav(5);
 
         var settingsBadge = MakeBadge("CONFIGURAÇÕES   ·   VORKEN");
         settingsBadge.Location = new Point(44, 34);
@@ -1865,6 +2275,11 @@ internal sealed class AgentMainForm : Form
     [DllImport("user32.dll")]
     private static extern IntPtr SendMessage(IntPtr hWnd, int msg, int wParam, int lParam);
 }
+
+internal sealed record ManualToolDefinition(
+    string Name,
+    string Description,
+    string DownloadUrl);
 
 internal enum AnimatedSurfaceMode
 {
