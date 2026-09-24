@@ -30,6 +30,7 @@ internal sealed class AgentMainForm : Form
     private readonly Button _closeButton = new();
     private readonly System.Windows.Forms.Timer _motionTimer = new();
     private readonly System.Windows.Forms.Timer _scanTimer = new();
+    private readonly System.Windows.Forms.Timer _fadeTimer = new();
 
     private readonly List<Label> _stepStateLabels = new();
     private readonly List<string> _activityLines = new();
@@ -74,6 +75,7 @@ internal sealed class AgentMainForm : Form
         Font = new Font("Segoe UI", 10F, FontStyle.Regular, GraphicsUnit.Point);
         FormBorderStyle = FormBorderStyle.None;
         DoubleBuffered = true;
+        Opacity = 0d;
 
         BuildShell();
         ShowConsentView();
@@ -85,6 +87,16 @@ internal sealed class AgentMainForm : Form
         _scanTimer.Interval = 1000;
         _scanTimer.Tick += ScanTimer_Tick;
 
+        _fadeTimer.Interval = 16;
+        _fadeTimer.Tick += FadeTimer_Tick;
+
+        Shown += (_, _) =>
+        {
+            UpdateWindowRegion();
+            _fadeTimer.Start();
+        };
+
+        SizeChanged += (_, _) => UpdateWindowRegion();
         FormClosing += OnFormClosing;
     }
 
@@ -113,6 +125,8 @@ internal sealed class AgentMainForm : Form
             ForeColor = Color.FromArgb(2, 23, 25),
             Font = new Font("Segoe UI", 22F, FontStyle.Bold)
         };
+
+        AttachRoundedRegion(brandMark, 7);
 
         var brandName = new Label
         {
@@ -157,6 +171,7 @@ internal sealed class AgentMainForm : Form
         _headerStatus.Font = new Font("Consolas", 8.5F, FontStyle.Bold);
         _headerStatus.ForeColor = Accent;
         _headerStatus.BackColor = Color.FromArgb(6, 31, 36);
+        AttachRoundedRegion(_headerStatus, 8);
 
         var minButton = MakeWindowButton("—", 1162);
         minButton.Click += (_, _) => WindowState = FormWindowState.Minimized;
@@ -218,6 +233,7 @@ internal sealed class AgentMainForm : Form
         };
         button.FlatAppearance.BorderSize = 0;
         button.FlatAppearance.MouseOverBackColor = Color.FromArgb(20, 45, 55);
+        AttachRoundedRegion(button, 7);
         return button;
     }
 
@@ -237,6 +253,7 @@ internal sealed class AgentMainForm : Form
         };
         button.FlatAppearance.BorderSize = 0;
         button.FlatAppearance.MouseOverBackColor = Color.FromArgb(8, 35, 42);
+        AttachRoundedRegion(button, 8);
         button.Click += (_, _) =>
         {
             SetActiveNav(index);
@@ -256,7 +273,9 @@ internal sealed class AgentMainForm : Form
             button.ForeColor = active ? Accent : TextSecondary;
             button.BackColor = active ? Color.FromArgb(7, 44, 49) : Color.Transparent;
             button.FlatAppearance.BorderSize = active ? 1 : 0;
-            button.FlatAppearance.BorderColor = active ? AccentSoft : Color.Transparent;
+            // ButtonBase/FlatAppearance rejeita BorderColor com alpha transparente.
+            // Mantemos uma cor opaca mesmo quando a borda está com tamanho zero.
+            button.FlatAppearance.BorderColor = active ? AccentSoft : Border;
         }
     }
 
@@ -527,9 +546,11 @@ internal sealed class AgentMainForm : Form
         _progressTrack.Bounds = new Rectangle(20, 48, 655, 18);
         _progressTrack.BackColor = Color.FromArgb(9, 41, 48);
         _progressTrack.Controls.Clear();
+        AttachRoundedRegion(_progressTrack, 9);
 
         _progressFill.Bounds = new Rectangle(0, 0, 20, 18);
         _progressFill.BackColor = Accent;
+        AttachRoundedRegion(_progressFill, 9);
         _progressTrack.Controls.Add(_progressFill);
 
         _progressPercentLabel.Text = "3%";
@@ -550,7 +571,7 @@ internal sealed class AgentMainForm : Form
         progressCard.Controls.Add(_progressEtaLabel);
         _surface.Controls.Add(progressCard);
 
-        var stagesCard = MakeCard(new Rectangle(44, 380, 400, 390));
+        var stagesCard = MakeCard(new Rectangle(44, 380, 400, 360));
         stagesCard.Controls.Add(MakeSectionTitle("☷   ETAPAS DA ANÁLISE", 18, 15));
 
         string[] stages =
@@ -572,7 +593,7 @@ internal sealed class AgentMainForm : Form
             _stepStateLabels.Add(state);
         }
 
-        var streamCard = MakeCard(new Rectangle(456, 380, 378, 390));
+        var streamCard = MakeCard(new Rectangle(456, 380, 378, 360));
         streamCard.Controls.Add(MakeSectionTitle("▤   FLUXO DE EVIDÊNCIAS (TEMPO REAL)", 16, 15));
         streamCard.Controls.Add(new Label
         {
@@ -584,7 +605,7 @@ internal sealed class AgentMainForm : Form
             Font = new Font("Consolas", 7.3F, FontStyle.Bold)
         });
 
-        _activityBox.Bounds = new Rectangle(14, 48, 350, 326);
+        _activityBox.Bounds = new Rectangle(14, 48, 350, 296);
         _activityBox.Multiline = true;
         _activityBox.ReadOnly = true;
         _activityBox.ScrollBars = ScrollBars.Vertical;
@@ -598,7 +619,7 @@ internal sealed class AgentMainForm : Form
         _surface.Controls.Add(stagesCard);
         _surface.Controls.Add(streamCard);
 
-        var scannerCard = MakeCard(new Rectangle(858, 32, 366, 738));
+        var scannerCard = MakeCard(new Rectangle(858, 32, 366, 708));
         scannerCard.Controls.Add(MakeLabel(
             "SESSÃO SEGURA",
             new Rectangle(22, 26, 180, 20),
@@ -644,7 +665,7 @@ internal sealed class AgentMainForm : Form
 
         var keepOpen = new BorderedPanel
         {
-            Bounds = new Rectangle(22, 628, 322, 82),
+            Bounds = new Rectangle(22, 618, 322, 76),
             BackColor = Color.FromArgb(30, 25, 8),
             BorderColor = Color.FromArgb(129, 94, 23)
         };
@@ -664,10 +685,12 @@ internal sealed class AgentMainForm : Form
 
         _surface.Controls.Add(scannerCard);
 
-        var footer = new Panel
+        var footer = new BorderedPanel
         {
-            Bounds = new Rectangle(44, 783, 1180, 40),
-            BackColor = Color.FromArgb(5, 18, 24)
+            Bounds = new Rectangle(44, 752, 1180, 46),
+            BackColor = Color.FromArgb(5, 18, 24),
+            BorderColor = Border,
+            CornerRadius = 10
         };
         footer.Controls.Add(MakeFooterItem("◆", "SCANNER ATIVO", "Coleta e análise de evidências em tempo real.", 12));
         footer.Controls.Add(MakeFooterItem("▣", "SESSÃO SEGURA", "Dados protegidos", 415));
@@ -676,7 +699,7 @@ internal sealed class AgentMainForm : Form
         var cancel = new Button
         {
             Text = "■  Cancelar análise",
-            Bounds = new Rectangle(1000, 6, 166, 28)
+            Bounds = new Rectangle(1000, 8, 166, 30)
         };
         StyleGhostButton(cancel);
         cancel.Click += (_, _) =>
@@ -1402,6 +1425,59 @@ internal sealed class AgentMainForm : Form
         SetHeaderState("READY", Accent);
     }
 
+    private void FadeTimer_Tick(object? sender, EventArgs e)
+    {
+        Opacity = Math.Min(1d, Opacity + 0.08d);
+
+        if (Opacity >= 1d)
+        {
+            Opacity = 1d;
+            _fadeTimer.Stop();
+        }
+    }
+
+    private void UpdateWindowRegion()
+    {
+        if (!IsHandleCreated)
+            return;
+
+        if (WindowState == FormWindowState.Maximized)
+        {
+            Region? previous = Region;
+            Region = null;
+            previous?.Dispose();
+            return;
+        }
+
+        ApplyRoundedRegion(this, 18);
+    }
+
+    private static void AttachRoundedRegion(Control control, int radius)
+    {
+        void Apply(object? _, EventArgs __) =>
+            ApplyRoundedRegion(control, radius);
+
+        control.SizeChanged -= Apply;
+        control.SizeChanged += Apply;
+        ApplyRoundedRegion(control, radius);
+    }
+
+    private static void ApplyRoundedRegion(Control control, int radius)
+    {
+        if (control.Width <= 1 || control.Height <= 1)
+            return;
+
+        using GraphicsPath path =
+            VorkenGeometry.CreateRoundedRectangle(
+                new Rectangle(0, 0, control.Width, control.Height),
+                radius);
+
+        Region next = new(path);
+        Region? previous = control.Region;
+        control.Region = next;
+        previous?.Dispose();
+    }
+
     private void MotionTimer_Tick(object? sender, EventArgs e)
     {
         _motion += 0.055f;
@@ -1424,7 +1500,7 @@ internal sealed class AgentMainForm : Form
 
     private Label MakeBadge(string text)
     {
-        return new Label
+        var badge = new Label
         {
             Text = "●  " + text,
             AutoSize = true,
@@ -1433,6 +1509,9 @@ internal sealed class AgentMainForm : Form
             ForeColor = Accent,
             Font = new Font("Consolas", 8.2F, FontStyle.Bold)
         };
+
+        AttachRoundedRegion(badge, 7);
+        return badge;
     }
 
     private Label MakeSectionTitle(string text, int x, int y)
@@ -1650,6 +1729,7 @@ internal sealed class AgentMainForm : Form
         button.Font = new Font("Segoe UI", 12F, FontStyle.Bold);
         button.Cursor = Cursors.Hand;
         button.TabStop = true;
+        AttachRoundedRegion(button, 10);
 
         button.MouseEnter += (_, _) =>
         {
@@ -1673,6 +1753,24 @@ internal sealed class AgentMainForm : Form
         button.ForeColor = TextPrimary;
         button.Font = new Font("Segoe UI", 8.2F, FontStyle.Bold);
         button.Cursor = Cursors.Hand;
+        AttachRoundedRegion(button, 9);
+
+        Color normalBack = button.BackColor;
+        Color normalFore = button.ForeColor;
+
+        button.MouseEnter += (_, _) =>
+        {
+            button.BackColor = Color.FromArgb(8, 35, 42);
+            button.ForeColor = Accent;
+            button.FlatAppearance.BorderColor = AccentSoft;
+        };
+
+        button.MouseLeave += (_, _) =>
+        {
+            button.BackColor = normalBack;
+            button.ForeColor = normalFore;
+            button.FlatAppearance.BorderColor = BorderBright;
+        };
     }
 
     private static string BuildFindingRowText(AgentFindingSnapshot finding)
@@ -1766,27 +1864,92 @@ internal enum AnimatedSurfaceMode
     Error
 }
 
+internal static class VorkenGeometry
+{
+    internal static GraphicsPath CreateRoundedRectangle(
+        Rectangle bounds,
+        int radius)
+    {
+        var path = new GraphicsPath();
+
+        int safeRadius = Math.Max(
+            1,
+            Math.Min(
+                radius,
+                Math.Min(bounds.Width, bounds.Height) / 2));
+
+        int diameter = safeRadius * 2;
+        Rectangle arc = new(bounds.X, bounds.Y, diameter, diameter);
+
+        path.AddArc(arc, 180, 90);
+        arc.X = bounds.Right - diameter - 1;
+        path.AddArc(arc, 270, 90);
+        arc.Y = bounds.Bottom - diameter - 1;
+        path.AddArc(arc, 0, 90);
+        arc.X = bounds.X;
+        path.AddArc(arc, 90, 90);
+        path.CloseFigure();
+
+        return path;
+    }
+}
+
 internal sealed class BorderFrame : Panel
 {
     internal Color BorderColor { get; set; } = Color.FromArgb(24, 117, 141);
+    internal int CornerRadius { get; set; } = 18;
 
     internal BorderFrame()
     {
         DoubleBuffered = true;
+        ResizeRedraw = true;
         Padding = new Padding(1);
+    }
+
+    protected override void OnResize(EventArgs eventargs)
+    {
+        base.OnResize(eventargs);
+        UpdateRegion();
     }
 
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e);
+
+        if (Width <= 1 || Height <= 1)
+            return;
+
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+
+        using GraphicsPath path =
+            VorkenGeometry.CreateRoundedRectangle(
+                new Rectangle(0, 0, Width - 1, Height - 1),
+                CornerRadius);
+
         using var pen = new Pen(BorderColor, 1);
-        e.Graphics.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
+        e.Graphics.DrawPath(pen, path);
+    }
+
+    private void UpdateRegion()
+    {
+        if (Width <= 1 || Height <= 1)
+            return;
+
+        using GraphicsPath path =
+            VorkenGeometry.CreateRoundedRectangle(
+                new Rectangle(0, 0, Width, Height),
+                CornerRadius);
+
+        Region? previous = Region;
+        Region = new Region(path);
+        previous?.Dispose();
     }
 }
 
 internal class BorderedPanel : Panel
 {
     internal Color BorderColor { get; set; } = Color.FromArgb(21, 61, 76);
+    internal int CornerRadius { get; set; } = 10;
 
     internal BorderedPanel()
     {
@@ -1794,16 +1957,52 @@ internal class BorderedPanel : Panel
         ResizeRedraw = true;
     }
 
+    protected override void OnResize(EventArgs eventargs)
+    {
+        base.OnResize(eventargs);
+        UpdateRegion();
+    }
+
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e);
+
+        if (Width <= 1 || Height <= 1)
+            return;
+
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+
+        using GraphicsPath path =
+            VorkenGeometry.CreateRoundedRectangle(
+                new Rectangle(0, 0, Width - 1, Height - 1),
+                CornerRadius);
+
         using var pen = new Pen(BorderColor, 1);
-        e.Graphics.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
+        e.Graphics.DrawPath(pen, path);
+    }
+
+    private void UpdateRegion()
+    {
+        if (Width <= 1 || Height <= 1)
+            return;
+
+        using GraphicsPath path =
+            VorkenGeometry.CreateRoundedRectangle(
+                new Rectangle(0, 0, Width, Height),
+                CornerRadius);
+
+        Region? previous = Region;
+        Region = new Region(path);
+        previous?.Dispose();
     }
 }
 
 internal sealed class VorkenCard : BorderedPanel
 {
+    internal VorkenCard()
+    {
+        CornerRadius = 11;
+    }
 }
 
 internal sealed class AnimatedSurface : Panel
@@ -1891,6 +2090,7 @@ internal sealed class ScannerPulseControl : Control
 {
     private readonly System.Windows.Forms.Timer _timer = new();
     private float _phase;
+    private const int CornerRadius = 12;
 
     internal bool Scanning { get; set; }
     internal string Caption { get; set; } = "READY TO SCAN";
@@ -1906,6 +2106,23 @@ internal sealed class ScannerPulseControl : Control
             Invalidate();
         };
         _timer.Start();
+    }
+
+    protected override void OnResize(EventArgs e)
+    {
+        base.OnResize(e);
+
+        if (Width <= 1 || Height <= 1)
+            return;
+
+        using GraphicsPath path =
+            VorkenGeometry.CreateRoundedRectangle(
+                new Rectangle(0, 0, Width, Height),
+                CornerRadius);
+
+        Region? previous = Region;
+        Region = new Region(path);
+        previous?.Dispose();
     }
 
     protected override void OnPaint(PaintEventArgs e)
@@ -1925,7 +2142,13 @@ internal sealed class ScannerPulseControl : Control
         for (int y = 0; y < Height; y += 28)
             g.DrawLine(gridPen, 0, y, Width, y);
 
-        g.DrawRectangle(borderPen, 0, 0, Width - 1, Height - 1);
+        using (GraphicsPath borderPath =
+            VorkenGeometry.CreateRoundedRectangle(
+                new Rectangle(0, 0, Width - 1, Height - 1),
+                CornerRadius))
+        {
+            g.DrawPath(borderPen, borderPath);
+        }
 
         int cx = Width / 2;
         int cy = (Height - 34) / 2;
