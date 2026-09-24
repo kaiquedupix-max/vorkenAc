@@ -91,6 +91,160 @@ function loadRustThreatCatalog() {
 }
 
 const rustThreatCatalog = loadRustThreatCatalog();
+
+const rustOsintCatalogPath = path.join(
+  __dirname,
+  "data",
+  "rust-osint-catalog.json.gz"
+);
+
+function loadRustOsintCatalog() {
+  try {
+    const raw = gunzipSync(
+      fs.readFileSync(rustOsintCatalogPath)
+    ).toString("utf8");
+
+    const payload = JSON.parse(raw);
+
+    return {
+      version: String(payload?.version || ""),
+      verified: Array.isArray(payload?.verified) ? payload.verified : [],
+      aliases: Array.isArray(payload?.aliases) ? payload.aliases : [],
+      keywords: Array.isArray(payload?.keywords) ? payload.keywords : [],
+      contextPlatforms: Array.isArray(payload?.contextPlatforms)
+        ? payload.contextPlatforms
+        : [],
+      notes: Array.isArray(payload?.notes) ? payload.notes : [],
+    };
+  } catch (error) {
+    console.error(
+      "Falha ao carregar catálogo OSINT da planilha:",
+      error.message
+    );
+
+    return {
+      version: "",
+      verified: [],
+      aliases: [],
+      keywords: [],
+      contextPlatforms: [],
+      notes: [],
+    };
+  }
+}
+
+const rustOsintCatalog = loadRustOsintCatalog();
+
+function normalizeCatalogHost(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^www\./, "");
+}
+
+function urlHost(value) {
+  try {
+    return normalizeCatalogHost(
+      new URL(String(value || "")).hostname
+    );
+  } catch {
+    return "";
+  }
+}
+
+const osintContextHosts = new Set(
+  (rustOsintCatalog.contextPlatforms || [])
+    .map((item) => urlHost(item?.url))
+    .filter(Boolean)
+);
+
+const osintGenericHosts = new Set([
+  ...osintContextHosts,
+  "elitepvpers.com",
+]);
+
+function normalizedOsintUrlTerms(value) {
+  try {
+    const parsed = new URL(String(value || ""));
+    parsed.search = "";
+    parsed.hash = "";
+
+    const host = normalizeCatalogHost(parsed.hostname);
+    const pathName = parsed.pathname.replace(/\/+$/, "");
+
+    return [
+      parsed.toString().replace(/\/+$/, "").toLowerCase(),
+      (host + pathName).toLowerCase(),
+    ].filter(Boolean);
+  } catch {
+    const raw = String(value || "")
+      .trim()
+      .toLowerCase()
+      .replace(/\/+$/, "");
+
+    return raw ? [raw] : [];
+  }
+}
+
+function buildAgentThreatCatalog() {
+  const highDomains = new Set();
+  const mediumDomains = new Set();
+  const highUrls = new Set();
+  const mediumUrls = new Set();
+
+  for (const source of rustOsintCatalog.verified || []) {
+    const confidence = String(source?.confidence || "").toLowerCase();
+    const domain = normalizeCatalogHost(source?.domain);
+
+    const domainTarget =
+      confidence === "high"
+        ? highDomains
+        : mediumDomains;
+
+    if (domain && !osintGenericHosts.has(domain)) {
+      domainTarget.add(domain);
+    }
+
+    const urlTarget =
+      confidence === "high"
+        ? highUrls
+        : mediumUrls;
+
+    for (const term of normalizedOsintUrlTerms(source?.url)) {
+      urlTarget.add(term);
+    }
+  }
+
+  const generated = [];
+
+  if (highDomains.size || highUrls.size) {
+    generated.push({
+      name: "Planilha OSINT · fontes verificadas",
+      aliases: [...highUrls],
+      domains: [...highDomains],
+      discordInvites: [],
+      severity: "critical",
+    });
+  }
+
+  if (mediumDomains.size || mediumUrls.size) {
+    generated.push({
+      name: "Planilha OSINT · fontes para revisão",
+      aliases: [...mediumUrls],
+      domains: [...mediumDomains],
+      discordInvites: [],
+      severity: "high",
+    });
+  }
+
+  return [
+    ...rustThreatCatalog,
+    ...generated,
+  ];
+}
+
+const agentThreatCatalog = buildAgentThreatCatalog();
+
 const commonAppCatalogPath = path.join(
   __dirname,
   "data",
@@ -425,6 +579,8 @@ async function callAiReviewBatch(cases) {
     "Casos protegidos pelo motor técnico NÃO são enviados para você. Não tente inferir ou rebaixar uma execução confirmada em mídia removível, cheat conhecido executado, origem direta de domínio conhecido de cheat ou correlação forte download+execução+exclusão.",
     "Windows/System32/SysWOW64/WinSxS, Program Files, Steam, anti-cheats legítimos (Easy Anti-Cheat, BattlEye, Riot Vanguard e componentes assinados de jogos como Warframe), instaladores/updaters assinados e software conhecido devem tender a likely_false_positive quando os metadados forem coerentes.",
     "Use sourceUrl/finalUrl/pageUrl/siteUrl/referrerUrl/recoveredUrl para classificar a ORIGEM. Diferencie cheat/script/loader/macro de software legítimo. Uma pesquisa no Google/Bing é apenas needs_review; acesso/download direto de domínio conhecido do catálogo é sinal forte.",
+    "O catálogo OSINT 2026-09-24 inclui fontes verificadas, providers/aliases, keywords e infraestrutura de venda. Um catalogMatch de fonte verificada é sinal forte; provider/alias ou keyword isolado é apenas contexto e precisa de Rust/origem/execução ou outro sinal independente.",
+    "Stripe, SellHub, Sellix, Shoppy, Selly, Digiseller, PayPal, Cash App, Apple Pay, Google Pay, Discord, Telegram, GitHub, YouTube, TikTok, Reddit e X são plataformas genéricas: NUNCA classifique cheat só porque uma delas aparece isoladamente. Eleve apenas quando houver vínculo com provider/fonte verificada, referrer/URL específica, download ou outros sinais concretos.",
     "Arquivos .xls/.xlsx e outros documentos baixados só devem permanecer como suspeitos se a origem/metadados tiverem relação concreta com cheat/script/loader/macro; extensão ou download isolado não prova cheat.",
     "Nome estranho sozinho, caminho Temp sozinho, arquivo apagado sozinho, ausência de assinatura sozinha e ZIP sozinho não provam cheat.",
     "Nunca rebaixe um caso somente porque o nome do arquivo parece comum.",
