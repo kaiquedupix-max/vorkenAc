@@ -876,7 +876,7 @@ async function addBuiltInReviewFindings(analysisId, report) {
     const ext = String(item.extension || path.extname(item.path || item.name || ""))
       .toLowerCase();
 
-    if (ext === ".zip") {
+    if ([".zip", ".rar", ".7z"].includes(ext)) {
       const archiveText = [
         item.name,
         item.path,
@@ -886,11 +886,13 @@ async function addBuiltInReviewFindings(analysisId, report) {
       const matchedTerms = archiveRiskTerms.filter((term) =>
         archiveText.includes(term));
 
-      const randomExecutables = (item.archiveEntries || [])
-        .filter((entry) =>
-          /\.exe$/i.test(String(entry || "")) &&
-          looksRandomExecutableName(entry))
-        .slice(0, 20);
+      const randomExecutables = ext === ".zip"
+        ? (item.archiveEntries || [])
+            .filter((entry) =>
+              /\.exe$/i.test(String(entry || "")) &&
+              looksRandomExecutableName(entry))
+            .slice(0, 20)
+        : [];
 
       if (
         matchedTerms.length >= 2 ||
@@ -898,16 +900,20 @@ async function addBuiltInReviewFindings(analysisId, report) {
       ) {
         await insertReviewFinding(
           analysisId,
-          "ZIP suspeito em pasta de usuário",
+          ext === ".zip"
+            ? "ZIP suspeito em pasta de usuário"
+            : "Arquivo compactado suspeito em pasta de usuário",
           randomExecutables.length > 0 ? "high" : "medium",
           "archive",
-          item.path || item.name || "ZIP",
+          item.path || item.name || "arquivo compactado",
           {
             ...item,
             matchedTerms,
             randomExecutables,
             confidence: randomExecutables.length > 0 ? "high" : "medium",
-            note: "ZIP recente contém combinação de termos associados a cheat/script ou executáveis com nome aleatório. O conteúdo é apenas listado; nada é extraído ou executado.",
+            note: ext === ".zip"
+              ? "ZIP recente contém combinação de termos associados a cheat/script ou executáveis com nome aleatório. O conteúdo é apenas listado; nada é extraído ou executado."
+              : "RAR/7Z recente possui combinação de termos associados a cheat/script no nome/caminho. O agente não extrai nem executa o arquivo.",
           }
         );
       }
@@ -958,8 +964,8 @@ async function addBuiltInReviewFindings(analysisId, report) {
       );
     }
 
-    if (ext === ".zip") {
-      const zipText = [
+    if ([".zip", ".rar", ".7z"].includes(ext)) {
+      const archiveText = [
         download.fileName,
         download.targetPath,
         download.sourceUrl,
@@ -967,21 +973,23 @@ async function addBuiltInReviewFindings(analysisId, report) {
         download.pageUrl,
       ].join(" ").toLowerCase();
 
-      const zipTerms = archiveRiskTerms.filter((term) =>
-        zipText.includes(term));
+      const archiveTerms = archiveRiskTerms.filter((term) =>
+        archiveText.includes(term));
 
-      if (zipTerms.length >= 2) {
+      if (archiveTerms.length >= 2) {
         await insertReviewFinding(
           analysisId,
-          "ZIP suspeito baixado e depois não localizado",
+          ext === ".zip"
+            ? "ZIP suspeito baixado e depois não localizado"
+            : "Arquivo compactado suspeito baixado e depois não localizado",
           "high",
           "browser_download",
-          download.targetPath || download.fileName || "ZIP",
+          download.targetPath || download.fileName || "arquivo compactado",
           {
             ...download,
-            matchedTerms: zipTerms,
+            matchedTerms: archiveTerms,
             confidence: "high",
-            note: "ZIP apagado/movido possui combinação forte de termos ligados a cheat/script no nome, caminho ou URL de origem.",
+            note: "Arquivo compactado apagado/movido possui combinação forte de termos ligados a cheat/script no nome, caminho ou URL de origem.",
           }
         );
       }
