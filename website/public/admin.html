@@ -142,14 +142,14 @@
             <button id="closeReportBtn" class="button ghost" type="button">Fechar</button>
           </div>
         </div>
-        <div id="reportMetrics" class="metric-grid"></div>
-        <div id="reportMeta"></div>
-        <section class="report-section severity-overview">
-          <h3>Resumo dos achados</h3>
-          <div id="severityOverview" class="metric-grid"></div>
-        </section>
+        <div id="reportMetrics" class="metric-grid report-summary-grid"></div>
 
-        <details class="report-section severity-group severity-critical" open>
+        <details class="report-section report-meta-details">
+          <summary>Dados da análise</summary>
+          <div id="reportMeta"></div>
+        </details>
+
+        <details class="report-section severity-group severity-critical">
           <summary>
             <span>Críticos / altos</span>
             <span id="criticalCountBadge" class="summary-badge danger">0</span>
@@ -157,7 +157,7 @@
           <div id="criticalFindingsList"></div>
         </details>
 
-        <details class="report-section severity-group severity-medium" open>
+        <details class="report-section severity-group severity-medium">
           <summary>
             <span>Médios / revisar</span>
             <span id="mediumCountBadge" class="summary-badge warning">0</span>
@@ -181,16 +181,22 @@
           <div id="serialDeviceList"></div>
         </details>
 
-        <section class="report-section priority-section">
-          <h3>Arquivos prioritários</h3>
-          <div class="message">Somente arquivos que merecem atenção aparecem aqui: apagados/executados, ZIPs suspeitos, nomes aleatórios e correspondências do catálogo Rust.</div>
+        <details class="report-section priority-section">
+          <summary>
+            <span>Arquivos prioritários</span>
+            <span id="priorityCountBadge" class="summary-badge warning">0</span>
+          </summary>
+          <div class="message">Somente arquivos que merecem atenção aparecem aqui: apagados/executados, ZIP/RAR/7Z suspeitos, nomes aleatórios e correspondências do catálogo Rust.</div>
           <div id="priorityFilesList"></div>
-        </section>
+        </details>
 
-        <section class="report-section">
-          <h3>Pesquisas / sites suspeitos</h3>
+        <details class="report-section">
+          <summary>
+            <span>Pesquisas / sites suspeitos</span>
+            <span id="historyCountBadge" class="summary-badge danger">0</span>
+          </summary>
           <div id="browserHistorySignalsList"></div>
-        </section>
+        </details>
 
         <details class="report-section info-inventory">
           <summary>
@@ -254,6 +260,6 @@
     </section>
   </main>
 
-  <script src="/admin.js?v=20260924-4"></script>
+  <script src="/admin.js?v=20260924-5"></script>
 </body>
 </html>
