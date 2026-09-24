@@ -237,6 +237,7 @@ function aiEvidenceSubset(evidence = {}) {
     originKind: trimAiString(evidence?.originKind, 80),
     discordAttachment: evidence?.discordAttachment,
     officialDiscordUpdate: evidence?.officialDiscordUpdate,
+    originReviewRequested: evidence?.originReviewRequested === true,
     sourceUrl: redactTechnicalValueForAi(evidence?.sourceUrl),
     finalUrl: redactTechnicalValueForAi(evidence?.finalUrl),
     pageUrl: redactTechnicalValueForAi(evidence?.pageUrl),
@@ -4760,6 +4761,48 @@ async function addBuiltInReviewFindings(analysisId, report) {
         ...item,
         confidence: "medium",
         note: "O arquivo possui cabeçalho PE/MZ, mas usa uma extensão normalmente associada a documento, mídia, arquivo compactado ou texto.",
+      }
+    );
+  }
+
+  // Spreadsheet/document downloads with preserved origin are reviewed by AI
+  // using metadata only. The server does not download, scrape or execute them.
+  for (const download of report.browserDownloads || []) {
+    const downloadName = String(
+      download.fileName ||
+      download.targetPath ||
+      download.currentPath ||
+      ""
+    );
+
+    const extension = path.extname(downloadName).toLowerCase();
+    if (![".xls", ".xlsx"].includes(extension))
+      continue;
+
+    const originUrls = [
+      download.sourceUrl,
+      download.finalUrl,
+      download.pageUrl,
+      download.siteUrl,
+      download.referrerUrl,
+      ...(Array.isArray(download.urlChain) ? download.urlChain : [])
+    ].filter(Boolean);
+
+    if (!originUrls.length)
+      continue;
+
+    await insertReviewFinding(
+      analysisId,
+      "Origem de planilha baixada para revisão",
+      "medium",
+      "browser_download",
+      download.targetPath || download.fileName || originUrls[0],
+      {
+        ...download,
+        extension,
+        originReviewRequested: true,
+        confidence: "medium",
+        note: "Planilha com origem de download preservada. O Gemini deve classificar a origem como cheat/script/loader/macro ou software/conteúdo legítimo; a extensão .xls/.xlsx isoladamente não é evidência de cheat."
       }
     );
   }
