@@ -414,6 +414,13 @@ function encodeRawReport(value) {
 }
 
 function decodeStoredRawReport(row) {
+  if (
+    row?.payload &&
+    row.payload?.storageFallback !== true
+  ) {
+    return row.payload;
+  }
+
   if (!row?.payload_raw)
     return row?.payload ?? null;
 
@@ -428,8 +435,9 @@ function decodeStoredRawReport(row) {
         ? gunzipSync(buffer)
         : buffer;
 
-    return JSON.parse(
-      raw.toString("utf8"));
+    return sanitizeJsonForPostgres(
+      JSON.parse(
+        raw.toString("utf8")));
   } catch (error) {
     console.error(
       "Falha ao decodificar payload_raw do relatório:",
