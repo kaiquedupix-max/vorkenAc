@@ -167,7 +167,9 @@ internal static class BrowserHistoryCollector
             .ToList();
     }
 
-    private static List<BrowserHistoryRecord> ReadChromium(HistoryProfile profile)
+    private static List<BrowserHistoryRecord> ReadChromium(
+        HistoryProfile profile,
+        IReadOnlyCollection<string> catalogTerms)
     {
         var result = new List<BrowserHistoryRecord>();
         string? snapshot = CreateSnapshot(profile.DatabasePath);
@@ -239,7 +241,9 @@ internal static class BrowserHistoryCollector
         return result;
     }
 
-    private static List<BrowserHistoryRecord> ReadFirefox(HistoryProfile profile)
+    private static List<BrowserHistoryRecord> ReadFirefox(
+        HistoryProfile profile,
+        IReadOnlyCollection<string> catalogTerms)
     {
         var result = new List<BrowserHistoryRecord>();
         string? snapshot = CreateSnapshot(profile.DatabasePath);
