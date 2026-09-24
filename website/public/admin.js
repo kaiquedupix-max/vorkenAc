@@ -400,6 +400,12 @@ async function openReport(id) {
     drivers: safeArray(payload.drivers),
     startup: safeArray(payload.startup),
     files: safeArray(payload.files),
+    peInspections: safeArray(payload.peInspections),
+    zoneIdentifiers: safeArray(payload.zoneIdentifiers),
+    alternateDataStreams: safeArray(payload.alternateDataStreams),
+    autorunIntegrity: safeArray(payload.autorunIntegrity),
+    processModuleIntegrity: safeArray(payload.processModuleIntegrity),
+    protectedWindows: safeArray(payload.protectedWindows),
     bam: safeArray(payload.bam),
     userAssist: safeArray(payload.userAssist),
     muiCache: safeArray(payload.muiCache),
@@ -408,16 +414,20 @@ async function openReport(id) {
     shimCache: safeArray(payload.shimCache),
     setupApiUsb: safeArray(payload.setupApiUsb),
     powerShellHits: safeArray(payload.powerShellHits),
+    powerShellArtifacts: safeArray(payload.powerShellArtifacts),
     prefetchIntegrity: safeArray(payload.prefetchIntegrity),
     hiddenVolumes: safeArray(payload.hiddenVolumes),
     logClearSignals: safeArray(payload.logClearSignals),
     processCreationEvents: safeArray(payload.processCreationEvents),
     defenderDetections: safeArray(payload.defenderDetections),
     recentShortcuts: safeArray(payload.recentShortcuts),
+    crashArtifacts: safeArray(payload.crashArtifacts),
+    securityProducts: safeArray(payload.securityProducts),
     recycleBin: safeArray(payload.recycleBin),
     browserDownloads: safeArray(payload.browserDownloads),
     browserHistorySignals: safeArray(payload.browserHistorySignals),
     browserRecoveredArtifacts: safeArray(payload.browserRecoveredArtifacts),
+    networkIndicators: safeArray(payload.networkIndicators),
     deletedUsnRecords: safeArray(payload.deletedUsnRecords),
     extensionMismatches: safeArray(payload.extensionMismatches),
     defenderExclusions: safeArray(payload.defenderExclusions),
@@ -426,6 +436,8 @@ async function openReport(id) {
     virtualDisks: safeArray(payload.virtualDisks),
     rustModules: safeArray(payload.rustModules),
     usnJournalState: safeArray(payload.usnJournalState),
+    usnActivity: safeArray(payload.usnActivity),
+    systemIntegrityExpansion: safeArray(payload.systemIntegrityExpansion),
   };
 
   const disconnectedUsb =
@@ -444,6 +456,20 @@ async function openReport(id) {
     disconnectedUsb +
     Number(payload.hardwareSummary?.totalRelevantDevices ?? arrays.serialDevices.length);
 
+  const advancedForensicsCount =
+    arrays.peInspections.length +
+    arrays.zoneIdentifiers.length +
+    arrays.alternateDataStreams.length +
+    arrays.autorunIntegrity.filter((x) => x.suspicious === true).length +
+    arrays.processModuleIntegrity.filter((x) => x.suspicious === true).length +
+    arrays.protectedWindows.length +
+    arrays.powerShellArtifacts.length +
+    arrays.crashArtifacts.length +
+    arrays.securityProducts.length +
+    arrays.networkIndicators.length +
+    arrays.usnActivity.length +
+    arrays.systemIntegrityExpansion.length;
+
   const informationalCount =
     infoFindings.length +
     arrays.files.length +
@@ -458,6 +484,7 @@ async function openReport(id) {
     <div class="metric warning-metric"><small>AMARELO · REVISAR</small><strong>${mediumFindings.length}</strong><span>Clique na seção amarela abaixo</span></div>
     <div class="metric hardware-metric"><small>HARDWARE / USB</small><strong>${hardwareCount}</strong><span>Pendrives e placas separados</span></div>
     <div class="metric priority-metric"><small>ARQUIVOS PRIORITÁRIOS</small><strong id="summaryPriorityCount">0</strong><span>EXE/ZIP/RAR/7Z suspeitos</span></div>
+    <div class="metric"><small>MÓDULOS FORENSES</small><strong>${advancedForensicsCount}</strong><span>PE · USN · rede · PowerShell · WER</span></div>
     <div class="metric info-metric"><small>AZUL · INVENTÁRIO</small><strong>${informationalCount}</strong><span>Oculto até você abrir</span></div>
   `;
 
@@ -613,6 +640,235 @@ async function openReport(id) {
       }).join("")
     : '<div class="message ok">Nenhum EXE/ZIP/RAR/7Z/script apagado foi encontrado no trecho recente do USN Journal.</div>';
 
+  document.getElementById("advancedForensicsCountBadge").textContent =
+    advancedForensicsCount;
+
+  document.getElementById("advancedForensicsSummary").innerHTML = `
+    <div class="metric"><small>PE / PACKERS</small><strong>${arrays.peInspections.length}</strong></div>
+    <div class="metric"><small>ZONE.IDENTIFIER</small><strong>${arrays.zoneIdentifiers.length}</strong></div>
+    <div class="metric"><small>POWERSHELL</small><strong>${arrays.powerShellArtifacts.length}</strong></div>
+    <div class="metric"><small>AUTORUNS SUSPEITOS</small><strong>${arrays.autorunIntegrity.filter((x) => x.suspicious === true).length}</strong></div>
+    <div class="metric"><small>ADS</small><strong>${arrays.alternateDataStreams.length}</strong></div>
+    <div class="metric"><small>DLL / MÓDULOS</small><strong>${arrays.processModuleIntegrity.length}</strong></div>
+    <div class="metric"><small>STREAMPROOF</small><strong>${arrays.protectedWindows.length}</strong></div>
+    <div class="metric"><small>REDE / DNS</small><strong>${arrays.networkIndicators.length}</strong></div>
+    <div class="metric"><small>JOURNALTRACE</small><strong>${arrays.usnActivity.length}</strong></div>
+    <div class="metric"><small>WER / CRASH</small><strong>${arrays.crashArtifacts.length}</strong></div>
+    <div class="metric"><small>ANTIVÍRUS / FIREWALL</small><strong>${arrays.securityProducts.length}</strong></div>
+    <div class="metric"><small>INTEGRIDADE WINDOWS</small><strong>${arrays.systemIntegrityExpansion.length}</strong></div>
+  `;
+
+  const compactJson = (value) =>
+    escapeHtml(JSON.stringify(value, null, 2));
+
+  const advancedGroup = (title, rows, mapper, emptyText = "Nenhum registro.") => `
+    <details class="evidence-details">
+      <summary>${escapeHtml(title)} · ${rows.length}</summary>
+      <div>
+        ${rows.length
+          ? rows.slice(0, 400).map(mapper).join("")
+          : '<div class="message ok">' + escapeHtml(emptyText) + '</div>'}
+      </div>
+    </details>
+  `;
+
+  const advancedHtml = [];
+
+  advancedHtml.push(
+    advancedGroup(
+      "PE / entropia / packers",
+      arrays.peInspections.filter((x) =>
+        x.packedLike === true ||
+        x.highEntropy === true ||
+        x.randomLikeName === true ||
+        safeArray(x.suspiciousApis).length > 0),
+      (item) => `
+        <div class="finding">
+          <div class="finding-head"><h4>${escapeHtml(item.name || "PE")}</h4><span class="tag ${item.randomLikeName ? "critical" : item.packedLike ? "high" : "medium"}">${item.packedLike ? "PACKER" : item.highEntropy ? "ENTROPIA" : "PE"}</span></div>
+          <code>${escapeHtml(item.path || "—")}</code>
+          <div class="kv"><span>Entropia</span><span>${escapeHtml(item.entropy ?? "—")}</span></div>
+          <div class="kv"><span>Assinado</span><span>${item.signed ? "Sim" : "Não"}</span></div>
+          <div class="kv"><span>Packers</span><span>${escapeHtml(safeArray(item.packerIndicators).join(", ") || "—")}</span></div>
+          <div class="kv"><span>APIs</span><span>${escapeHtml(safeArray(item.suspiciousApis).join(", ") || "—")}</span></div>
+        </div>
+      `
+    )
+  );
+
+  advancedHtml.push(
+    advancedGroup(
+      "Origem de arquivos / Zone.Identifier",
+      arrays.zoneIdentifiers.filter((x) => x.hostUrl || x.referrerUrl),
+      (item) => `
+        <div class="finding">
+          <div class="finding-head"><h4>${escapeHtml(item.fileName || "Arquivo")}</h4><span class="tag info">ZONE ${escapeHtml(item.zoneId ?? "—")}</span></div>
+          <code>${escapeHtml(item.path || "—")}</code>
+          <div class="kv"><span>HostUrl</span><span>${escapeHtml(item.hostUrl || "—")}</span></div>
+          <div class="kv"><span>Referrer</span><span>${escapeHtml(item.referrerUrl || "—")}</span></div>
+        </div>
+      `
+    )
+  );
+
+  advancedHtml.push(
+    advancedGroup(
+      "PowerShell / PSReadLine / eventos",
+      arrays.powerShellArtifacts,
+      (item) => `
+        <div class="finding">
+          <div class="finding-head"><h4>${escapeHtml(item.source || "PowerShell")}</h4><span class="tag medium">POWERSHELL</span></div>
+          <code>${escapeHtml(item.command || "—")}</code>
+          <div class="kv"><span>Indicadores</span><span>${escapeHtml(safeArray(item.matchedIndicators).join(", ") || "—")}</span></div>
+          <div class="kv"><span>Data</span><span>${escapeHtml(formatDate(item.timestampUtc))}</span></div>
+        </div>
+      `
+    )
+  );
+
+  advancedHtml.push(
+    advancedGroup(
+      "Autoruns / tarefas agendadas",
+      arrays.autorunIntegrity.filter((x) => x.suspicious === true),
+      (item) => `
+        <div class="finding">
+          <div class="finding-head"><h4>${escapeHtml(item.name || item.source || "Autorun")}</h4><span class="tag ${item.fileExists && !item.signed ? "high" : "medium"}">AUTORUN</span></div>
+          <code>${escapeHtml(item.command || item.executablePath || "—")}</code>
+          <div class="kv"><span>Fonte</span><span>${escapeHtml(item.source || "—")}</span></div>
+          <div class="kv"><span>Assinado</span><span>${item.signed ? "Sim" : "Não"}</span></div>
+        </div>
+      `
+    )
+  );
+
+  advancedHtml.push(
+    advancedGroup(
+      "Alternate Data Streams",
+      arrays.alternateDataStreams,
+      (item) => `
+        <div class="finding">
+          <div class="finding-head"><h4>${escapeHtml(item.streamName || "ADS")}</h4><span class="tag ${item.suspicious ? "high" : "info"}">ADS</span></div>
+          <code>${escapeHtml(item.path || "—")}</code>
+          <div class="kv"><span>Tamanho</span><span>${escapeHtml(item.streamSize ?? 0)} bytes</span></div>
+        </div>
+      `
+    )
+  );
+
+  advancedHtml.push(
+    advancedGroup(
+      "DLLs / módulos em processos críticos",
+      arrays.processModuleIntegrity.filter((x) => x.suspicious === true),
+      (item) => `
+        <div class="finding">
+          <div class="finding-head"><h4>${escapeHtml((item.processName || "processo") + " → " + (item.moduleName || "módulo"))}</h4><span class="tag high">DLL</span></div>
+          <code>${escapeHtml(item.modulePath || "—")}</code>
+          <div class="kv"><span>Assinado</span><span>${item.moduleSigned ? "Sim" : "Não"}</span></div>
+        </div>
+      `
+    )
+  );
+
+  advancedHtml.push(
+    advancedGroup(
+      "Janelas protegidas / streamproof",
+      arrays.protectedWindows,
+      (item) => `
+        <div class="finding">
+          <div class="finding-head"><h4>${escapeHtml(item.processName || "Processo")}</h4><span class="tag ${item.signed ? "medium" : "high"}">CAPTURE EXCLUSION</span></div>
+          <code>${escapeHtml(item.processPath || "—")}</code>
+          <div class="kv"><span>Classe</span><span>${escapeHtml(item.windowClass || "—")}</span></div>
+          <div class="kv"><span>Assinado</span><span>${item.signed ? "Sim" : "Não"}</span></div>
+        </div>
+      `
+    )
+  );
+
+  const networkInteresting = arrays.networkIndicators.filter((x) =>
+    safeArray(x.matchedIndicators).length > 0 ||
+    (x.source === "TCP" && x.processSigned === false && x.processPath)
+  );
+
+  advancedHtml.push(
+    advancedGroup(
+      "Rede / DNS / conexões",
+      networkInteresting,
+      (item) => `
+        <div class="finding">
+          <div class="finding-head"><h4>${escapeHtml(item.domain || item.processName || item.remoteAddress || "Rede")}</h4><span class="tag ${safeArray(item.matchedIndicators).length ? "high" : "medium"}">${escapeHtml(item.source || "REDE")}</span></div>
+          <div class="kv"><span>Processo</span><span>${escapeHtml(item.processPath || item.processName || "—")}</span></div>
+          <div class="kv"><span>Destino</span><span>${escapeHtml(item.domain || ((item.remoteAddress || "—") + ":" + (item.remotePort || "")))}</span></div>
+          <div class="kv"><span>Indicadores</span><span>${escapeHtml(safeArray(item.matchedIndicators).join(", ") || "—")}</span></div>
+        </div>
+      `
+    )
+  );
+
+  const usnInteresting = arrays.usnActivity.filter((x) =>
+    x.deleted === true ||
+    x.underPrefetchDirectory === true ||
+    x.browserDatabase === true ||
+    x.windowsForensicArtifact === true
+  );
+
+  advancedHtml.push(
+    advancedGroup(
+      "JournalTrace / USN",
+      usnInteresting,
+      (item) => `
+        <div class="finding">
+          <div class="finding-head"><h4>${escapeHtml(item.fileName || "USN")}</h4><span class="tag ${item.deleted ? "high" : "info"}">${item.deleted ? "DELETE" : "USN"}</span></div>
+          <div class="kv"><span>Data</span><span>${escapeHtml(formatDate(item.timestampUtc))}</span></div>
+          <div class="kv"><span>Motivos</span><span>${escapeHtml(safeArray(item.reasons).join(", ") || "—")}</span></div>
+          <div class="kv"><span>Volume</span><span>${escapeHtml(item.volume || "—")}</span></div>
+        </div>
+      `
+    )
+  );
+
+  advancedHtml.push(
+    advancedGroup(
+      "Windows Error Reporting / crashes",
+      arrays.crashArtifacts,
+      (item) => `
+        <div class="finding">
+          <div class="finding-head"><h4>${escapeHtml(item.appName || item.eventType || "Crash")}</h4><span class="tag info">WER</span></div>
+          <code>${escapeHtml(item.appPath || item.faultingModulePath || item.artifactPath || "—")}</code>
+          <div class="kv"><span>Data</span><span>${escapeHtml(formatDate(item.timestampUtc))}</span></div>
+        </div>
+      `
+    )
+  );
+
+  advancedHtml.push(
+    advancedGroup(
+      "Antivírus / firewall registrados",
+      arrays.securityProducts,
+      (item) => `
+        <div class="finding">
+          <div class="finding-head"><h4>${escapeHtml(item.displayName || "Produto de segurança")}</h4><span class="tag info">${escapeHtml(item.category || "SECURITY")}</span></div>
+          <div class="kv"><span>Estado</span><span>${escapeHtml(item.productState || "—")}</span></div>
+        </div>
+      `
+    )
+  );
+
+  advancedHtml.push(
+    advancedGroup(
+      "Integridade do Windows / BCD / serviços / SRUM",
+      arrays.systemIntegrityExpansion,
+      (item) => `
+        <div class="finding">
+          <div class="finding-head"><h4>${escapeHtml(item.name || item.kind || "Integridade")}</h4><span class="tag ${["high","critical"].includes(String(item.severityHint || "").toLowerCase()) ? "high" : String(item.severityHint || "").toLowerCase() === "medium" ? "medium" : "info"}">${escapeHtml(String(item.kind || "INTEGRITY").toUpperCase())}</span></div>
+          <code>${escapeHtml(item.detail || "—")}</code>
+          <div class="kv"><span>Data</span><span>${escapeHtml(formatDate(item.timestampUtc))}</span></div>
+        </div>
+      `
+    )
+  );
+
+  document.getElementById("advancedForensicsList").innerHTML =
+    advancedHtml.join("");
+
   document.getElementById("artifactSummary").innerHTML = `
     <div class="kv"><span>USB conectados</span><span>${arrays.usbCurrent.length}</span></div>
     <div class="kv"><span>USB no histórico</span><span>${arrays.usbHistory.length} (${disconnectedUsb} desconectados)</span></div>
@@ -622,7 +878,13 @@ async function openReport(id) {
     <div class="kv"><span>MAKCU / Moku</span><span>${payload.hardwareSummary?.makcuCount ?? 0}</span></div>
     <div class="kv"><span>Execuções Prefetch</span><span>${arrays.prefetchExecutions.length}</span></div>
     <div class="kv"><span>Arquivos analisados</span><span>${arrays.files.length}</span></div>
+    <div class="kv"><span>PE / packers</span><span>${arrays.peInspections.length}</span></div>
+    <div class="kv"><span>Zone.Identifier</span><span>${arrays.zoneIdentifiers.length}</span></div>
+    <div class="kv"><span>ADS</span><span>${arrays.alternateDataStreams.length}</span></div>
+    <div class="kv"><span>Autoruns avançados</span><span>${arrays.autorunIntegrity.length}</span></div>
     <div class="kv"><span>Processos</span><span>${arrays.processes.length}</span></div>
+    <div class="kv"><span>Módulos em processos críticos</span><span>${arrays.processModuleIntegrity.length}</span></div>
+    <div class="kv"><span>Janelas excluídas de captura</span><span>${arrays.protectedWindows.length}</span></div>
     <div class="kv"><span>Prefetch</span><span>${arrays.prefetch.length}</span></div>
     <div class="kv"><span>Serviços</span><span>${arrays.services.length}</span></div>
     <div class="kv"><span>Drivers</span><span>${arrays.drivers.length}</span></div>
@@ -635,17 +897,23 @@ async function openReport(id) {
     <div class="kv"><span>ShimCache</span><span>${arrays.shimCache.length}</span></div>
     <div class="kv"><span>SetupAPI USB</span><span>${arrays.setupApiUsb.length}</span></div>
     <div class="kv"><span>PowerShell por regra</span><span>${arrays.powerShellHits.length}</span></div>
+    <div class="kv"><span>PowerShell avançado</span><span>${arrays.powerShellArtifacts.length}</span></div>
     <div class="kv"><span>Anomalias Prefetch</span><span>${arrays.prefetchIntegrity.length}</span></div>
     <div class="kv"><span>Volumes sem letra</span><span>${arrays.hiddenVolumes.length}</span></div>
     <div class="kv"><span>Limpezas de log (24h)</span><span>${arrays.logClearSignals.length}</span></div>
     <div class="kv"><span>Processos históricos (4688)</span><span>${arrays.processCreationEvents.length}</span></div>
     <div class="kv"><span>Defender</span><span>${arrays.defenderDetections.length} detecções · ${arrays.defenderExclusions.length} exclusões</span></div>
     <div class="kv"><span>Atalhos recentes</span><span>${arrays.recentShortcuts.length}</span></div>
+    <div class="kv"><span>WER / crashes</span><span>${arrays.crashArtifacts.length}</span></div>
+    <div class="kv"><span>Produtos de segurança</span><span>${arrays.securityProducts.length}</span></div>
     <div class="kv"><span>Downloads no histórico</span><span>${arrays.browserDownloads.length}</span></div>
     <div class="kv"><span>Downloads não localizados</span><span>${arrays.browserDownloads.filter((x) => x.fileMissing === true).length}</span></div>
     <div class="kv"><span>Histórico suspeito do navegador</span><span>${arrays.browserHistorySignals.length}</span></div>
     <div class="kv"><span>Vestígios de histórico apagado</span><span>${arrays.browserRecoveredArtifacts.length}</span></div>
     <div class="kv"><span>Arquivos apagados no USN</span><span>${arrays.deletedUsnRecords.length}</span></div>
+    <div class="kv"><span>JournalTrace / USN</span><span>${arrays.usnActivity.length}</span></div>
+    <div class="kv"><span>Rede / DNS</span><span>${arrays.networkIndicators.length}</span></div>
+    <div class="kv"><span>Integridade Windows ampliada</span><span>${arrays.systemIntegrityExpansion.length}</span></div>
     <div class="kv"><span>Lixeira</span><span>${arrays.recycleBin.length}</span></div>
     <div class="kv"><span>Ambiente virtual</span><span>${payload.vmEnvironment?.isVirtualMachine ? escapeHtml(payload.vmEnvironment?.detectedPlatform || "Sim") : "Não detectado"}</span></div>
     <div class="kv"><span>Extensões modificadas</span><span>${arrays.extensionMismatches.length}</span></div>
