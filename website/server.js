@@ -1997,6 +1997,58 @@ async function initDb() {
     ALTER TABLE analyses
       ADD COLUMN IF NOT EXISTS client_report_released BOOLEAN NOT NULL DEFAULT FALSE;
 
+    ALTER TABLE analyses
+      ADD COLUMN IF NOT EXISTS external_source TEXT NULL;
+
+    ALTER TABLE analyses
+      ADD COLUMN IF NOT EXISTS external_player_id TEXT NULL;
+
+    ALTER TABLE analyses
+      ADD COLUMN IF NOT EXISTS external_discord_user_id TEXT NULL;
+
+    ALTER TABLE analyses
+      ADD COLUMN IF NOT EXISTS external_ticket_channel_id TEXT NULL;
+
+    ALTER TABLE analyses
+      ADD COLUMN IF NOT EXISTS external_verification_code TEXT NULL;
+
+    CREATE TABLE IF NOT EXISTS guerra_fria_verifications (
+      id BIGSERIAL PRIMARY KEY,
+      verification_code TEXT NOT NULL UNIQUE,
+      steam_id TEXT NOT NULL,
+      player_name TEXT NOT NULL,
+      administrator_id TEXT NULL,
+      discord_user_id TEXT NULL,
+      ticket_channel_id TEXT NULL,
+      analysis_id BIGINT NULL REFERENCES analyses(id) ON DELETE SET NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      expires_at TIMESTAMPTZ NOT NULL,
+      redeemed_at TIMESTAMPTZ NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS guerra_fria_actions (
+      id BIGSERIAL PRIMARY KEY,
+      analysis_id BIGINT NOT NULL REFERENCES analyses(id) ON DELETE CASCADE,
+      steam_id TEXT NOT NULL,
+      discord_user_id TEXT NULL,
+      ticket_channel_id TEXT NULL,
+      action TEXT NOT NULL,
+      reason TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'pending',
+      result TEXT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      claimed_at TIMESTAMPTZ NULL,
+      processed_at TIMESTAMPTZ NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_gf_verification_code
+      ON guerra_fria_verifications(verification_code, status);
+
+    CREATE INDEX IF NOT EXISTS idx_gf_actions_status
+      ON guerra_fria_actions(status, id);
+
     UPDATE analyses
     SET
       processing_stage = CASE
@@ -5274,6 +5326,11 @@ app.get("/api/admin/analyses", requireAdmin, async (_req, res) => {
       a.processing_stage,
       a.processing_message,
       a.client_report_released,
+      a.external_source,
+      a.external_player_id,
+      a.external_discord_user_id,
+      a.external_ticket_channel_id,
+      a.external_verification_code,
       COALESCE(f.total_findings, 0)::int AS total_findings,
       COALESCE(f.high_findings, 0)::int AS high_findings
     FROM analyses a
@@ -5357,7 +5414,12 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
        machine_fingerprint,
        processing_stage,
        processing_message,
-       client_report_released
+       client_report_released,
+       external_source,
+       external_player_id,
+       external_discord_user_id,
+       external_ticket_channel_id,
+       external_verification_code
      FROM analyses
      WHERE id = $1
      LIMIT 1`,
