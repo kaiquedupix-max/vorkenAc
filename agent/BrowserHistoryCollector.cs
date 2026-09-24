@@ -31,6 +31,49 @@ internal static class BrowserHistoryCollector
         "rust injector"
     };
 
+    private static readonly string[] KnownRustCheatBrands =
+    {
+        "lethality rust",
+        "lethality script",
+        "lethality club",
+        "revolex",
+        "revolex script",
+        "purge recoil",
+        "purge rust",
+        "zaza cheats",
+        "zaza private",
+        "slayer rust",
+        "slayer private",
+        "disconnect cheats",
+        "beazt private",
+        "beazt rust",
+        "agera rust",
+        "pure dma rust",
+        "lordcheat",
+        "aimsync rust",
+        "rust smartai",
+        "nowax cheats",
+        "fcheats rust",
+        "memez macros",
+        "memez internalx",
+        "memez external",
+        "gamevantage rust",
+        "blastaim rust",
+        "auroracheats",
+        "aegis rust cheat",
+        "mirage rust external",
+        "the darkest magic",
+        "moonlight rust",
+        "moonlight script",
+        "poak rust",
+        "poak script",
+        "revelx",
+        "revelx rust",
+        "aimmy rust",
+        "kosmos aimbot",
+        "synthar aimbot"
+    };
+
     private static readonly string[] ContextTerms =
     {
         "cheat",
@@ -290,6 +333,16 @@ internal static class BrowserHistoryCollector
                 matches.Add(term);
         }
 
+        bool knownBrand =
+            KnownRustCheatBrands.Any(term =>
+            {
+                if (!combined.Contains(term, StringComparison.OrdinalIgnoreCase))
+                    return false;
+
+                matches.Add(term);
+                return true;
+            });
+
         bool hasGameTerm =
             GameTerms.Any(term =>
                 combined.Contains(term, StringComparison.OrdinalIgnoreCase));
@@ -314,6 +367,7 @@ internal static class BrowserHistoryCollector
             return null;
 
         bool strong =
+            knownBrand ||
             StrongPhrases.Any(phrase => matches.Contains(phrase));
 
         bool suspiciousSearch =
@@ -335,6 +389,7 @@ internal static class BrowserHistoryCollector
         int score = 0;
 
         if (strong) score += 3;
+        if (knownBrand) score += 3;
         if (hostOrUrlCheatSignal) score += 2;
         if (hasGameTerm) score += 1;
         if (suspiciousSearch) score += 2;
@@ -347,9 +402,11 @@ internal static class BrowserHistoryCollector
             "low";
 
         string reason =
-            suspiciousSearch
-                ? "Pesquisa/consulta relacionada a cheat/script/hack"
-                : hostOrUrlCheatSignal
+            knownBrand
+                ? "Nome conhecido de software/comunidade de cheat/script para Rust"
+                : suspiciousSearch
+                    ? "Pesquisa/consulta relacionada a cheat/script/hack"
+                    : hostOrUrlCheatSignal
                     ? "Site/URL com indicador explícito de cheat/hack"
                     : "Página relacionada a termos de cheat/script para Rust";
 
