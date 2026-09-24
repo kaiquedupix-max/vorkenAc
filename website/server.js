@@ -123,7 +123,7 @@ const aiReviewConfig = {
   enabled:
     String(process.env.AI_REVIEW_ENABLED || "true").toLowerCase() !== "false",
   apiKey:
-    String(process.env.GEMINI_API_KEY || process.env.AI_API_KEY || "").trim(),
+    String(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "").trim(),
   baseUrl:
     String(
       process.env.GEMINI_BASE_URL ||
@@ -132,7 +132,6 @@ const aiReviewConfig = {
   model:
     String(
       process.env.GEMINI_MODEL ||
-      process.env.AI_MODEL ||
       "gemini-3.5-flash-lite"
     ).trim(),
   timeoutMs:
