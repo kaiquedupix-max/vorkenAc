@@ -32,7 +32,7 @@ internal static class UsnActivityCollector
             new[]
             {
                 ".exe", ".com", ".scr", ".dll", ".sys", ".msi",
-                ".bat", ".cmd", ".ps1", ".zip", ".rar", ".7z",
+                ".bat", ".cmd", ".zip", ".rar", ".7z",
                 ".pf", ".evtx", ".db", ".dat", ".hve", ".lnk"
             },
             StringComparer.OrdinalIgnoreCase);

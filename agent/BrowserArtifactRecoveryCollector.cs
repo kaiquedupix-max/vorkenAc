@@ -324,12 +324,8 @@ internal static class BrowserArtifactRecoveryCollector
                 entry.Aliases.Any(value =>
                 {
                     string needle = StringValue(value);
-                    if (needle.Length < 5)
-                        return false;
-
-                    return haystack.Contains(
-                        needle,
-                        StringComparison.OrdinalIgnoreCase);
+                    return IsDistinctiveCatalogAlias(needle) &&
+                           ContainsNeedle(haystack, needle);
                 });
 
             if (matched)
@@ -342,15 +338,63 @@ internal static class BrowserArtifactRecoveryCollector
         return result;
     }
 
+    private static bool IsDistinctiveCatalogAlias(string value)
+    {
+        string alias = StringValue(value);
+
+        if (alias.Length >= 7)
+            return true;
+
+        return
+            alias.Contains("rust") ||
+            alias.Contains("cheat") ||
+            alias.Contains("script") ||
+            alias.Contains("aimbot") ||
+            alias.Contains("recoil") ||
+            alias.Contains("loader") ||
+            alias.Contains("private") ||
+            alias.Contains("dma") ||
+            alias.Contains("external") ||
+            alias.Contains("internal");
+    }
+
     private static bool ContainsNeedle(
         string haystack,
         string? value)
     {
         string needle = StringValue(value);
-        return needle.Length >= 4 &&
-               haystack.Contains(
-                   needle,
-                   StringComparison.OrdinalIgnoreCase);
+        if (needle.Length < 4)
+            return false;
+
+        int start = 0;
+
+        while (start <= haystack.Length - needle.Length)
+        {
+            int index = haystack.IndexOf(
+                needle,
+                start,
+                StringComparison.OrdinalIgnoreCase);
+
+            if (index < 0)
+                return false;
+
+            int end = index + needle.Length;
+
+            bool leftOk =
+                index == 0 ||
+                !char.IsLetterOrDigit(haystack[index - 1]);
+
+            bool rightOk =
+                end == haystack.Length ||
+                !char.IsLetterOrDigit(haystack[end]);
+
+            if (leftOk && rightOk)
+                return true;
+
+            start = index + 1;
+        }
+
+        return false;
     }
 
     private static string StringValue(string? value) =>
