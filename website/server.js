@@ -2051,6 +2051,36 @@ async function addBuiltInReviewFindings(analysisId, report) {
     }
   }
 
+  // Embedded signer exists but WinVerifyTrust did not accept the
+  // Authenticode chain. This catches self-signed/untrusted/fake-signature style cases.
+  for (const item of report.files || []) {
+    if (
+      item.signed === true ||
+      !String(item.signerSubject || "").trim()
+    ) {
+      continue;
+    }
+
+    const severity =
+      looksRandomExecutableName(item.name || item.path) ||
+      isSuspiciousUserPath(item.path)
+        ? "high"
+        : "medium";
+
+    await insertReviewFinding(
+      analysisId,
+      "Assinatura digital presente porém não confiável",
+      severity,
+      "file",
+      item.path || item.name || "arquivo",
+      {
+        ...item,
+        confidence: "medium",
+        note: "O arquivo contém certificado/assinante embutido, porém a validação WinVerifyTrust não aceitou a assinatura como confiável."
+      }
+    );
+  }
+
   // Known applications are trusted only when their signature and/or
   // download source matches the official vendor catalog. A familiar filename
   // by itself is never enough to suppress a finding.
