@@ -8,6 +8,7 @@
     <RootNamespace>Vorken.Agent</RootNamespace>
     <Version>0.4.2</Version>
     <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <SelfContained>true</SelfContained>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <ApplicationManifest>app.manifest</ApplicationManifest>
@@ -15,6 +16,7 @@
 
   <ItemGroup>
     <PackageReference Include="System.Management" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.8" />
     <PackageReference Include="Prefetch" Version="2026.5.2" />
     <PackageReference Include="Amcache" Version="2026.5.3" />
     <PackageReference Include="AppCompatCache" Version="1.2.4" />
