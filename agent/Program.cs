@@ -1075,6 +1075,16 @@ internal static class Program
                 return true;
             }
 
+            if (stem.Length >= 8 &&
+                stem.Length <= 18 &&
+                digits == 0 &&
+                letters == stem.Length &&
+                distinct >= 7 &&
+                vowelRatio <= 0.22)
+            {
+                return true;
+            }
+
             if (stem.Length >= 10 &&
                 letters >= 6 &&
                 digits >= 2 &&
