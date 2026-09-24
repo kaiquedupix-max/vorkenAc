@@ -1,5 +1,5 @@
 {
-  "version": "2026-09-24.4",
+  "version": "2026-09-24.5",
   "notes": "Catálogo defensivo de nomes/domínios publicamente associados a cheats/scripts/spoofers de Rust. Nomes genéricos usam aliases com contexto de Rust/cheat para reduzir falso positivo; correspondência isolada nunca substitui revisão.",
   "brands": [
     {
@@ -282,7 +282,7 @@
         "computer vision aimbot"
       ],
       "domains": [],
-      "severity": "high",
+      "severity": "critical",
       "source": "public_web",
       "discordInvites": []
     },
