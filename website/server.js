@@ -24,6 +24,29 @@ const pool = new Pool({
 const ADMIN_COOKIE = "vorken_admin";
 const ADMIN_SESSION_MS = 12 * 60 * 60 * 1000;
 
+const rustThreatCatalogPath = path.join(
+  __dirname,
+  "data",
+  "rust-threat-catalog.json"
+);
+
+function loadRustThreatCatalog() {
+  try {
+    const payload = JSON.parse(
+      fs.readFileSync(rustThreatCatalogPath, "utf8")
+    );
+
+    return Array.isArray(payload?.brands)
+      ? payload.brands
+      : [];
+  } catch (error) {
+    console.error("Falha ao carregar catálogo Rust:", error.message);
+    return [];
+  }
+}
+
+const rustThreatCatalog = loadRustThreatCatalog();
+
 app.disable("x-powered-by");
 app.use(express.json({ limit: "24mb" }));
 app.use(express.urlencoded({ extended: false }));
@@ -97,6 +120,109 @@ function normalizeSeverity(value) {
 
 function cleanText(value, max = 250) {
   return String(value || "").trim().slice(0, max);
+}
+
+function looksRandomExecutableName(value) {
+  const name = path.basename(String(value || ""));
+  const stem = path.basename(name, path.extname(name));
+
+  if (stem.length < 7 || stem.length > 28) return false;
+  if (!/^[a-z0-9]+$/i.test(stem)) return false;
+
+  const letters = [...stem].filter((ch) => /[a-z]/i.test(ch));
+  const digits = [...stem].filter((ch) => /[0-9]/.test(ch));
+  const vowels = letters.filter((ch) => /[aeiou]/i.test(ch));
+  const distinct = new Set(stem.toUpperCase()).size;
+  const allUpperOrDigits = /^[A-Z0-9]+$/.test(stem);
+  const vowelRatio = letters.length ? vowels.length / letters.length : 0;
+
+  if (
+    allUpperOrDigits &&
+    letters.length >= 6 &&
+    distinct >= Math.min(6, stem.length - 1) &&
+    vowelRatio <= 0.35
+  ) {
+    return true;
+  }
+
+  return (
+    stem.length >= 10 &&
+    letters.length >= 6 &&
+    digits.length >= 2 &&
+    distinct >= 8
+  );
+}
+
+function findRustCatalogMatches(...values) {
+  const haystack = values
+    .flat(Infinity)
+    .filter((value) => value !== null && value !== undefined)
+    .map((value) =>
+      typeof value === "string"
+        ? value
+        : JSON.stringify(value)
+    )
+    .join(" ")
+    .toLowerCase();
+
+  if (!haystack) return [];
+
+  const matches = [];
+
+  for (const brand of rustThreatCatalog) {
+    let matchedBy = "";
+
+    for (const domain of brand.domains || []) {
+      const needle = String(domain || "").toLowerCase();
+      if (needle && haystack.includes(needle)) {
+        matchedBy = "domain:" + domain;
+        break;
+      }
+    }
+
+    if (!matchedBy) {
+      for (const invite of brand.discordInvites || []) {
+        const needle = String(invite || "").toLowerCase();
+        if (
+          needle &&
+          (
+            haystack.includes("discord.gg/" + needle) ||
+            haystack.includes("discord.com/invite/" + needle) ||
+            haystack.includes("discord.me/" + needle)
+          )
+        ) {
+          matchedBy = "discord:" + invite;
+          break;
+        }
+      }
+    }
+
+    if (!matchedBy) {
+      for (const alias of brand.aliases || []) {
+        const needle = String(alias || "").toLowerCase().trim();
+        if (!needle || !haystack.includes(needle)) continue;
+
+        const distinctive =
+          needle.length >= 7 ||
+          /rust|cheat|script|aimbot|recoil|loader|private|dma|external|internal/.test(needle);
+
+        if (!distinctive) continue;
+
+        matchedBy = "alias:" + alias;
+        break;
+      }
+    }
+
+    if (matchedBy) {
+      matches.push({
+        name: brand.name,
+        severity: normalizeSeverity(brand.severity || "high"),
+        matchedBy,
+      });
+    }
+  }
+
+  return matches;
 }
 
 async function initDb() {
