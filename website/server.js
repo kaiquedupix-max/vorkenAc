@@ -316,6 +316,14 @@ function flattenArtifacts(report) {
     );
   }
 
+  for (const item of report.browserHistorySignals || []) {
+    push(
+      "browser_history",
+      item.searchQuery || item.url || item.title || item.host,
+      item
+    );
+  }
+
   for (const item of report.recycleBin || []) {
     push(
       "recycle_bin",
@@ -455,6 +463,16 @@ function matchesRule(rule, artifact) {
           evidence.fileName,
           evidence.targetPath,
           evidence.currentPath,
+        ].some((value) =>
+          String(value || "").toLowerCase().includes(pattern));
+    case "browser_history_contains":
+      return artifact.type === "browser_history" &&
+        [
+          evidence.url,
+          evidence.host,
+          evidence.title,
+          evidence.searchQuery,
+          ...(Array.isArray(evidence.matchedTerms) ? evidence.matchedTerms : []),
         ].some((value) =>
           String(value || "").toLowerCase().includes(pattern));
     case "recycle_name_contains":
@@ -893,6 +911,34 @@ async function addBuiltInReviewFindings(analysisId, report) {
     );
   }
 
+  // The agent only sends browser-history rows that matched the
+  // anti-cheat vocabulary. Keep low-score rows as context and create
+  // automatic findings only for medium/high confidence matches.
+  for (const item of report.browserHistorySignals || []) {
+    const risk = String(item.riskLevel || "").toLowerCase();
+    if (!["medium", "high"].includes(risk))
+      continue;
+
+    const isSearch = Boolean(String(item.searchQuery || "").trim());
+
+    await insertReviewFinding(
+      analysisId,
+      isSearch
+        ? "Pesquisa no navegador relacionada a cheat/script/hack"
+        : "Site relacionado a cheat/script/hack",
+      risk === "high" ? "high" : "medium",
+      "browser_history",
+      item.searchQuery || item.url || item.host || "Histórico do navegador",
+      {
+        ...item,
+        confidence: risk,
+        note: isSearch
+          ? "A consulta foi preservada no histórico do navegador e bateu em termos relacionados a cheat/hack/script com contexto do jogo."
+          : "A URL/título preservado no histórico bateu em termos relacionados a cheat/hack/script. Revise o domínio e o contexto antes de qualquer decisão.",
+      }
+    );
+  }
+
   // Defender history is useful evidence, but still requires human review.
   for (const item of report.defenderDetections || []) {
     if (!item.threatName && !item.path) continue;
@@ -1235,6 +1281,7 @@ app.post("/api/admin/rules", requireAdmin, async (req, res) => {
     "recent_link_contains",
     "download_url_contains",
     "download_name_contains",
+    "browser_history_contains",
     "recycle_name_contains",
     "rust_module_contains",
     "defender_history_contains",
