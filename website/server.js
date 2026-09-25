@@ -697,338 +697,64 @@ async function querySteamOfficialBatch(steamIds) {
   return byId;
 }
 
-function steamIdSnapshotBanned(item) {
-  const economy =
-    String(item?.economyBan || "none")
-      .toLowerCase();
 
-  return (
-    item?.communityBanned === true ||
-    item?.vacBanned === true ||
-    Number(item?.numberOfVACBans || 0) > 0 ||
-    Number(item?.numberOfGameBans || 0) > 0 ||
-    (economy && economy !== "none")
-  );
-}
-
-async function querySteamIdComProvider(steamId) {
-  const token =
-    String(
-      process.env.STEAMID_API_TOKEN ||
-      process.env.STEAMID_API_KEY ||
-      ""
-    ).trim();
-
-  if (!token) {
-    return externalProviderUnavailable(
-      "steamid.com",
-      "STEAMID_API_TOKEN não configurado."
-    );
-  }
-
-  const url =
-    "https://steamidapi.com/api/v1/players/" +
-    encodeURIComponent(steamId) +
-    "/bans?limit=100&includeHistory=true&maxWaitSeconds=15";
-
-  const response =
-    await fetchExternalJson(
-      url,
-      {
-        headers: {
-          authorization: "Bearer " + token,
-        },
-      },
-      20000
-    );
-
-  if (!response.ok) {
-    if (response.status === 404) {
-      return {
-        source: "steamid.com",
-        status: "ok",
-        banned: false,
-        rustSpecific: false,
-        playerFound: false,
-        history: [],
-      };
-    }
-
-    return externalProviderUnavailable(
-      "steamid.com",
-      "SteamID.com respondeu HTTP " +
-        String(response.status || 0) +
-        "."
-    );
-  }
-
-  const history =
-    safeArray(response.payload?.data)
-      .map((item) => ({
-        timestamp: cleanText(item?.timestamp, 80) || null,
-        communityBanned: item?.communityBanned === true,
-        vacBanned: item?.vacBanned === true,
-        numberOfVACBans: Number(item?.numberOfVACBans || 0),
-        numberOfGameBans: Number(item?.numberOfGameBans || 0),
-        economyBan: cleanText(item?.economyBan || "none", 80),
-        lastBanDaysAgo: Number(item?.lastBanDaysAgo || 0),
-        banned: steamIdSnapshotBanned(item),
-      }))
-      .sort((a, b) =>
-        new Date(b.timestamp || 0).getTime() -
-        new Date(a.timestamp || 0).getTime()
-      )
-      .slice(0, 100);
-
-  return {
-    source: "steamid.com",
-    status: "ok",
-    banned: history.some((item) => item.banned === true),
-    rustSpecific: false,
-    playerFound: true,
-    cached: response.status === 203,
-    history,
-    links: {
-      steamCommunity:
-        cleanText(
-          response.payload?.links?.steamCommunity,
-          400
-        ),
-      steamId:
-        cleanText(
-          response.payload?.links?.steamId,
-          400
-        ),
-    },
-  };
-}
-
-async function queryBattleMetricsProvider(steamId) {
-  const token =
-    String(process.env.BATTLEMETRICS_TOKEN || "").trim();
-
-  if (!token) {
-    return externalProviderUnavailable(
-      "battlemetrics",
-      "BATTLEMETRICS_TOKEN não configurado."
-    );
-  }
-
-  const headers = {
-    authorization: "Bearer " + token,
-    "content-type": "application/json",
-  };
-
-  const matchResponse =
-    await fetchExternalJson(
-      "https://api.battlemetrics.com/players/match",
-      {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          data: [
-            {
-              type: "identifier",
-              attributes: {
-                type: "steamID",
-                identifier: steamId,
-              },
-            },
-          ],
-        }),
-      },
-      12000
-    );
-
-  if (!matchResponse.ok) {
-    return externalProviderUnavailable(
-      "battlemetrics",
-      "BattleMetrics não autorizou a busca do jogador (HTTP " +
-        String(matchResponse.status || 0) +
-        ")."
-    );
-  }
-
-  const players =
-    Array.isArray(matchResponse.payload?.data)
-      ? matchResponse.payload.data
-      : matchResponse.payload?.data
-        ? [matchResponse.payload.data]
-        : [];
-
-  const player = players[0];
-
-  if (!player?.id) {
+function buildSteamBanAssessment(steam) {
+  if (!steam || steam.status !== "ok") {
     return {
-      source: "battlemetrics",
-      status: "ok",
-      banned: false,
+      strategy: "steam_only",
+      totalSources: 1,
+      availableSources: [],
+      unavailableSources: ["steam"],
+      positiveSources: [],
+      negativeSources: [],
+      rustSpecificSources: [],
+      positiveVotes: 0,
+      availableVotes: 0,
+      score: null,
+      banDetected: false,
+      corroborated: false,
       rustSpecific: false,
-      playerFound: false,
-      bans: [],
+      code: "source_unavailable",
+      label: "A API da Steam está indisponível ou não foi configurada.",
     };
   }
 
-  const playerId =
-    String(player.id);
-
-  let bansResponse =
-    await fetchExternalJson(
-      "https://api.battlemetrics.com/bans?filter[player]=" +
-        encodeURIComponent(playerId) +
-        "&include=banList,server&page[size]=100",
-      {
-        headers: {
-          authorization: "Bearer " + token,
-        },
-      },
-      12000
-    );
-
-  if (!bansResponse.ok) {
-    bansResponse =
-      await fetchExternalJson(
-        "https://api.battlemetrics.com/bans?filter[search]=" +
-          encodeURIComponent(steamId) +
-          "&include=banList,server&page[size]=100",
-        {
-          headers: {
-            authorization: "Bearer " + token,
-          },
-        },
-        12000
-      );
-  }
-
-  if (!bansResponse.ok) {
-    return externalProviderUnavailable(
-      "battlemetrics",
-      "Jogador localizado, mas a lista de bans não pôde ser consultada (HTTP " +
-        String(bansResponse.status || 0) +
-        ")."
-    );
-  }
-
-  const bans =
-    safeArray(bansResponse.payload?.data)
-      .slice(0, 100)
-      .map((ban) => {
-        const attributes =
-          ban?.attributes || {};
-
-        const expires =
-          cleanText(attributes.expires, 80) ||
-          null;
-
-        const expiresAt =
-          expires
-            ? new Date(expires).getTime()
-            : null;
-
-        const expiredByDate =
-          Number.isFinite(expiresAt) &&
-          expiresAt < Date.now();
-
-        return {
-          id: cleanText(ban?.id, 120),
-          uid: cleanText(attributes.uid, 180),
-          reason: cleanText(attributes.reason, 500),
-          note: cleanText(attributes.note, 500),
-          timestamp: cleanText(attributes.timestamp, 80) || null,
-          expires,
-          expired:
-            attributes.expired === true ||
-            expiredByDate === true,
-        };
-      });
-
-  return {
-    source: "battlemetrics",
-    status: "ok",
-    banned: bans.length > 0,
-    rustSpecific: false,
-    playerFound: true,
-    playerId,
-    playerName:
-      cleanText(
-        player?.attributes?.name,
-        160
-      ),
-    activeBan:
-      bans.some((ban) => ban.expired !== true),
-    bans,
-  };
-}
-
-function buildEqualWeightBanConsensus(providers) {
-  const entries =
-    Object.values(providers || {});
-
-  const available =
-    entries.filter((item) =>
-      item?.status === "ok");
-
-  const positive =
-    available.filter((item) =>
-      item?.banned === true);
-
-  const negative =
-    available.filter((item) =>
-      item?.banned === false);
+  const banned =
+    steam.banned === true;
 
   const rustSpecific =
-    positive.filter((item) =>
-      item?.rustSpecific === true);
-
-  let code = "no_sources";
-  let label =
-    "Nenhuma fonte disponível para consulta.";
-
-  if (available.length > 0 && positive.length === 0) {
-    code = "no_known_ban";
-    label =
-      "Nenhuma das fontes disponíveis encontrou histórico de ban.";
-  } else if (positive.length === 1) {
-    code = "single_source";
-    label =
-      "Uma fonte encontrou histórico de ban; requer revisão.";
-  } else if (positive.length >= 2) {
-    code = "multi_source";
-    label =
-      "Histórico de ban corroborado por múltiplas fontes.";
-  }
+    banned &&
+    steam.rustSpecific === true;
 
   return {
-    strategy: "equal_weight",
-    weightPerSource: 1,
-    totalSources: 3,
-    availableSources:
-      available.map((item) => item.source),
-    unavailableSources:
-      entries
-        .filter((item) =>
-          item?.status !== "ok")
-        .map((item) => item?.source)
-        .filter(Boolean),
+    strategy: "steam_only",
+    totalSources: 1,
+    availableSources: ["steam"],
+    unavailableSources: [],
     positiveSources:
-      positive.map((item) => item.source),
+      banned ? ["steam"] : [],
     negativeSources:
-      negative.map((item) => item.source),
+      banned ? [] : ["steam"],
     rustSpecificSources:
-      rustSpecific.map((item) => item.source),
-    positiveVotes: positive.length,
-    availableVotes: available.length,
+      rustSpecific ? ["steam"] : [],
+    positiveVotes:
+      banned ? 1 : 0,
+    availableVotes: 1,
     score:
-      available.length > 0
-        ? positive.length / available.length
-        : null,
-    banDetected: positive.length > 0,
-    corroborated:
-      positive.length >= 2,
-    rustSpecific:
-      rustSpecific.length > 0,
-    code,
-    label,
+      banned ? 1 : 0,
+    banDetected: banned,
+    corroborated: false,
+    rustSpecific,
+    code:
+      banned
+        ? "ban_detected"
+        : "no_known_ban",
+    label:
+      rustSpecific
+        ? "A Steam retornou ban com evidência relacionada ao Rust."
+        : banned
+          ? "A Steam retornou histórico de ban para esta conta."
+          : "A Steam não retornou ban conhecido para esta conta.",
   };
 }
 
@@ -1065,48 +791,6 @@ async function enrichSteamAccountReport(
     await querySteamOfficialBatch(
       steamIds);
 
-  const secondaryById =
-    new Map();
-
-  let nextAccountIndex = 0;
-
-  const secondaryWorker = async () => {
-    while (nextAccountIndex < rawAccounts.length) {
-      const index =
-        nextAccountIndex++;
-
-      const steamId =
-        String(
-          rawAccounts[index]?.steamId64 || "");
-
-      const secondary =
-        await Promise.all([
-          querySteamIdComProvider(steamId),
-          queryBattleMetricsProvider(steamId),
-        ]);
-
-      secondaryById.set(
-        steamId,
-        secondary);
-    }
-  };
-
-  const workerCount =
-    Math.max(
-      1,
-      Math.min(
-        4,
-        rawAccounts.length
-      )
-    );
-
-  await Promise.all(
-    Array.from(
-      { length: workerCount },
-      () => secondaryWorker()
-    )
-  );
-
   const enriched = [];
 
   for (const raw of rawAccounts) {
@@ -1120,29 +804,13 @@ async function enrichSteamAccountReport(
         "Steam não retornou esta conta."
       );
 
-    const secondary =
-      secondaryById.get(steamId) || [
-        externalProviderUnavailable(
-          "steamid.com",
-          "Consulta não executada."
-        ),
-        externalProviderUnavailable(
-          "battlemetrics",
-          "Consulta não executada."
-        ),
-      ];
-
     const providers = {
       steam,
-      steamId:
-        secondary[0],
-      battleMetrics:
-        secondary[1],
     };
 
     const consensus =
-      buildEqualWeightBanConsensus(
-        providers);
+      buildSteamBanAssessment(
+        steam);
 
     const profile =
       steam?.profile || {};
@@ -1281,15 +949,12 @@ async function addSteamAccountBanFindings(
     if (consensus?.banDetected !== true)
       continue;
 
-    const multiple =
-      Number(consensus?.positiveVotes || 0) >= 2;
-
     await insertReviewFinding(
       analysisId,
-      multiple
-        ? "Conta Steam com histórico de ban corroborado"
-        : "Conta Steam com histórico de ban em uma fonte",
-      multiple
+      consensus?.rustSpecific === true
+        ? "Conta Steam com ban relacionado ao Rust"
+        : "Conta Steam com histórico de ban",
+      consensus?.rustSpecific === true
         ? "high"
         : "medium",
       "steam_account_ban",
@@ -1314,7 +979,7 @@ async function addSteamAccountBanFindings(
         banConsensus:
           consensus,
         confidence:
-          multiple
+          consensus?.rustSpecific === true
             ? "high"
             : "medium",
         note:
@@ -7477,7 +7142,7 @@ app.post("/api/agent/:token/report", async (req, res) => {
     setImmediate(async () => {
       try {
         await pool.query(
-          "UPDATE analyses SET processing_stage='external_checks', processing_message='Consultando contas Steam nas fontes Steam, SteamID.com e BattleMetrics...' WHERE id=$1",
+          "UPDATE analyses SET processing_stage='external_checks', processing_message='Consultando histórico das contas Steam na API oficial da Steam...' WHERE id=$1",
           [analysis.id]
         );
 
