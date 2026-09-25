@@ -39,7 +39,6 @@ internal static class SteamAccountCollector
             .OrderByDescending(item => item.MostRecent)
             .ThenByDescending(item => item.LastSeenUtc ?? DateTime.MinValue)
             .ThenBy(item => item.SteamId64, StringComparer.Ordinal)
-            .Take(100)
             .ToList();
     }
 
