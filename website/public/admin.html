@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#061018">
   <title>Vorken Anti-Cheat</title>
   <link rel="icon" type="image/svg+xml" href="/vorken-logo.svg">
-  <link rel="stylesheet" href="/styles.css?v=20260924-ai-final-arbiter">
+  <link rel="stylesheet" href="/styles.css?v=20260924-local-filters">
 </head>
 <body class="vorken-admin">
   <header class="vorken-shell-header">
@@ -116,7 +116,7 @@
                 <button id="clientReportToggleBtn" class="button release-report-button" type="button">Liberar detalhes ao cliente</button>
                 <button id="exportReportBtn" class="button ghost" type="button">⇩ Exportar relatório</button>
                 <button id="rebuildFindingsBtn" class="button ghost" type="button">Reprocessar análise</button>
-                <button id="toggleReviewViewBtn" class="button ghost" type="button">Ver resultado técnico</button>
+                <button id="toggleReviewViewBtn" class="button ghost" type="button" disabled>Filtros locais ativos</button>
                 <button id="closeReportBtn" class="button ghost" type="button">Fechar</button>
               </div>
             </div>
@@ -208,7 +208,7 @@
             <section class="report-deep-sections">
               <details class="report-section info-inventory" data-report-group="inventory">
                 <summary>
-                  <span>Filtrados automaticamente · provável falso positivo</span>
+                  <span>Itens ignorados pelos filtros locais</span>
                   <span id="filteredCountBadge" class="summary-badge info">0</span>
                 </summary>
                 <div id="reviewStatusBox" class="message"></div>
@@ -457,6 +457,6 @@
     </section>
   </main>
 
-  <script src="/admin.js?v=20260924-ai-final-arbiter"></script>
+  <script src="/admin.js?v=20260924-local-filters"></script>
 </body>
 </html>
