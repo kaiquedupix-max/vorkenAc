@@ -1054,6 +1054,49 @@ function parsedHost(value) {
   }
 }
 
+function isStrangeDeletedExecutableName(value) {
+  const name =
+    windowsBaseName(value);
+
+  if (
+    !/\.exe$/i.test(name) ||
+    isVorkenOwnedArtifact(name) ||
+    isKnownBenignPeNoise(name) ||
+    isGenericInstallerExecutableName(name) ||
+    findCommonAppByFileName(name)
+  ) {
+    return false;
+  }
+
+  const lower =
+    name.toLowerCase();
+
+  const explicitTerms = [
+    "cheat",
+    "hack",
+    "aimbot",
+    "wallhack",
+    "esp",
+    "injector",
+    "spoofer",
+    "bypass",
+    "recoil",
+    "script",
+    "loader",
+    "silentaim",
+    "ragebot",
+  ];
+
+  return (
+    looksRandomExecutableName(name) ||
+    isDeceptiveDoubleExtensionExecutable(name) ||
+    explicitTerms.some((term) =>
+      lower.includes(term)
+    ) ||
+    findRustCatalogMatches(name).length > 0
+  );
+}
+
 function isSearchEngineUrl(value) {
   try {
     const url = new URL(String(value || ""));
@@ -2729,7 +2772,10 @@ async function downgradeUnexecutedExeFindings(analysisId, report) {
 
     const evidence = finding.evidence || {};
 
-    if (evidence.priorityMaximum === true)
+    if (
+      evidence.priorityMaximum === true ||
+      evidence.deletedSuspiciousExecutable === true
+    )
       continue;
 
     const candidates = [
@@ -3330,28 +3376,29 @@ async function addBuiltInReviewFindings(analysisId, report) {
       continue;
     }
 
-    // Deleted/present EXEs are not detections unless there is independent
-    // proof they actually executed. Keep them blue for catalog/inventory.
     if (extension === ".exe" && !executed) {
-      if (
+      const strangeDeletedExe =
+        isStrangeDeletedExecutableName(name) ||
         strongMatch ||
-        recentRandomExecutable
-      ) {
+        recentRandomExecutable;
+
+      if (strangeDeletedExe) {
         await insertReviewFinding(
           analysisId,
-          catalogMatches.length > 0
-            ? "Catálogo Rust: arquivo EXE sem evidência de execução"
-            : "Arquivo EXE apagado sem evidência de execução",
-          "info",
+          "PRIORIDADE MÁXIMA: EXE suspeito apagado pelo USN",
+          "critical",
           "usn_delete",
           name || item.volume || "arquivo apagado",
           {
             ...item,
             catalogMatches,
-            confidence: "info",
-            note: catalogMatches.length > 0
-              ? "O nome corresponde ao catálogo, porém não foi encontrada evidência independente de execução. Mantido somente como catálogo/inventário azul."
-              : "O USN registrou o arquivo, mas não há evidência independente de execução. Mantido somente como inventário azul."
+            priorityMaximum: true,
+            protectedByTechnicalEngine: true,
+            deletedSuspiciousExecutable: true,
+            executionConfirmed: false,
+            confidence: "high",
+            note:
+              "O USN registrou a exclusão de um EXE suspeito. A prioridade máxima é aplicada mesmo sem Prefetch/BAM/Event 4688 confirmando execução.",
           }
         );
       }
@@ -4371,6 +4418,32 @@ async function addBuiltInReviewFindings(analysisId, report) {
     if (download.fileMissing !== true)
       continue;
 
+    const deletedStrangeExe =
+      ext === ".exe" &&
+      isStrangeDeletedExecutableName(name);
+
+    if (deletedStrangeExe) {
+      await insertReviewFinding(
+        analysisId,
+        "PRIORIDADE MÁXIMA: EXE suspeito baixado e apagado/movido",
+        "critical",
+        "browser_download",
+        download.targetPath || download.fileName || "download",
+        {
+          ...download,
+          priorityMaximum: true,
+          protectedByTechnicalEngine: true,
+          deletedSuspiciousExecutable: true,
+          executionConfirmed: false,
+          confidence: "high",
+          note:
+            "O histórico do navegador confirma um EXE de nome/identidade suspeita que não existe mais no destino. A prioridade máxima independe de haver evidência de execução.",
+        }
+      );
+
+      continue;
+    }
+
     if (ext === ".exe" && looksRandomExecutableName(name)) {
       await insertReviewFinding(
         analysisId,
@@ -4869,6 +4942,35 @@ async function addBuiltInReviewFindings(analysisId, report) {
     const deletionTime = deleted.deletedAtUtc
       ? new Date(deleted.deletedAtUtc).getTime()
       : 0;
+
+    const strangeDeletedExe =
+      ext === ".exe" &&
+      isStrangeDeletedExecutableName(
+        deleted.originalPath ||
+        deleted.fileName
+      );
+
+    if (strangeDeletedExe) {
+      await insertReviewFinding(
+        analysisId,
+        "PRIORIDADE MÁXIMA: EXE suspeito enviado para a Lixeira",
+        "critical",
+        "recycle_bin",
+        deleted.originalPath || deleted.fileName || "Lixeira",
+        {
+          ...deleted,
+          priorityMaximum: true,
+          protectedByTechnicalEngine: true,
+          deletedSuspiciousExecutable: true,
+          executionConfirmed: false,
+          confidence: "high",
+          note:
+            "A Lixeira confirma a remoção de um EXE suspeito. Não é necessário haver evidência de execução para mantê-lo no topo.",
+        }
+      );
+
+      continue;
+    }
 
     const matches = executionEvidence
       .filter((candidate) => {
