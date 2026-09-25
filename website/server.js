@@ -1041,8 +1041,7 @@ async function enrichSteamAccountReport(
       .filter((item) =>
         STEAM_ID64_PATTERN.test(
           String(item?.steamId64 || "")
-        ))
-      .slice(0, 100);
+        ));
 
   if (!rawAccounts.length) {
     report.steamAccounts = [];
@@ -1066,6 +1065,48 @@ async function enrichSteamAccountReport(
     await querySteamOfficialBatch(
       steamIds);
 
+  const secondaryById =
+    new Map();
+
+  let nextAccountIndex = 0;
+
+  const secondaryWorker = async () => {
+    while (nextAccountIndex < rawAccounts.length) {
+      const index =
+        nextAccountIndex++;
+
+      const steamId =
+        String(
+          rawAccounts[index]?.steamId64 || "");
+
+      const secondary =
+        await Promise.all([
+          querySteamIdComProvider(steamId),
+          queryBattleMetricsProvider(steamId),
+        ]);
+
+      secondaryById.set(
+        steamId,
+        secondary);
+    }
+  };
+
+  const workerCount =
+    Math.max(
+      1,
+      Math.min(
+        4,
+        rawAccounts.length
+      )
+    );
+
+  await Promise.all(
+    Array.from(
+      { length: workerCount },
+      () => secondaryWorker()
+    )
+  );
+
   const enriched = [];
 
   for (const raw of rawAccounts) {
@@ -1080,10 +1121,16 @@ async function enrichSteamAccountReport(
       );
 
     const secondary =
-      await Promise.all([
-        querySteamIdComProvider(steamId),
-        queryBattleMetricsProvider(steamId),
-      ]);
+      secondaryById.get(steamId) || [
+        externalProviderUnavailable(
+          "steamid.com",
+          "Consulta não executada."
+        ),
+        externalProviderUnavailable(
+          "battlemetrics",
+          "Consulta não executada."
+        ),
+      ];
 
     const providers = {
       steam,
