@@ -17,7 +17,7 @@ namespace Vorken.Agent;
 
 internal static class Program
 {
-    private const string AgentVersion = "1.0.13";
+    private const string AgentVersion = "1.0.14";
     private const string DefaultServerUrl = "https://vorkenac.guerrafriarust.com.br";
 
     private static readonly JsonSerializerOptions JsonOptions =
