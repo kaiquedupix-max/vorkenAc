@@ -407,6 +407,7 @@ function processingStageLabel(stage, status) {
     waiting: "Aguardando cliente",
     collecting: "Coletando evidências",
     preparing: "Preparando análise",
+    external_checks: "Consultando contas Steam",
     normal_filter: "Aplicando filtros locais",
     finalizing: "Preparando resultado final",
     completed: "Concluído",
@@ -423,7 +424,7 @@ function processingStageTag(stage, status) {
   if (stage === "needs_review") return "medium";
 
   if (
-    ["collecting", "preparing", "normal_filter", "finalizing"]
+    ["collecting", "preparing", "external_checks", "normal_filter", "finalizing"]
       .includes(stage)
   ) {
     return "info";
@@ -438,6 +439,7 @@ function isProcessingStage(stage) {
   return [
     "collecting",
     "preparing",
+    "external_checks",
     "normal_filter",
     "finalizing",
   ].includes(String(stage || ""));
