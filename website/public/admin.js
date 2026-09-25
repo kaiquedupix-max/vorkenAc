@@ -1087,6 +1087,7 @@ async function openReport(id) {
     );
 
   const arrays = {
+    steamAccounts: safeArray(payload.steamAccounts),
     usbCurrent: safeArray(payload.usbCurrent),
     usbHistory: safeArray(payload.usbHistory),
     usbTimeline: safeArray(payload.usbTimeline),
@@ -1217,6 +1218,7 @@ async function openReport(id) {
 
   document.getElementById("reportMetrics").innerHTML = `
     <div class="metric"><small>STATUS</small><strong>${escapeHtml(currentStageLabel)}</strong></div>
+    <div class="metric"><small>CONTAS STEAM</small><strong>${arrays.steamAccounts.length}</strong><span>${arrays.steamAccounts.filter((x) => x?.banConsensus?.banDetected === true).length} com histórico de ban</span></div>
     <div class="metric"><small>CLASSIFICAÇÃO</small><strong>FILTRO LOCAL</strong><span>Classificação determinística pelos filtros Vorken</span></div>
     <div class="metric danger-metric"><small>VERMELHO · CRÍTICO/ALTO</small><strong>${criticalFindings.length}</strong><span>Regras locais de alta prioridade</span></div>
     <div class="metric warning-metric"><small>AMARELO · REVISAR</small><strong>${mediumFindings.length}</strong><span>Sinais que exigem contexto humano</span></div>
@@ -1274,6 +1276,214 @@ async function openReport(id) {
     <div class="kv"><span>Início</span><span>${escapeHtml(formatDate(analysis.started_at))}</span></div>
     <div class="kv"><span>Conclusão</span><span>${escapeHtml(formatDate(analysis.finished_at))}</span></div>
   `;
+
+
+  const steamCorrelation =
+    payload.steamAccountCorrelation &&
+    typeof payload.steamAccountCorrelation === "object"
+      ? payload.steamAccountCorrelation
+      : {};
+
+  const steamAccounts =
+    arrays.steamAccounts;
+
+  const steamAccountsCountBadge =
+    document.getElementById("steamAccountsCountBadge");
+
+  if (steamAccountsCountBadge) {
+    steamAccountsCountBadge.textContent =
+      String(steamAccounts.length);
+  }
+
+  const steamAccountsSummary =
+    document.getElementById("steamAccountsSummary");
+
+  if (steamAccountsSummary) {
+    const previousBanned =
+      Number(
+        steamCorrelation.previousBannedAccounts || 0);
+
+    steamAccountsSummary.className =
+      previousBanned > 0
+        ? "message warning"
+        : "message ok";
+
+    steamAccountsSummary.textContent =
+      steamCorrelation.note ||
+      (
+        steamAccounts.length
+          ? "As contas encontradas foram cruzadas igualmente entre Steam, SteamID.com e BattleMetrics."
+          : "Nenhuma conta Steam foi encontrada nesta análise."
+      );
+  }
+
+  const providerName = (key) => {
+    if (key === "steam")
+      return "Steam";
+    if (key === "steamId")
+      return "SteamID.com";
+    if (key === "battleMetrics")
+      return "BattleMetrics";
+    return key;
+  };
+
+  const providerResultText = (provider) => {
+    if (!provider || provider.status !== "ok")
+      return "INDISPONÍVEL";
+
+    if (provider.banned === true)
+      return provider.rustSpecific === true
+        ? "BAN · RUST"
+        : "BAN DETECTADO";
+
+    return "SEM BAN CONHECIDO";
+  };
+
+  const providerTag = (provider) => {
+    if (!provider || provider.status !== "ok")
+      return "info";
+    return provider.banned === true
+      ? "high"
+      : "info";
+  };
+
+  const steamAccountsTarget =
+    document.getElementById("steamAccountsList");
+
+  if (steamAccountsTarget) {
+    steamAccountsTarget.innerHTML =
+      steamAccounts.length
+        ? steamAccounts.map((account) => {
+            const steamId =
+              String(account?.steamId64 || "");
+
+            const consensus =
+              account?.banConsensus || {};
+
+            const checks =
+              account?.providerChecks || {};
+
+            const displayName =
+              account?.personaName ||
+              account?.accountName ||
+              steamId ||
+              "Conta Steam";
+
+            const tagClass =
+              consensus?.code === "multi_source"
+                ? "high"
+                : consensus?.code === "single_source"
+                  ? "medium"
+                  : "info";
+
+            const tagText =
+              consensus?.code === "multi_source"
+                ? "BAN CORROBORADO"
+                : consensus?.code === "single_source"
+                  ? "BAN · 1 FONTE"
+                  : consensus?.code === "no_known_ban"
+                    ? "SEM BAN"
+                    : "APIS INDISPONÍVEIS";
+
+            const profileUrl =
+              /^7656119\d{10}$/.test(steamId)
+                ? "https://steamcommunity.com/profiles/" + steamId
+                : "";
+
+            const sourceText =
+              safeArray(account?.sources).join(", ") ||
+              "Steam";
+
+            const providerRows =
+              ["steam", "steamId", "battleMetrics"]
+                .map((key) => {
+                  const provider =
+                    checks?.[key];
+
+                  const reason =
+                    provider?.reason
+                      ? '<div class="kv"><span>Detalhe</span><span>' +
+                        escapeHtml(provider.reason) +
+                        '</span></div>'
+                      : "";
+
+                  return (
+                    '<div class="finding">' +
+                      '<div class="finding-head"><h4>' +
+                        escapeHtml(providerName(key)) +
+                      '</h4><span class="tag ' +
+                        escapeHtml(providerTag(provider)) +
+                      '">' +
+                        escapeHtml(providerResultText(provider)) +
+                      '</span></div>' +
+                      reason +
+                      '<details class="evidence-details"><summary>Resposta normalizada</summary><pre>' +
+                        escapeHtml(JSON.stringify(provider || {}, null, 2)) +
+                      '</pre></details>' +
+                    '</div>'
+                  );
+                })
+                .join("");
+
+            return (
+              '<article class="finding severity-card ' +
+                escapeHtml(tagClass) +
+              '">' +
+                '<div class="finding-head"><h4>' +
+                  escapeHtml(displayName) +
+                '</h4><span class="tag ' +
+                  escapeHtml(tagClass) +
+                '">' +
+                  escapeHtml(tagText) +
+                '</span></div>' +
+                '<code>' +
+                  escapeHtml(steamId || "—") +
+                '</code>' +
+                '<div class="kv"><span>AccountName</span><span>' +
+                  escapeHtml(account?.accountName || "—") +
+                '</span></div>' +
+                '<div class="kv"><span>Origem local</span><span>' +
+                  escapeHtml(sourceText) +
+                '</span></div>' +
+                '<div class="kv"><span>Login salvo</span><span>' +
+                  (account?.savedLogin === true ? "Sim" : "Não") +
+                '</span></div>' +
+                '<div class="kv"><span>Mais recente</span><span>' +
+                  (account?.mostRecent === true ? "SIM" : "Não") +
+                '</span></div>' +
+                '<div class="kv"><span>Conta vinculada à análise</span><span>' +
+                  (account?.isLinkedAccount === true ? "SIM" : "Não") +
+                '</span></div>' +
+                '<div class="kv"><span>Último vestígio local</span><span>' +
+                  escapeHtml(formatDate(account?.lastSeenUtc)) +
+                '</span></div>' +
+                '<div class="kv"><span>Consenso</span><span>' +
+                  escapeHtml(consensus?.label || "—") +
+                '</span></div>' +
+                '<div class="kv"><span>Votos</span><span>' +
+                  escapeHtml(
+                    String(consensus?.positiveVotes ?? 0) +
+                    " positivos de " +
+                    String(consensus?.availableVotes ?? 0) +
+                    " fontes disponíveis"
+                  ) +
+                '</span></div>' +
+                (
+                  profileUrl
+                    ? '<div class="kv"><span>Perfil</span><span><a class="analysis-link" target="_blank" rel="noopener noreferrer" href="' +
+                      escapeHtml(profileUrl) +
+                      '">Abrir Steam</a></span></div>'
+                    : ""
+                ) +
+                '<details class="evidence-details"><summary>Ver resultado das 3 fontes</summary><div>' +
+                  providerRows +
+                '</div></details>' +
+              '</article>'
+            );
+          }).join("")
+        : '<div class="message ok">Nenhuma conta Steam detectada em loginusers.vdf ou userdata.</div>';
+  }
+
 
   const renderFindings = (elementId, rows, emptyMessage) => {
     const target = document.getElementById(elementId);
@@ -1686,6 +1896,8 @@ async function openReport(id) {
     advancedHtml.join("");
 
   document.getElementById("artifactSummary").innerHTML = `
+    <div class="kv"><span>Contas Steam detectadas</span><span>${arrays.steamAccounts.length}</span></div>
+    <div class="kv"><span>Contas Steam com ban</span><span>${arrays.steamAccounts.filter((x) => x?.banConsensus?.banDetected === true).length}</span></div>
     <div class="kv"><span>USB conectados</span><span>${arrays.usbCurrent.length}</span></div>
     <div class="kv"><span>USB no histórico</span><span>${arrays.usbHistory.length} (${disconnectedUsb} desconectados)</span></div>
     <div class="kv"><span>Eventos USB</span><span>${arrays.usbTimeline.length}</span></div>
