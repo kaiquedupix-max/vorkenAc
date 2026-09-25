@@ -69,6 +69,12 @@ function getAgentVerification() {
 const ADMIN_COOKIE = "vorken_admin";
 const ADMIN_SESSION_MS = 12 * 60 * 60 * 1000;
 
+function safeArray(value) {
+  return Array.isArray(value)
+    ? value
+    : [];
+}
+
 const rustThreatCatalogPath = path.join(
   __dirname,
   "data",
