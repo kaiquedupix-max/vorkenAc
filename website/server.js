@@ -3350,16 +3350,40 @@ async function addBuiltInReviewFindings(analysisId, report) {
       continue;
     }
 
-    if (extension === ".exe" && !executed) {
-      const strangeDeletedExe =
-        isStrangeDeletedExecutableName(name) ||
-        strongMatch ||
-        recentRandomExecutable;
+    const strangeDeletedExe =
+      extension === ".exe" &&
+      isStrangeDeletedExecutableName(name);
 
-      if (strangeDeletedExe) {
+    if (strangeDeletedExe) {
+      await insertReviewFinding(
+        analysisId,
+        "PRIORIDADE MÁXIMA: EXE suspeito apagado pelo USN",
+        "critical",
+        "usn_delete",
+        name || item.volume || "arquivo apagado",
+        {
+          ...item,
+          catalogMatches,
+          priorityMaximum: true,
+          protectedByTechnicalEngine: true,
+          deletedSuspiciousExecutable: true,
+          executionConfirmed: executed,
+          confidence: "high",
+          note:
+            executed
+              ? "O USN registrou a exclusão de um EXE suspeito e há evidência independente de execução. Mantido no topo."
+              : "O USN registrou a exclusão de um EXE suspeito. A prioridade máxima independe de haver evidência de execução.",
+        }
+      );
+
+      continue;
+    }
+
+    if (extension === ".exe" && !executed) {
+      if (strongMatch || recentRandomExecutable) {
         await insertReviewFinding(
           analysisId,
-          "PRIORIDADE MÁXIMA: EXE suspeito apagado pelo USN",
+          "PRIORIDADE MÁXIMA: EXE apagado com sinal forte",
           "critical",
           "usn_delete",
           name || item.volume || "arquivo apagado",
@@ -3372,7 +3396,7 @@ async function addBuiltInReviewFindings(analysisId, report) {
             executionConfirmed: false,
             confidence: "high",
             note:
-              "O USN registrou a exclusão de um EXE suspeito. A prioridade máxima é aplicada mesmo sem Prefetch/BAM/Event 4688 confirmando execução.",
+              "O USN registrou a exclusão de um EXE com correspondência de catálogo, dupla extensão ou nome fortemente aleatório. Mantido no topo mesmo sem execução confirmada.",
           }
         );
       }
