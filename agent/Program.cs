@@ -17,7 +17,7 @@ namespace Vorken.Agent;
 
 internal static class Program
 {
-    private const string AgentVersion = "1.0.12";
+    private const string AgentVersion = "1.0.13";
     private const string DefaultServerUrl = "https://vorkenac.guerrafriarust.com.br";
 
     private static readonly JsonSerializerOptions JsonOptions =
@@ -397,6 +397,11 @@ internal static class Program
                 Console.WriteLine("  ! Estado dos artefatos: indisponível");
             }
 
+            List<SteamAccountRecord> steamAccounts = SafeCollect(
+                "Contas Steam",
+                SteamAccountCollector.Collect,
+                errors);
+
             var report = new ScanReport
             {
                 AgentVersion = AgentVersion,
@@ -408,6 +413,7 @@ internal static class Program
                     Is64BitOs = Environment.Is64BitOperatingSystem,
                     Fingerprint = machineFingerprint
                 },
+                SteamAccounts = steamAccounts,
                 UsbCurrent = usbCurrent,
                 UsbHistory = usbHistory,
                 UsbTimeline = usbTimeline,
@@ -2038,6 +2044,7 @@ internal sealed class ScanReport
     public string AgentVersion { get; set; } = "";
     public DateTime CollectedAtUtc { get; set; }
     public MachineRecord Machine { get; set; } = new();
+    public List<SteamAccountRecord> SteamAccounts { get; set; } = new();
     public List<UsbDeviceRecord> UsbCurrent { get; set; } = new();
     public List<UsbHistoryRecord> UsbHistory { get; set; } = new();
     public List<UsbDeviceEventRecord> UsbTimeline { get; set; } = new();
