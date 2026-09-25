@@ -1521,32 +1521,8 @@ async function initDb() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
-    CREATE TABLE IF NOT EXISTS ai_finding_reviews (
-      id BIGSERIAL PRIMARY KEY,
-      analysis_id BIGINT NOT NULL REFERENCES analyses(id) ON DELETE CASCADE,
-      finding_id BIGINT NOT NULL REFERENCES scan_findings(id) ON DELETE CASCADE,
-      fingerprint TEXT NOT NULL,
-      verdict TEXT NOT NULL,
-      confidence DOUBLE PRECISION NOT NULL DEFAULT 0,
-      reason TEXT NOT NULL DEFAULT '',
-      model TEXT NOT NULL DEFAULT '',
-      cached BOOLEAN NOT NULL DEFAULT FALSE,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      UNIQUE(analysis_id, finding_id)
-    );
-
     ALTER TABLE analyses
       ADD COLUMN IF NOT EXISTS machine_fingerprint TEXT NULL;
-
-    ALTER TABLE analyses
-      ADD COLUMN IF NOT EXISTS ai_review_status TEXT NOT NULL DEFAULT 'pending';
-
-    ALTER TABLE analyses
-      ADD COLUMN IF NOT EXISTS ai_review_error TEXT NULL;
-
-    ALTER TABLE analyses
-      ADD COLUMN IF NOT EXISTS ai_reviewed_at TIMESTAMPTZ NULL;
 
     ALTER TABLE analyses
       ADD COLUMN IF NOT EXISTS processing_stage TEXT NOT NULL DEFAULT 'waiting';
@@ -1636,19 +1612,15 @@ async function initDb() {
     UPDATE analyses
     SET
       processing_stage = CASE
-        WHEN status='completed' AND ai_review_status='completed'
+        WHEN status='completed'
           THEN 'completed'
-        WHEN status='completed' AND ai_review_status<>'completed'
-          THEN 'needs_review'
         WHEN status='running'
           THEN 'collecting'
         ELSE processing_stage
       END,
       processing_message = CASE
-        WHEN status='completed' AND ai_review_status='completed'
+        WHEN status='completed'
           THEN COALESCE(processing_message, 'Análise concluída e resultado final preparado.')
-        WHEN status='completed' AND ai_review_status<>'completed'
-          THEN COALESCE(processing_message, 'Análise concluída. O resultado técnico permanece disponível.')
         WHEN status='running'
           THEN COALESCE(processing_message, 'Análise em andamento.')
         ELSE processing_message
@@ -1656,16 +1628,29 @@ async function initDb() {
     WHERE processing_stage='waiting';
 
     UPDATE analyses
-    SET processing_message = CASE
-      WHEN processing_stage='finalizing' THEN 'Aplicando filtros locais e reduzindo falsos positivos...'
-      WHEN processing_stage='finalizing' THEN 'Preparando o resultado final...'
-      WHEN processing_stage='completed' THEN 'Análise concluída e resultado final preparado.'
-      WHEN processing_stage='filter_error' THEN 'Análise técnica concluída com erro parcial nos filtros.'
-      WHEN processing_stage='needs_review' THEN 'Resultado técnico disponível.'
-      ELSE processing_message
-    END
-    WHERE processing_message ILIKE '%gemini%'
-       OR processing_message ~* '(^|[^A-ZÀ-Ú])IA([^A-ZÀ-Ú]|$)';
+    SET
+      processing_stage = CASE
+        WHEN processing_stage IN ('ai_filter','review_filter','needs_ai','needs_review')
+          THEN 'finalizing'
+        WHEN processing_stage IN ('ai_error','review_error')
+          THEN 'filter_error'
+        ELSE processing_stage
+      END,
+      processing_message = CASE
+        WHEN processing_stage IN ('ai_filter','review_filter','needs_ai','needs_review')
+          THEN 'Aplicando filtros locais e preparando o resultado final...'
+        WHEN processing_stage IN ('ai_error','review_error')
+          THEN 'Análise concluída com erro parcial nos filtros locais.'
+        WHEN processing_stage='finalizing'
+          THEN 'Preparando o resultado final...'
+        WHEN processing_stage='completed'
+          THEN 'Análise concluída e resultado final preparado.'
+        ELSE processing_message
+      END
+    WHERE processing_stage IN (
+      'ai_filter','review_filter','needs_ai','needs_review',
+      'ai_error','review_error','finalizing','completed'
+    );
 
     ALTER TABLE scan_reports
       ADD COLUMN IF NOT EXISTS payload_raw BYTEA NULL;
@@ -1677,8 +1662,6 @@ async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_analyses_fingerprint ON analyses(machine_fingerprint);
     CREATE INDEX IF NOT EXISTS idx_findings_analysis ON scan_findings(analysis_id, id);
     CREATE INDEX IF NOT EXISTS idx_reports_analysis ON scan_reports(analysis_id, id DESC);
-    CREATE INDEX IF NOT EXISTS idx_ai_reviews_analysis ON ai_finding_reviews(analysis_id, finding_id);
-    CREATE INDEX IF NOT EXISTS idx_ai_reviews_fingerprint ON ai_finding_reviews(fingerprint, model, id DESC);
 
     INSERT INTO detection_rules(name, type, pattern, severity, description)
     SELECT 'Nome contendo loader', 'filename_contains', 'loader', 'medium',
@@ -2569,17 +2552,8 @@ async function rebuildFindings(analysisId, report) {
   await removeVorkenFindings(analysisId);
 
   await pool.query(
-    `DELETE FROM ai_finding_reviews
-     WHERE analysis_id=$1`,
-    [analysisId]
-  );
-
-  await pool.query(
     `UPDATE analyses
-     SET ai_review_status='disabled',
-         ai_review_error=NULL,
-         ai_reviewed_at=NULL,
-         processing_stage='finalizing',
+     SET processing_stage='finalizing',
          processing_message='Filtros locais concluídos. Preparando o resultado final...'
      WHERE id=$1`,
     [analysisId]
@@ -5724,9 +5698,7 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
       analysis.status);
 
   const analysisInternal = {
-    ai_review_status: "local_filters",
-    ai_review_error: null,
-    ai_reviewed_at: null,
+    filter_status: "local_filters",
   };
 
   res.json({
@@ -5735,9 +5707,9 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
     findings: findingsResult.rows,
     filteredFindings: aiFilteredResult.rows,
     reviewState: {
-      status: analysisInternal.ai_review_status || "pending",
-      error: analysisInternal.ai_review_error || null,
-      reviewedAt: analysisInternal.ai_reviewed_at || null,
+      status: analysisInternal.filter_status || "local_filters",
+      error: null,
+      reviewedAt: null,
     },
     relatedAnalyses,
     commonApps: commonAppCatalog,
@@ -6035,10 +6007,7 @@ app.get("/api/admin/analyses/:id/rebuild-status", requireAdmin, async (req, res)
     `SELECT
        status,
        processing_stage,
-       processing_message,
-       ai_review_status,
-       ai_review_error,
-       ai_reviewed_at
+       processing_message
      FROM analyses
      WHERE id=$1
      LIMIT 1`,
@@ -6070,9 +6039,9 @@ app.get("/api/admin/analyses/:id/rebuild-status", requireAdmin, async (req, res)
       publicAgentProcessingMessage(
         internalStage,
         row.status),
-    reviewStatus: row.ai_review_status || "pending",
-    reviewError: row.ai_review_error || null,
-    reviewedAt: row.ai_reviewed_at || null,
+    reviewStatus: "local_filters",
+    reviewError: null,
+    reviewedAt: null,
   });
 });
 
@@ -6119,10 +6088,7 @@ app.post("/api/admin/analyses/:id/rebuild", requireAdmin, async (req, res) => {
 
   await pool.query(
     `UPDATE analyses
-     SET ai_review_status='disabled',
-         ai_review_error=NULL,
-         ai_reviewed_at=NULL,
-         processing_stage='preparing',
+     SET processing_stage='preparing',
          processing_message='Preparando recálculo dos filtros locais...'
      WHERE id=$1`,
     [id]
@@ -6161,10 +6127,7 @@ app.post("/api/admin/analyses/:id/rebuild", requireAdmin, async (req, res) => {
       try {
         await pool.query(
           `UPDATE analyses
-           SET ai_review_status='disabled',
-               ai_review_error=NULL,
-               ai_reviewed_at=NULL,
-               processing_stage='filter_error',
+           SET processing_stage='filter_error',
                processing_message='Falha parcial ao recalcular os filtros locais. O relatório bruto foi preservado.'
            WHERE id=$1`,
           [id]
@@ -6617,9 +6580,6 @@ app.post("/api/agent/:token/report", async (req, res) => {
         await pool.query(
           `UPDATE analyses
            SET status='completed',
-               ai_review_status='disabled',
-               ai_review_error=NULL,
-               ai_reviewed_at=NULL,
                processing_stage='completed',
                processing_message='Análise concluída e resultado final preparado.',
                finished_at=NOW()
@@ -6649,9 +6609,6 @@ app.post("/api/agent/:token/report", async (req, res) => {
           await pool.query(
             `UPDATE analyses
              SET status='completed',
-                 ai_review_status='disabled',
-                 ai_review_error=NULL,
-                 ai_reviewed_at=NULL,
                  processing_stage='filter_error',
                  processing_message='Falha ao concluir os filtros locais. O relatório bruto e o resultado técnico disponível foram preservados.',
                  finished_at=COALESCE(finished_at, NOW())
