@@ -1575,3 +1575,34 @@ pre.raw{max-height:420px;overflow:auto;background:#05080a;border:1px solid #1620
   .usb-file-row{grid-template-columns:1fr}
   .usb-file-meta{justify-content:flex-start}
 }
+
+
+.gf-ban-dialog{
+  border:1px solid #33434d;
+  border-radius:14px;
+  background:#0a1116;
+  color:#eff7fa;
+  padding:0;
+  width:min(520px,calc(100vw - 32px));
+  box-shadow:0 24px 80px #000a;
+}
+.gf-ban-dialog::backdrop{
+  background:rgba(0,0,0,.68);
+  backdrop-filter:blur(3px);
+}
+.gf-ban-dialog-card{
+  padding:22px;
+  display:grid;
+  gap:16px;
+}
+.gf-ban-dialog-card h2{
+  margin:0;
+}
+.gf-ban-dialog-card p{
+  margin:0;
+}
+.gf-ban-dialog-actions{
+  display:flex;
+  justify-content:flex-end;
+  gap:10px;
+}
