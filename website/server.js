@@ -2582,7 +2582,7 @@ async function notifyGuerraFriaProgress(analysisId, stage, message) {
 
 async function getAnalysisDecisionCounts(analysisId) {
   const result = await pool.query(
-    \`SELECT
+    `SELECT
        COUNT(DISTINCT LOWER(sf.artifact_type) || '|' || LOWER(TRIM(sf.artifact_value)))
          FILTER (
            WHERE sf.severity='critical'
@@ -2596,7 +2596,7 @@ async function getAnalysisDecisionCounts(analysisId) {
              AND LOWER(COALESCE(sf.evidence::text,'')) NOT LIKE '%vorken%'
          )::int AS review_findings
      FROM scan_findings sf
-     WHERE sf.analysis_id=$1\`,
+     WHERE sf.analysis_id=$1`,
     [analysisId]
   );
 
@@ -2628,7 +2628,7 @@ async function tryAutoApproveCleanGuerraFriaAnalysis(
   }
 
   const analysisResult = await pool.query(
-    \`SELECT
+    `SELECT
        id,
        status,
        label,
@@ -2639,7 +2639,7 @@ async function tryAutoApproveCleanGuerraFriaAnalysis(
        external_decision
      FROM analyses
      WHERE id=$1
-     LIMIT 1\`,
+     LIMIT 1`,
     [analysisId]
   );
 
@@ -2775,13 +2775,13 @@ async function tryAutoApproveCleanGuerraFriaAnalysis(
     "Verificação limpa aprovada automaticamente.";
 
   await pool.query(
-    \`UPDATE analyses
+    `UPDATE analyses
      SET external_decision='approve',
          external_decision_at=NOW(),
          external_decision_result=$2,
          processing_message='Análise limpa. Verificação aprovada automaticamente.'
      WHERE id=$1
-       AND external_decision IS NULL\`,
+       AND external_decision IS NULL`,
     [
       analysisId,
       decisionResult,
