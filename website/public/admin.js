@@ -527,7 +527,7 @@ function severityLabel(value) {
     info: "INFO",
     low: "BAIXA",
     medium: "MÉDIA",
-    high: "ALTA",
+    high: "REVISAR",
     critical: "CRÍTICA",
   };
   return map[value] || String(value || "").toUpperCase();
@@ -854,11 +854,28 @@ async function loadAnalyses() {
 
   for (const item of data.analyses) {
     const row = document.createElement("tr");
+    const criticalCount =
+      Number(
+        item.critical_findings ??
+        item.high_findings ??
+        0
+      );
+
+    const reviewCount =
+      Number(
+        item.review_findings ??
+        Math.max(
+          0,
+          Number(item.total_findings || 0) -
+          criticalCount
+        )
+      );
+
     const findings =
       Number(item.total_findings || 0) === 0
         ? '<span class="tag low">0</span>'
-        : Number(item.high_findings || 0) > 0
-          ? '<span class="tag high">' + Number(item.total_findings) + '</span>'
+        : criticalCount > 0
+          ? '<span class="tag critical">' + Number(item.total_findings) + '</span>'
           : '<span class="tag medium">' + Number(item.total_findings) + '</span>';
 
     const stage =
@@ -884,9 +901,9 @@ async function loadAnalyses() {
         : "";
 
     const sessionKind =
-      Number(item.high_findings || 0) > 0
+      criticalCount > 0
         ? "critical"
-        : Number(item.total_findings || 0) > 0
+        : reviewCount > 0
           ? "review"
           : item.status === "completed"
             ? "clean"
@@ -904,7 +921,7 @@ async function loadAnalyses() {
 
     const resultTag =
       sessionKind === "critical"
-        ? '<span class="tag high">CRÍTICO</span>'
+        ? '<span class="tag critical">CRÍTICO</span>'
         : sessionKind === "review"
           ? '<span class="tag medium">REVISAR</span>'
           : '<span class="tag low">LIMPO</span>';
@@ -1152,9 +1169,8 @@ async function openReport(id) {
   const criticalFindings =
     findings
       .filter((item) =>
-        ["critical", "high"].includes(
-          effectiveFindingSeverity(item)
-        ))
+        effectiveFindingSeverity(item) === "critical"
+      )
       .sort((a, b) => {
         const aPriority = a.evidence?.priorityMaximum === true ? 1 : 0;
         const bPriority = b.evidence?.priorityMaximum === true ? 1 : 0;
@@ -1162,18 +1178,23 @@ async function openReport(id) {
         if (aPriority !== bPriority)
           return bPriority - aPriority;
 
-        const rank = { critical: 2, high: 1 };
+        return Number(b.id || 0) - Number(a.id || 0);
+      });
+
+  const mediumFindings =
+    findings
+      .filter((item) =>
+        ["high", "medium"].includes(
+          effectiveFindingSeverity(item)
+        )
+      )
+      .sort((a, b) => {
+        const rank = { high: 2, medium: 1 };
         return (
           (rank[effectiveFindingSeverity(b)] || 0) -
           (rank[effectiveFindingSeverity(a)] || 0)
         );
       });
-
-  const mediumFindings =
-    findings.filter(
-      (item) =>
-        effectiveFindingSeverity(item) === "medium"
-    );
 
   const infoFindings =
     findings.filter(
@@ -1222,8 +1243,8 @@ async function openReport(id) {
     <div class="metric"><small>STATUS</small><strong>${escapeHtml(currentStageLabel)}</strong></div>
     <div class="metric"><small>CONTAS STEAM</small><strong>${arrays.steamAccounts.length}</strong><span>${arrays.steamAccounts.filter((x) => x?.banConsensus?.banDetected === true).length} com histórico de ban</span></div>
     <div class="metric"><small>CLASSIFICAÇÃO</small><strong>FILTRO LOCAL</strong><span>Classificação determinística pelos filtros Vorken</span></div>
-    <div class="metric danger-metric"><small>VERMELHO · CRÍTICO/ALTO</small><strong>${criticalFindings.length}</strong><span>Regras locais de alta prioridade</span></div>
-    <div class="metric warning-metric"><small>AMARELO · REVISAR</small><strong>${mediumFindings.length}</strong><span>Sinais que exigem contexto humano</span></div>
+    <div class="metric danger-metric"><small>VERMELHO · CRÍTICO</small><strong>${criticalFindings.length}</strong><span>Somente evidências de prioridade máxima</span></div>
+    <div class="metric warning-metric"><small>LARANJA · REVISAR</small><strong>${mediumFindings.length}</strong><span>Itens suspeitos que exigem verificação administrativa</span></div>
     <div class="metric info-metric"><small>AZUL · COLETADO</small><strong>${collectedFindings.length}</strong><span>Evidência informativa / não crítica</span></div>
     <div class="metric hardware-metric"><small>HARDWARE / USB</small><strong>${hardwareCount}</strong><span>Pendrives e placas separados</span></div>
     <div class="metric priority-metric"><small>ARQUIVOS PRIORITÁRIOS</small><strong id="summaryPriorityCount">0</strong><span>EXE suspeito apagado/removível no topo</span></div>
@@ -1235,10 +1256,10 @@ async function openReport(id) {
   if (resultFinalLabel) {
     resultFinalLabel.textContent =
       criticalFindings.length > 0
-        ? "Indícios de trapaça"
+        ? "Possível trapaceiro detectado"
         : mediumFindings.length > 0
-          ? "Revisão necessária"
-          : "Sem indício crítico";
+          ? "Itens suspeitos · revisão necessária"
+          : "Limpo · liberação automática";
     resultFinalLabel.style.color =
       criticalFindings.length > 0
         ? "#ff5769"
@@ -1247,12 +1268,35 @@ async function openReport(id) {
           : "#2bf0c9";
   }
 
+  const sideRecommendationLabel =
+    document.getElementById("sideRecommendationLabel");
+  const sideRecommendationText =
+    document.getElementById("sideRecommendationText");
+
+  if (sideRecommendationLabel) {
+    sideRecommendationLabel.textContent =
+      criticalFindings.length > 0
+        ? "Análise administrativa urgente"
+        : mediumFindings.length > 0
+          ? "Verificação administrativa"
+          : "Liberação automática";
+  }
+
+  if (sideRecommendationText) {
+    sideRecommendationText.textContent =
+      criticalFindings.length > 0
+        ? "Há evidência crítica. Possível trapaceiro detectado; revise antes de aplicar qualquer punição."
+        : mediumFindings.length > 0
+          ? "Há itens suspeitos em laranja. Revise o contexto antes de concluir a verificação."
+          : "Nenhum item vermelho ou laranja foi encontrado. A integração pode aprovar o jogador automaticamente.";
+  }
+
   const sideStatsMirror = document.getElementById("sideStatsMirror");
   if (sideStatsMirror) {
     sideStatsMirror.innerHTML =
       '<div>◈ <strong>' + findings.length + '</strong> evidências classificadas</div>' +
-      '<div>◈ <strong>' + criticalFindings.length + '</strong> itens críticos / altos</div>' +
-      '<div>◈ <strong>' + mediumFindings.length + '</strong> itens para revisão</div>' +
+      '<div>◈ <strong>' + criticalFindings.length + '</strong> itens críticos</div>' +
+      '<div>◈ <strong>' + mediumFindings.length + '</strong> itens suspeitos para revisão</div>' +
       '<div>◈ <strong>' + hardwareCount + '</strong> itens de hardware / USB</div>' +
       '<div>◈ <strong>' + advancedForensicsCount + '</strong> sinais forenses</div>';
   }
@@ -1594,13 +1638,13 @@ async function openReport(id) {
   renderFindings(
     "criticalFindingsList",
     criticalFindings,
-    "Nenhum achado crítico ou alto."
+    "Nenhum achado crítico."
   );
 
   renderFindings(
     "mediumFindingsList",
     mediumFindings,
-    "Nenhum achado médio."
+    "Nenhum item suspeito para revisão."
   );
 
   renderFindings(
