@@ -1776,16 +1776,7 @@ async function openReport(id) {
 
       const selectable =
         currentGuerraFriaLinked &&
-        (
-          ["critical", "high"].includes(displaySeverity) ||
-          (
-            displaySeverity === "medium" &&
-            [
-              "steam_account_ban",
-              "steam_ban_evasion_context",
-            ].includes(String(finding.artifact_type || ""))
-          )
-        ) &&
+        ["critical", "high", "medium"].includes(displaySeverity) &&
         Number.isInteger(Number(finding.id));
       const selectionBlock = selectable
         ? `<label class="ban-evidence-select"><input type="checkbox" class="ban-evidence-checkbox" data-finding-id="${escapeHtml(finding.id)}" ${selectedBanEvidenceIds.has(Number(finding.id)) ? "checked" : ""}><span>Usar como prova do banimento</span></label>`
