@@ -286,21 +286,8 @@ const activeRebuilds = new Set();
 const AI_REVIEW_POLICY_VERSION = "v6-ai-grounded-final-arbiter";
 
 const aiReviewConfig = {
-  provider: "gemini",
   enabled:
     String(process.env.AI_REVIEW_ENABLED || "true").toLowerCase() !== "false",
-  apiKey:
-    String(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "").trim(),
-  baseUrl:
-    String(
-      process.env.GEMINI_BASE_URL ||
-      "https://generativelanguage.googleapis.com/v1beta"
-    ).replace(/\/$/, ""),
-  model:
-    String(
-      process.env.GEMINI_MODEL ||
-      "gemini-3.5-flash-lite"
-    ).trim(),
   timeoutMs:
     Math.max(
       5000,
@@ -309,6 +296,55 @@ const aiReviewConfig = {
         Number(process.env.AI_TIMEOUT_MS || 60000)
       )
     ),
+  // Groq é a primeira opção. Gemini fica como fallback automático caso
+  // GROQ_API_KEY não esteja configurada ou a chamada Groq falhe/retorne 429.
+  groq: {
+    apiKey:
+      String(process.env.GROQ_API_KEY || "").trim(),
+    baseUrl:
+      String(
+        process.env.GROQ_BASE_URL ||
+        "https://api.groq.com/openai/v1"
+      ).replace(/\/$/, ""),
+    model:
+      String(
+        process.env.GROQ_MODEL ||
+        "openai/gpt-oss-20b"
+      ).trim(),
+  },
+  gemini: {
+    apiKey:
+      String(
+        process.env.GEMINI_API_KEY ||
+        process.env.GOOGLE_API_KEY ||
+        ""
+      ).trim(),
+    baseUrl:
+      String(
+        process.env.GEMINI_BASE_URL ||
+        "https://generativelanguage.googleapis.com/v1beta"
+      ).replace(/\/$/, ""),
+    model:
+      String(
+        process.env.GEMINI_MODEL ||
+        "gemini-3.5-flash-lite"
+      ).trim(),
+  },
+  // Chave de cache inclui a ordem/provedores atuais para não reutilizar
+  // decisões antigas de outra configuração de IA.
+  model:
+    [
+      "groq:" +
+        String(
+          process.env.GROQ_MODEL ||
+          "openai/gpt-oss-20b"
+        ).trim(),
+      "gemini:" +
+        String(
+          process.env.GEMINI_MODEL ||
+          "gemini-3.5-flash-lite"
+        ).trim(),
+    ].join("|"),
   // Revisão deliberadamente unitária: cada finding recebe uma decisão
   // independente para evitar que um caso influencie outro no mesmo prompt.
   batchSize: 1,
@@ -340,8 +376,16 @@ const aiReviewConfig = {
 function aiReviewAvailable() {
   return Boolean(
     aiReviewConfig.enabled &&
-    aiReviewConfig.apiKey &&
-    aiReviewConfig.model
+    (
+      (
+        aiReviewConfig.groq.apiKey &&
+        aiReviewConfig.groq.model
+      ) ||
+      (
+        aiReviewConfig.gemini.apiKey &&
+        aiReviewConfig.gemini.model
+      )
+    )
   );
 }
 
