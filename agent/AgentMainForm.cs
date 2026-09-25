@@ -1059,39 +1059,51 @@ internal sealed class AgentMainForm : Form
         int detectionCount = criticalCount + reviewCount;
         bool hasCritical = criticalCount > 0;
         bool hasReview = !hasCritical && reviewCount > 0;
+        bool filterError =
+            string.Equals(snapshot?.VerificationState, "error", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(snapshot?.ProcessingStage, "filter_error", StringComparison.OrdinalIgnoreCase);
         bool autoApproved =
-            string.Equals(snapshot?.VerificationState, "approved", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(snapshot?.ExternalDecision, "approve", StringComparison.OrdinalIgnoreCase);
+            !filterError &&
+            (
+                string.Equals(snapshot?.VerificationState, "approved", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(snapshot?.ExternalDecision, "approve", StringComparison.OrdinalIgnoreCase)
+            );
         bool detailsReleased = snapshot?.DetailsReleased == true;
 
         string resultHeadline =
             !success
                 ? "Análise interrompida."
-                : hasCritical
-                    ? "Possível trapaceiro detectado."
-                    : hasReview
-                        ? "Itens suspeitos encontrados."
-                        : autoApproved
-                            ? "Verificação aprovada."
-                            : "Análise limpa.";
+                : filterError
+                    ? "Falha parcial nos filtros."
+                    : hasCritical
+                        ? "Possível trapaceiro detectado."
+                        : hasReview
+                            ? "Itens suspeitos encontrados."
+                            : autoApproved
+                                ? "Verificação aprovada."
+                                : "Análise limpa.";
 
         string resultSubheadline =
             !success
                 ? "Não foi possível concluir."
-                : hasCritical
-                    ? "Aguarde a análise administrativa."
-                    : hasReview
-                        ? "Aguarde a verificação administrativa."
-                        : autoApproved
-                            ? "Liberação automática concluída."
-                            : "Nenhum item suspeito encontrado.";
+                : filterError
+                    ? "Aguarde a verificação administrativa."
+                    : hasCritical
+                        ? "Aguarde a análise administrativa."
+                        : hasReview
+                            ? "Aguarde a verificação administrativa."
+                            : autoApproved
+                                ? "Liberação automática concluída."
+                                : "Nenhum item suspeito encontrado.";
 
         Color resultAccent =
-            hasCritical
-                ? Danger
-                : hasReview
-                    ? Warning
-                    : Accent;
+            filterError
+                ? Warning
+                : hasCritical
+                    ? Danger
+                    : hasReview
+                        ? Warning
+                        : Accent;
 
         _visibleFindings.Clear();
         if (detailsReleased && snapshot?.Findings is not null)
@@ -1122,13 +1134,15 @@ internal sealed class AgentMainForm : Form
             success
                 ? detailsReleased
                     ? "O relatório detalhado foi liberado pela administração.\nAs evidências abaixo estão disponíveis para revisão."
-                    : hasCritical
-                        ? "Foi encontrada evidência crítica em vermelho.\nPossível trapaceiro detectado; aguarde a análise administrativa."
-                        : hasReview
-                            ? "Foram encontrados itens suspeitos em laranja.\nAguarde a verificação administrativa."
-                            : autoApproved
-                                ? "Nenhum item vermelho ou laranja foi encontrado.\nSua verificação foi aprovada automaticamente."
-                                : "Nenhum item vermelho ou laranja foi encontrado."
+                    : filterError
+                        ? "A classificação não terminou corretamente.\nEsta análise não será liberada automaticamente; aguarde a administração."
+                        : hasCritical
+                            ? "Foi encontrada evidência crítica em vermelho.\nPossível trapaceiro detectado; aguarde a análise administrativa."
+                            : hasReview
+                                ? "Foram encontrados itens suspeitos em laranja.\nAguarde a verificação administrativa."
+                                : autoApproved
+                                    ? "Nenhum item vermelho ou laranja foi encontrado.\nSua verificação foi aprovada automaticamente."
+                                    : "Nenhum item vermelho ou laranja foi encontrado."
                 : "A coleta foi interrompida antes da conclusão.",
             new Rectangle(46, 180, 610, 58),
             10.4F,
@@ -1143,14 +1157,14 @@ internal sealed class AgentMainForm : Form
             FontStyle.Bold,
             "Consolas"));
         statusCard.Controls.Add(MakeLabel(
-            success ? (hasCritical ? "⚠" : hasReview ? "!" : "✓") : "!",
+            success ? (filterError ? "!" : hasCritical ? "⚠" : hasReview ? "!" : "✓") : "!",
             new Rectangle(26, 55, 58, 58),
             30F,
             success ? resultAccent : Danger,
             FontStyle.Bold));
         statusCard.Controls.Add(MakeLabel(
             success
-                ? (hasCritical ? "CRÍTICO" : hasReview ? "REVISAR" : autoApproved ? "VERIFICADO" : "LIMPO")
+                ? (filterError ? "REVISAR" : hasCritical ? "CRÍTICO" : hasReview ? "REVISAR" : autoApproved ? "VERIFICADO" : "LIMPO")
                 : "ERRO",
             new Rectangle(96, 61, 190, 36),
             16F,
@@ -1167,40 +1181,46 @@ internal sealed class AgentMainForm : Form
         {
             Bounds = new Rectangle(333, 18, 197, 140),
             BackColor = Color.FromArgb(24, 18, 8),
-            BorderColor = hasCritical
-                ? Color.FromArgb(125, 35, 48)
-                : hasReview
-                    ? Color.FromArgb(150, 96, 20)
-                    : autoApproved
-                        ? Accent
-                        : Border
+            BorderColor = filterError
+                ? Color.FromArgb(150, 96, 20)
+                : hasCritical
+                    ? Color.FromArgb(125, 35, 48)
+                    : hasReview
+                        ? Color.FromArgb(150, 96, 20)
+                        : autoApproved
+                            ? Accent
+                            : Border
         };
         decision.Controls.Add(MakeLabel(
             !success
                 ? "STATUS:\nREPETIR\nANÁLISE"
-                : hasCritical
-                    ? "POSSÍVEL\nTRAPACEIRO\nDETECTADO"
-                    : hasReview
-                        ? "ITENS\nSUSPEITOS\nREVISAR"
-                        : autoApproved
-                            ? "STATUS:\nVERIFICADO\nAUTOMÁTICO"
-                            : "STATUS:\nANÁLISE\nLIMPA",
+                : filterError
+                    ? "ERRO NOS\nFILTROS\nREVISAR"
+                    : hasCritical
+                        ? "POSSÍVEL\nTRAPACEIRO\nDETECTADO"
+                        : hasReview
+                            ? "ITENS\nSUSPEITOS\nREVISAR"
+                            : autoApproved
+                                ? "STATUS:\nVERIFICADO\nAUTOMÁTICO"
+                                : "STATUS:\nANÁLISE\nLIMPA",
             new Rectangle(18, 18, 165, 66),
             10.1F,
-            hasCritical ? Danger : hasReview ? Warning : autoApproved ? Accent : TextPrimary,
+            filterError ? Warning : hasCritical ? Danger : hasReview ? Warning : autoApproved ? Accent : TextPrimary,
             FontStyle.Bold));
         decision.Controls.Add(MakeLabel(
             !success
                 ? "O envio não foi concluído."
-                : hasCritical
-                    ? "Aguarde análise\nadministrativa."
-                    : hasReview
-                        ? "Aguarde verificação\nadministrativa."
-                        : autoApproved
-                            ? "Jogador liberado\nautomaticamente."
-                            : detailsReleased
-                                ? "Detalhes liberados\npela administração."
-                                : "Nenhum item suspeito.",
+                : filterError
+                    ? "Classificação incompleta.\nSem liberação automática."
+                    : hasCritical
+                        ? "Aguarde análise\nadministrativa."
+                        : hasReview
+                            ? "Aguarde verificação\nadministrativa."
+                            : autoApproved
+                                ? "Jogador liberado\nautomaticamente."
+                                : detailsReleased
+                                    ? "Detalhes liberados\npela administração."
+                                    : "Nenhum item suspeito.",
             new Rectangle(18, 96, 165, 38),
             8.3F,
             TextSecondary));
@@ -1230,38 +1250,42 @@ internal sealed class AgentMainForm : Form
         else
         {
             var lockedCard = MakeCard(new Rectangle(28, 258, 1198, 292));
-            lockedCard.BorderColor = hasCritical ? Danger : hasReview ? Warning : Accent;
+            lockedCard.BorderColor = filterError ? Warning : hasCritical ? Danger : hasReview ? Warning : Accent;
 
             lockedCard.Controls.Add(MakeLabel(
-                hasCritical ? "⚠" : hasReview ? "!" : "✓",
+                filterError ? "!" : hasCritical ? "⚠" : hasReview ? "!" : "✓",
                 new Rectangle(30, 44, 80, 80),
                 36F,
-                hasCritical ? Danger : hasReview ? Warning : Accent,
+                filterError ? Warning : hasCritical ? Danger : hasReview ? Warning : Accent,
                 FontStyle.Bold));
 
             lockedCard.Controls.Add(MakeLabel(
-                hasCritical
-                    ? "Possível trapaceiro detectado"
-                    : hasReview
-                        ? "Itens suspeitos encontrados"
-                        : autoApproved
-                            ? "Verificação aprovada automaticamente"
-                            : "Nenhum item suspeito",
+                filterError
+                    ? "Falha parcial nos filtros"
+                    : hasCritical
+                        ? "Possível trapaceiro detectado"
+                        : hasReview
+                            ? "Itens suspeitos encontrados"
+                            : autoApproved
+                                ? "Verificação aprovada automaticamente"
+                                : "Nenhum item suspeito",
                 new Rectangle(130, 46, 650, 42),
                 23F,
                 TextPrimary,
                 FontStyle.Bold));
 
             lockedCard.Controls.Add(MakeLabel(
-                hasCritical
-                    ? $"Foi registrado {criticalCount} item crítico em vermelho. " +
-                      "Aguarde a análise administrativa antes da conclusão da verificação."
-                    : hasReview
-                        ? $"Foram registrados {reviewCount} item(ns) suspeito(s) em laranja. " +
-                          "Aguarde a verificação administrativa."
-                        : autoApproved
-                            ? "Nenhum item vermelho ou laranja foi encontrado. A liberação automática foi confirmada."
-                            : "Nenhum item vermelho ou laranja foi encontrado nesta análise.",
+                filterError
+                    ? "Os filtros não terminaram corretamente. Esta análise não é considerada limpa e exige revisão administrativa."
+                    : hasCritical
+                        ? $"Foi registrado {criticalCount} item crítico em vermelho. " +
+                          "Aguarde a análise administrativa antes da conclusão da verificação."
+                        : hasReview
+                            ? $"Foram registrados {reviewCount} item(ns) suspeito(s) em laranja. " +
+                              "Aguarde a verificação administrativa."
+                            : autoApproved
+                                ? "Nenhum item vermelho ou laranja foi encontrado. A liberação automática foi confirmada."
+                                : "Nenhum item vermelho ou laranja foi encontrado nesta análise.",
                 new Rectangle(132, 98, 930, 56),
                 10F,
                 TextSecondary));
@@ -1334,16 +1358,18 @@ internal sealed class AgentMainForm : Form
         else
         {
             var restricted = MakeLabel(
-                hasCritical
-                    ? "Possível trapaceiro detectado.\n\n" +
-                      "A administração recebeu a evidência crítica. Aguarde a análise administrativa."
-                    : hasReview
-                        ? "Itens suspeitos foram encontrados.\n\n" +
-                          "A administração recebeu os achados em laranja. Aguarde a verificação administrativa."
-                        : autoApproved
-                            ? "Verificação aprovada automaticamente.\n\n" +
-                              "Nenhum item vermelho ou laranja foi encontrado."
-                            : "A análise foi concluída sem itens críticos ou suspeitos.",
+                filterError
+                    ? "Falha parcial nos filtros.\n\nEsta análise exige revisão administrativa e não será liberada automaticamente."
+                    : hasCritical
+                        ? "Possível trapaceiro detectado.\n\n" +
+                          "A administração recebeu a evidência crítica. Aguarde a análise administrativa."
+                        : hasReview
+                            ? "Itens suspeitos foram encontrados.\n\n" +
+                              "A administração recebeu os achados em laranja. Aguarde a verificação administrativa."
+                            : autoApproved
+                                ? "Verificação aprovada automaticamente.\n\n" +
+                                  "Nenhum item vermelho ou laranja foi encontrado."
+                                : "A análise foi concluída sem itens críticos ou suspeitos.",
                 new Rectangle(20, 62, 540, 116),
                 9.4F,
                 TextSecondary);
@@ -1353,7 +1379,7 @@ internal sealed class AgentMainForm : Form
 
         SetHeaderState(
             success
-                ? (hasCritical ? "CRÍTICO" : hasReview ? "REVISAR" : autoApproved ? "VERIFICADO" : "LIMPO")
+                ? (filterError ? "REVISAR" : hasCritical ? "CRÍTICO" : hasReview ? "REVISAR" : autoApproved ? "VERIFICADO" : "LIMPO")
                 : "ERRO",
             success ? resultAccent : Danger);
     }
