@@ -1217,7 +1217,7 @@ async function openReport(id) {
 
   document.getElementById("reportMetrics").innerHTML = `
     <div class="metric"><small>STATUS</small><strong>${escapeHtml(currentStageLabel)}</strong></div>
-    <div class="metric"><small>CLASSIFICAÇÃO</small><strong>FILTRO LOCAL</strong><span>Sem IA / sem serviços externos de decisão</span></div>
+    <div class="metric"><small>CLASSIFICAÇÃO</small><strong>FILTRO LOCAL</strong><span>Classificação determinística pelos filtros Vorken</span></div>
     <div class="metric danger-metric"><small>VERMELHO · CRÍTICO/ALTO</small><strong>${criticalFindings.length}</strong><span>Regras locais de alta prioridade</span></div>
     <div class="metric warning-metric"><small>AMARELO · REVISAR</small><strong>${mediumFindings.length}</strong><span>Sinais que exigem contexto humano</span></div>
     <div class="metric info-metric"><small>AZUL · COLETADO</small><strong>${collectedFindings.length}</strong><span>Evidência informativa / não crítica</span></div>
@@ -1366,7 +1366,7 @@ async function openReport(id) {
 
   if (filteredList) {
     filteredList.innerHTML =
-      '<div class="message ok">Nenhum filtro por IA está ativo. Aplicativos confiáveis são descartados diretamente pelos filtros locais.</div>';
+      '<div class="message ok">Aplicativos confiáveis são descartados diretamente pelos filtros locais; apenas sinais técnicos relevantes permanecem no relatório.</div>';
   }
 
   const unknownAppFindings = findings.filter((item) =>
