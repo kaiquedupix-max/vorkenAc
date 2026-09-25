@@ -1314,7 +1314,7 @@ async function openReport(id) {
       steamCorrelation.note ||
       (
         steamAccounts.length
-          ? "As contas encontradas foram consultadas na API oficial da Steam."
+          ? "As contas encontradas foram consultadas na Steam e no Server Armour."
           : "Nenhuma conta Steam foi encontrada nesta análise."
       );
   }
@@ -1322,6 +1322,8 @@ async function openReport(id) {
   const providerName = (key) => {
     if (key === "steam")
       return "Steam";
+    if (key === "serverArmour")
+      return "Server Armour";
     return key;
   };
 
@@ -1329,10 +1331,13 @@ async function openReport(id) {
     if (!provider || provider.status !== "ok")
       return "INDISPONÍVEL";
 
-    if (provider.banned === true)
+    if (provider.banned === true) {
+      if (provider.source === "server_armour")
+        return String(provider.serverBanCount || 0) + " BAN(S) EM SERVIDORES";
       return provider.rustSpecific === true
         ? "BAN · RUST"
         : "BAN DETECTADO";
+    }
 
     return "SEM BAN CONHECIDO";
   };
@@ -1367,14 +1372,23 @@ async function openReport(id) {
               steamId ||
               "Conta Steam";
 
+            const serverArmourBans =
+              Number(checks?.serverArmour?.serverBanCount || 0);
+
             const tagClass =
               consensus?.code === "ban_detected"
-                ? (consensus?.rustSpecific === true ? "high" : "medium")
+                ? (checks?.steam?.rustSpecific === true ? "high" : "medium")
                 : "info";
 
             const tagText =
               consensus?.code === "ban_detected"
-                ? (consensus?.rustSpecific === true ? "BAN · RUST" : "BAN DETECTADO")
+                ? (
+                    serverArmourBans > 0
+                      ? "BAN EM SERVIDOR RUST"
+                      : checks?.steam?.rustSpecific === true
+                        ? "BAN · RUST"
+                        : "BAN DETECTADO"
+                  )
                 : consensus?.code === "no_known_ban"
                   ? "SEM BAN"
                   : "API INDISPONÍVEL";
@@ -1389,7 +1403,7 @@ async function openReport(id) {
               "Steam";
 
             const providerRows =
-              ["steam"]
+              ["steam", "serverArmour"]
                 .map((key) => {
                   const provider =
                     checks?.[key];
@@ -1399,6 +1413,40 @@ async function openReport(id) {
                       ? '<div class="kv"><span>Detalhe</span><span>' +
                         escapeHtml(provider.reason) +
                         '</span></div>'
+                      : "";
+
+                  const serverBanDetails =
+                    key === "serverArmour" &&
+                    safeArray(provider?.bans).length
+                      ? (
+                          '<div class="message warning">Bans encontrados: ' +
+                          escapeHtml(String(provider?.serverBanCount || safeArray(provider?.bans).length)) +
+                          '</div>' +
+                          safeArray(provider?.bans)
+                            .map((ban) =>
+                              '<div class="finding">' +
+                                '<div class="kv"><span>Servidor</span><span>' +
+                                  escapeHtml(ban?.serverName || "Servidor não informado") +
+                                '</span></div>' +
+                                '<div class="kv"><span>Motivo</span><span>' +
+                                  escapeHtml(ban?.reason || "Não informado") +
+                                '</span></div>' +
+                                '<div class="kv"><span>Data</span><span>' +
+                                  escapeHtml(ban?.created || ban?.dateTime || "—") +
+                                '</span></div>' +
+                                '<div class="kv"><span>Duração</span><span>' +
+                                  escapeHtml(ban?.banLength || "—") +
+                                '</span></div>' +
+                                '<div class="kv"><span>Até</span><span>' +
+                                  escapeHtml(ban?.banUntil || "Permanente / não informado") +
+                                '</span></div>' +
+                                '<div class="kv"><span>Status</span><span>' +
+                                  (ban?.active === false ? "Expirado" : "Ativo") +
+                                '</span></div>' +
+                              '</div>'
+                            )
+                            .join("")
+                        )
                       : "";
 
                   return (
@@ -1411,6 +1459,7 @@ async function openReport(id) {
                         escapeHtml(providerResultText(provider)) +
                       '</span></div>' +
                       reason +
+                      serverBanDetails +
                       '<details class="evidence-details"><summary>Resposta normalizada</summary><pre>' +
                         escapeHtml(JSON.stringify(provider || {}, null, 2)) +
                       '</pre></details>' +
@@ -1451,13 +1500,17 @@ async function openReport(id) {
                 '<div class="kv"><span>Último vestígio local</span><span>' +
                   escapeHtml(formatDate(account?.lastSeenUtc)) +
                 '</span></div>' +
-                '<div class="kv"><span>Consenso</span><span>' +
+                '<div class="kv"><span>Resultado</span><span>' +
                   escapeHtml(consensus?.label || "—") +
                 '</span></div>' +
-                '<div class="kv"><span>Votos</span><span>' +
+                '<div class="kv"><span>Bans Server Armour</span><span>' +
+                  escapeHtml(String(serverArmourBans)) +
+                '</span></div>' +
+                '<div class="kv"><span>Fontes consultadas</span><span>' +
                   escapeHtml(
-                    String(consensus?.positiveVotes ?? 0) +
-                    " resultado positivo na API Steam"
+                    safeArray(consensus?.availableSources)
+                      .map((source) => source === "server_armour" ? "Server Armour" : "Steam")
+                      .join(", ") || "—"
                   ) +
                 '</span></div>' +
                 (
@@ -1467,7 +1520,7 @@ async function openReport(id) {
                       '">Abrir Steam</a></span></div>'
                     : ""
                 ) +
-                '<details class="evidence-details"><summary>Ver resultado da API Steam</summary><div>' +
+                '<details class="evidence-details"><summary>Ver resultados Steam + Server Armour</summary><div>' +
                   providerRows +
                 '</div></details>' +
               '</article>'
