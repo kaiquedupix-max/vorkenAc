@@ -283,7 +283,7 @@ const commonAppCatalog = loadCommonAppCatalog();
 
 const activeRebuilds = new Set();
 
-const AI_REVIEW_POLICY_VERSION = "v6-ai-grounded-final-arbiter";
+const AI_REVIEW_POLICY_VERSION = "v7-groq-primary-red-only";
 
 const aiReviewConfig = {
   enabled:
@@ -1059,85 +1059,79 @@ function commonAppLooksVerified(caseData) {
 }
 
 async function callAiReviewBatch(cases) {
-  const controller =
-    new AbortController();
-
-  const timeout =
-    setTimeout(
-      () => controller.abort(),
-      aiReviewConfig.timeoutMs
-    );
-
   const schema = {
-    type: "object",
-    properties: {
-      reviews: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            fingerprint: {
-              type: "string",
-              description: "Fingerprint exato recebido no caso."
+      type: "object",
+      properties: {
+        reviews: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              fingerprint: {
+                type: "string",
+                description: "Fingerprint exato recebido no caso."
+              },
+              verdict: {
+                type: "string",
+                enum: [
+                  "likely_cheat",
+                  "likely_false_positive",
+                  "needs_review",
+                ],
+                description: "Classificação conservadora do achado."
+              },
+              confidence: {
+                type: "number",
+                minimum: 0,
+                maximum: 1,
+                description: "Confiança da classificação entre 0 e 1."
+              },
+              reason: {
+                type: "string",
+                description: "Justificativa técnica curta baseada somente nas evidências fornecidas."
+              },
             },
-            verdict: {
-              type: "string",
-              enum: [
-                "likely_cheat",
-                "likely_false_positive",
-                "needs_review",
-              ],
-              description: "Classificação conservadora do achado."
-            },
-            confidence: {
-              type: "number",
-              minimum: 0,
-              maximum: 1,
-              description: "Confiança da classificação entre 0 e 1."
-            },
-            reason: {
-              type: "string",
-              description: "Justificativa técnica curta baseada somente nas evidências fornecidas."
-            },
+            required: [
+              "fingerprint",
+              "verdict",
+              "confidence",
+              "reason",
+            ],
+            additionalProperties: false,
           },
-          required: [
-            "fingerprint",
-            "verdict",
-            "confidence",
-            "reason",
-          ],
         },
       },
-    },
-    required: ["reviews"],
-  };
-
+      required: ["reviews"],
+      additionalProperties: false,
+    };
+  
   const systemPrompt = [
-    "Você é a segunda camada de revisão de um sistema anti-cheat.",
-    "A primeira camada gera CANDIDATOS técnicos. Você é a camada final que decide se cada candidato deve permanecer como detecção vermelha ou ser rebaixado para coleta/revisão.",
-    "Você recebe exatamente UM caso por chamada. Trate o vermelho técnico como hipótese e investigue esse item individualmente antes de decidir.",
-    "Só use likely_cheat quando as evidências fornecidas forem realmente fortes, específicas e coerentes. Para permanecer vermelho, prefira múltiplos sinais independentes ou um sinal técnico excepcionalmente forte. Aplicativo comum, download apagado, arquivo movido, nome estranho, Temp, ausência de assinatura ou USN isolados NÃO bastam.",
-    "Classifique cada caso como likely_cheat, likely_false_positive ou needs_review.",
-    "Se faltar evidência, use needs_review. needs_review NÃO é detecção vermelha: significa somente coleta/revisão azul.",
-    "Não invente fatos, arquivos, assinaturas, origem ou execução que não estejam no JSON.",
-    "Dê peso alto a execução confirmada, origem de download, assinatura/publisher, hash, metadados do executável, caminho coerente, catálogo conhecido e correlação entre fontes.",
-    "Você tem Pesquisa Google habilitada. Use-a quando precisar confirmar a identidade/reputação pública de um executável, aplicativo, publisher, domínio ou produto. Um nome famoso sozinho não autentica o arquivo.",
-    "Quando houver URL HTTP/HTTPS, URL Context também está disponível. Use-o para consultar a página real quando isso ajudar, além de pageInspection já coletado pelo backend.",
-    "Casos protegidos pelo motor técnico NÃO são enviados para você. Não tente inferir ou rebaixar uma execução confirmada em mídia removível, cheat conhecido executado, origem direta de domínio conhecido de cheat ou correlação forte download+execução+exclusão.",
-    "Windows/System32/SysWOW64/WinSxS, Program Files, Steam, Discord, Node.js, Visual Studio/Build Tools, CapCut, ExitLag, AnyDesk, navegadores, launchers, runtimes, drivers, Easy Anti-Cheat, BattlEye, Riot Vanguard e outros softwares comuns devem tender a likely_false_positive quando nome, assinatura, publisher, origem oficial ou caminho forem coerentes e não existir sinal independente forte.",
-    "Quando commonApplication ou executableIdentity estiver presente, valide nome + signer/publisher + origem oficial + hash/caminho observado. Steam, AnyDesk, CapCut, Node.js, VS Build Tools e software conhecido coerente devem ser likely_false_positive. Nome conhecido sozinho não basta para liberar se assinatura/origem contradizem os metadados.",
-    "Para páginas/URLs, use também pageInspection (status HTTP, hostname, redirects, title e description obtidos pelo backend com proteção SSRF). Confirme se a página observada é coerente com a alegação de cheat/script/loader; plataforma genérica ou página inocente deve ser likely_false_positive/needs_review, não likely_cheat.",
-    "Use sourceUrl/finalUrl/pageUrl/siteUrl/referrerUrl/recoveredUrl para classificar a ORIGEM. Diferencie cheat/script/loader/macro de software legítimo. Uma pesquisa no Google/Bing é apenas needs_review; acesso/download direto de domínio conhecido do catálogo é sinal forte.",
-    "O catálogo OSINT 2026-09-24 inclui fontes verificadas, providers/aliases, keywords e infraestrutura de venda. Um catalogMatch de fonte verificada é sinal forte; provider/alias ou keyword isolado é apenas contexto e precisa de Rust/origem/execução ou outro sinal independente.",
-    "Vocabulário contextual carregado da planilha (não use isoladamente como prova): " + osintAiContext,
-    "Stripe, SellHub, Sellix, Shoppy, Selly, Digiseller, PayPal, Cash App, Apple Pay, Google Pay, Discord, Telegram, GitHub, YouTube, TikTok, Reddit e X são plataformas genéricas: NUNCA classifique cheat só porque uma delas aparece isoladamente. Eleve apenas quando houver vínculo com provider/fonte verificada, referrer/URL específica, download ou outros sinais concretos.",
-    "Arquivos .xls/.xlsx e outros documentos baixados só devem permanecer como suspeitos se a origem/metadados tiverem relação concreta com cheat/script/loader/macro; extensão ou download isolado não prova cheat.",
-    "Nome estranho sozinho, caminho Temp sozinho, arquivo apagado sozinho, ausência de assinatura sozinha e ZIP sozinho não provam cheat.",
-    "Nunca rebaixe um caso somente porque o nome do arquivo parece comum.",
-    "Retorne uma revisão para cada fingerprint recebido.",
-    "Responda exclusivamente no JSON solicitado.",
-  ].join(" ");
-
+      "Você é a segunda camada de revisão de um sistema anti-cheat.",
+      "A primeira camada gera CANDIDATOS técnicos. Você é a camada final que decide se cada candidato deve permanecer como detecção vermelha ou ser rebaixado para coleta/revisão.",
+      "Você recebe exatamente UM caso por chamada. Trate o vermelho técnico como hipótese e investigue esse item individualmente antes de decidir.",
+      "Só use likely_cheat quando as evidências fornecidas forem realmente fortes, específicas e coerentes. Para permanecer vermelho, prefira múltiplos sinais independentes ou um sinal técnico excepcionalmente forte. Aplicativo comum, download apagado, arquivo movido, nome estranho, Temp, ausência de assinatura ou USN isolados NÃO bastam.",
+      "Classifique cada caso como likely_cheat, likely_false_positive ou needs_review.",
+      "Se faltar evidência, use needs_review. needs_review NÃO é detecção vermelha: significa somente coleta/revisão azul.",
+      "Não invente fatos, arquivos, assinaturas, origem ou execução que não estejam no JSON.",
+      "Dê peso alto a execução confirmada, origem de download, assinatura/publisher, hash, metadados do executável, caminho coerente, catálogo conhecido e correlação entre fontes.",
+      "Você tem Pesquisa Google habilitada. Use-a quando precisar confirmar a identidade/reputação pública de um executável, aplicativo, publisher, domínio ou produto. Um nome famoso sozinho não autentica o arquivo.",
+      "Quando houver URL HTTP/HTTPS, URL Context também está disponível. Use-o para consultar a página real quando isso ajudar, além de pageInspection já coletado pelo backend.",
+      "Casos protegidos pelo motor técnico NÃO são enviados para você. Não tente inferir ou rebaixar uma execução confirmada em mídia removível, cheat conhecido executado, origem direta de domínio conhecido de cheat ou correlação forte download+execução+exclusão.",
+      "Windows/System32/SysWOW64/WinSxS, Program Files, Steam, Discord, Node.js, Visual Studio/Build Tools, CapCut, ExitLag, AnyDesk, navegadores, launchers, runtimes, drivers, Easy Anti-Cheat, BattlEye, Riot Vanguard e outros softwares comuns devem tender a likely_false_positive quando nome, assinatura, publisher, origem oficial ou caminho forem coerentes e não existir sinal independente forte.",
+      "Quando commonApplication ou executableIdentity estiver presente, valide nome + signer/publisher + origem oficial + hash/caminho observado. Steam, AnyDesk, CapCut, Node.js, VS Build Tools e software conhecido coerente devem ser likely_false_positive. Nome conhecido sozinho não basta para liberar se assinatura/origem contradizem os metadados.",
+      "Para páginas/URLs, use também pageInspection (status HTTP, hostname, redirects, title e description obtidos pelo backend com proteção SSRF). Confirme se a página observada é coerente com a alegação de cheat/script/loader; plataforma genérica ou página inocente deve ser likely_false_positive/needs_review, não likely_cheat.",
+      "Use sourceUrl/finalUrl/pageUrl/siteUrl/referrerUrl/recoveredUrl para classificar a ORIGEM. Diferencie cheat/script/loader/macro de software legítimo. Uma pesquisa no Google/Bing é apenas needs_review; acesso/download direto de domínio conhecido do catálogo é sinal forte.",
+      "O catálogo OSINT 2026-09-24 inclui fontes verificadas, providers/aliases, keywords e infraestrutura de venda. Um catalogMatch de fonte verificada é sinal forte; provider/alias ou keyword isolado é apenas contexto e precisa de Rust/origem/execução ou outro sinal independente.",
+      "Vocabulário contextual carregado da planilha (não use isoladamente como prova): " + osintAiContext,
+      "Stripe, SellHub, Sellix, Shoppy, Selly, Digiseller, PayPal, Cash App, Apple Pay, Google Pay, Discord, Telegram, GitHub, YouTube, TikTok, Reddit e X são plataformas genéricas: NUNCA classifique cheat só porque uma delas aparece isoladamente. Eleve apenas quando houver vínculo com provider/fonte verificada, referrer/URL específica, download ou outros sinais concretos.",
+      "Arquivos .xls/.xlsx e outros documentos baixados só devem permanecer como suspeitos se a origem/metadados tiverem relação concreta com cheat/script/loader/macro; extensão ou download isolado não prova cheat.",
+      "Nome estranho sozinho, caminho Temp sozinho, arquivo apagado sozinho, ausência de assinatura sozinha e ZIP sozinho não provam cheat.",
+      "Nunca rebaixe um caso somente porque o nome do arquivo parece comum.",
+      "Retorne uma revisão para cada fingerprint recebido.",
+      "Responda exclusivamente no JSON solicitado.",
+    ].join(" ");
+  
+  
   const prompt =
     "Revise estes casos técnicos:\n" +
     JSON.stringify(
@@ -1147,111 +1141,299 @@ async function callAiReviewBatch(cases) {
       }))
     );
 
-  try {
-    const endpoint =
-      aiReviewConfig.baseUrl +
-      "/models/" +
-      encodeURIComponent(aiReviewConfig.model) +
-      ":generateContent";
+  const callGroq = async () => {
+    if (
+      !aiReviewConfig.groq.apiKey ||
+      !aiReviewConfig.groq.model
+    ) {
+      throw new Error("Groq não configurado.");
+    }
 
-    const response =
-      await fetch(
-        endpoint,
-        {
-          method: "POST",
-          headers: {
-            "x-goog-api-key": aiReviewConfig.apiKey,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            tools: aiReviewTools(cases),
-            systemInstruction: {
-              parts: [
+    const controller =
+      new AbortController();
+
+    const timeout =
+      setTimeout(
+        () => controller.abort(),
+        aiReviewConfig.timeoutMs
+      );
+
+    try {
+      const response =
+        await fetch(
+          aiReviewConfig.groq.baseUrl +
+            "/chat/completions",
+          {
+            method: "POST",
+            headers: {
+              Authorization:
+                "Bearer " +
+                aiReviewConfig.groq.apiKey,
+              "Content-Type":
+                "application/json",
+            },
+            body: JSON.stringify({
+              model:
+                aiReviewConfig.groq.model,
+              messages: [
                 {
-                  text: systemPrompt,
+                  role: "system",
+                  content: systemPrompt,
+                },
+                {
+                  role: "user",
+                  content: prompt,
                 },
               ],
-            },
-            contents: [
-              {
-                role: "user",
-                parts: [
-                  {
-                    text: prompt,
-                  },
-                ],
-              },
-            ],
-            generationConfig: {
-              responseFormat: {
-                text: {
-                  mimeType: "APPLICATION_JSON",
+              temperature: 0,
+              reasoning_effort: "low",
+              response_format: {
+                type: "json_schema",
+                json_schema: {
+                  name: "vorken_review",
+                  strict: true,
                   schema,
                 },
               },
-            },
-          }),
-          signal: controller.signal,
-        }
-      );
-
-    const bodyText =
-      await response.text();
-
-    if (!response.ok) {
-      const error =
-        new Error(
-          "Gemini HTTP " +
-          response.status +
-          ": " +
-          bodyText.slice(0, 700)
+            }),
+            signal: controller.signal,
+          }
         );
 
-      error.status = response.status;
-      error.responseBody = bodyText.slice(0, 2000);
-      throw error;
+      const bodyText =
+        await response.text();
+
+      if (!response.ok) {
+        const error =
+          new Error(
+            "Groq HTTP " +
+            response.status +
+            ": " +
+            bodyText.slice(0, 700)
+          );
+
+        error.status = response.status;
+        error.responseBody =
+          bodyText.slice(0, 2000);
+
+        throw error;
+      }
+
+      const payload =
+        JSON.parse(bodyText);
+
+      const content =
+        String(
+          payload?.choices?.[0]
+            ?.message?.content || ""
+        ).trim();
+
+      if (!content) {
+        throw new Error(
+          "O Groq não retornou conteúdo estruturado."
+        );
+      }
+
+      const parsed =
+        JSON.parse(content);
+
+      const reviews =
+        Array.isArray(parsed?.reviews)
+          ? parsed.reviews
+          : [];
+
+      if (
+        !reviews.length &&
+        cases.length > 0
+      ) {
+        throw new Error(
+          "O Groq retornou JSON válido, mas sem revisões."
+        );
+      }
+
+      return reviews;
+    } finally {
+      clearTimeout(timeout);
+    }
+  };
+
+  const callGemini = async () => {
+    if (
+      !aiReviewConfig.gemini.apiKey ||
+      !aiReviewConfig.gemini.model
+    ) {
+      throw new Error("Gemini não configurado.");
     }
 
-    const payload =
-      JSON.parse(bodyText);
+    const controller =
+      new AbortController();
 
-    const content =
-      (payload?.candidates?.[0]?.content?.parts || [])
-        .map((part) => part?.text || "")
-        .join("")
-        .trim();
+    const timeout =
+      setTimeout(
+        () => controller.abort(),
+        aiReviewConfig.timeoutMs
+      );
 
-    if (!content) {
-      const finishReason =
-        payload?.candidates?.[0]?.finishReason ||
-        payload?.promptFeedback?.blockReason ||
-        "sem conteúdo";
+    try {
+      const endpoint =
+        aiReviewConfig.gemini.baseUrl +
+        "/models/" +
+        encodeURIComponent(
+          aiReviewConfig.gemini.model
+        ) +
+        ":generateContent";
 
-      throw new Error(
-        "O Gemini não retornou conteúdo estruturado (" +
-        finishReason +
-        ")."
+      const response =
+        await fetch(
+          endpoint,
+          {
+            method: "POST",
+            headers: {
+              "x-goog-api-key":
+                aiReviewConfig.gemini.apiKey,
+              "Content-Type":
+                "application/json",
+            },
+            body: JSON.stringify({
+              tools: aiReviewTools(cases),
+              systemInstruction: {
+                parts: [
+                  {
+                    text: systemPrompt,
+                  },
+                ],
+              },
+              contents: [
+                {
+                  role: "user",
+                  parts: [
+                    {
+                      text: prompt,
+                    },
+                  ],
+                },
+              ],
+              generationConfig: {
+                responseFormat: {
+                  text: {
+                    mimeType:
+                      "APPLICATION_JSON",
+                    schema,
+                  },
+                },
+              },
+            }),
+            signal: controller.signal,
+          }
+        );
+
+      const bodyText =
+        await response.text();
+
+      if (!response.ok) {
+        const error =
+          new Error(
+            "Gemini HTTP " +
+            response.status +
+            ": " +
+            bodyText.slice(0, 700)
+          );
+
+        error.status = response.status;
+        error.responseBody =
+          bodyText.slice(0, 2000);
+
+        throw error;
+      }
+
+      const payload =
+        JSON.parse(bodyText);
+
+      const content =
+        (
+          payload?.candidates?.[0]
+            ?.content?.parts || []
+        )
+          .map(
+            (part) =>
+              part?.text || ""
+          )
+          .join("")
+          .trim();
+
+      if (!content) {
+        const finishReason =
+          payload?.candidates?.[0]
+            ?.finishReason ||
+          payload?.promptFeedback
+            ?.blockReason ||
+          "sem conteúdo";
+
+        throw new Error(
+          "O Gemini não retornou conteúdo estruturado (" +
+          finishReason +
+          ")."
+        );
+      }
+
+      const parsed =
+        JSON.parse(content);
+
+      const reviews =
+        Array.isArray(parsed?.reviews)
+          ? parsed.reviews
+          : [];
+
+      if (
+        !reviews.length &&
+        cases.length > 0
+      ) {
+        throw new Error(
+          "O Gemini retornou JSON válido, mas sem revisões."
+        );
+      }
+
+      return reviews;
+    } finally {
+      clearTimeout(timeout);
+    }
+  };
+
+  let groqError = null;
+
+  if (
+    aiReviewConfig.groq.apiKey &&
+    aiReviewConfig.groq.model
+  ) {
+    try {
+      return await callGroq();
+    } catch (error) {
+      groqError = error;
+
+      console.warn(
+        "Falha na revisão primária pelo Groq; tentando Gemini:",
+        {
+          status: error?.status,
+          message:
+            error?.message,
+        }
       );
     }
-
-    const parsed =
-      JSON.parse(content);
-
-    const reviews =
-      Array.isArray(parsed?.reviews)
-        ? parsed.reviews
-        : [];
-
-    if (!reviews.length && cases.length > 0) {
-      throw new Error(
-        "O Gemini retornou JSON válido, mas sem revisões."
-      );
-    }
-
-    return reviews;
-  } finally {
-    clearTimeout(timeout);
   }
+
+  if (
+    aiReviewConfig.gemini.apiKey &&
+    aiReviewConfig.gemini.model
+  ) {
+    return await callGemini();
+  }
+
+  if (groqError)
+    throw groqError;
+
+  throw new Error(
+    "Nenhum provedor de IA configurado."
+  );
 }
 async function reviewFindingsWithAi(analysisId) {
   if (!aiReviewAvailable()) {
@@ -1436,7 +1618,7 @@ async function reviewFindingsWithAi(analysisId) {
           await callAiReviewBatch(batch);
       } catch (error) {
         console.error(
-          "Falha na revisão pelo Gemini; mantendo candidato na camada azul:",
+          "Falha na revisão por IA; mantendo candidato na camada azul:",
           {
             analysisId,
             status: error?.status,
@@ -1447,7 +1629,7 @@ async function reviewFindingsWithAi(analysisId) {
         batchFailures++;
         batchFailureMessages.push(
           trimAiString(
-            error?.message || "Falha desconhecida na API Gemini.",
+            error?.message || "Falha desconhecida no provedor de IA.",
             500
           )
         );
