@@ -1183,10 +1183,10 @@ async function processSubmittedReportWithRetry(
   // filtros locais nem transformar uma análise válida em filter_error.
   try {
     await pool.query(
-      \`UPDATE analyses
+      `UPDATE analyses
        SET processing_stage='external_checks',
            processing_message='Consultando histórico das contas Steam na Steam e no Server Armour...'
-       WHERE id=$1\`,
+       WHERE id=$1`,
       [analysis.id]
     );
 
@@ -1226,10 +1226,10 @@ async function processSubmittedReportWithRetry(
   for (let attempt = 1; attempt <= totalAttempts; attempt++) {
     try {
       await pool.query(
-        \`UPDATE analyses
+        `UPDATE analyses
          SET processing_stage='preparing',
              processing_message=$2
-         WHERE id=$1\`,
+         WHERE id=$1`,
         [
           analysis.id,
           attempt === 1
