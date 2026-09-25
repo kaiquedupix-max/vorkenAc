@@ -433,9 +433,7 @@
         "unnamed cheats rust",
         "unnamed rust external"
       ],
-      "domains": [
-        "linktr.ee"
-      ],
+      "domains": [],
       "discordInvites": [],
       "severity": "high",
       "source": "public_web"
