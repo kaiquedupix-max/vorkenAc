@@ -2031,6 +2031,51 @@ async function openReport(id) {
         return Boolean(name && filteredNames.has(name));
       });
 
+  const finalDetectionText =
+    finalFindings
+      .map((finding) =>
+        [
+          finding?.artifact_value,
+          finding?.evidence?.fileName,
+          finding?.evidence?.name,
+          finding?.evidence?.path,
+          finding?.evidence?.targetPath,
+          finding?.evidence?.currentPath,
+          finding?.evidence?.originalPath,
+          finding?.evidence?.sourceUrl,
+          finding?.evidence?.finalUrl,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase()
+      )
+      .join("\n");
+
+  const aiConfirmedDetectionFor = (...values) =>
+    values
+      .flat(Infinity)
+      .filter(Boolean)
+      .some((value) => {
+        const raw =
+          String(value || "")
+            .toLowerCase()
+            .trim();
+
+        if (!raw)
+          return false;
+
+        const name =
+          clientWindowsBaseName(raw);
+
+        return (
+          finalDetectionText.includes(raw) ||
+          (
+            name.length >= 4 &&
+            finalDetectionText.includes(name)
+          )
+        );
+      });
+
   const priorityFiles = [];
 
   for (const item of arrays.browserDownloads) {
@@ -2063,6 +2108,19 @@ async function openReport(id) {
       continue;
     }
 
+    if (
+      !aiConfirmedDetectionFor(
+        name,
+        item.targetPath,
+        item.currentPath,
+        item.sourceUrl,
+        item.finalUrl,
+        item.referrerUrl
+      )
+    ) {
+      continue;
+    }
+
     if (!/\.(exe|com|scr|dll|bat|cmd|ps1|msi)$/i.test(name)) continue;
 
     priorityFiles.push({
@@ -2090,6 +2148,16 @@ async function openReport(id) {
       commonAppMatchClient(
         item.fileName,
         commonApps
+      )
+    ) {
+      continue;
+    }
+
+    if (
+      !aiConfirmedDetectionFor(
+        item.fileName,
+        item.volume,
+        item.path
       )
     ) {
       continue;
@@ -2128,6 +2196,16 @@ async function openReport(id) {
       commonAppMatchClient(
         item.recoveredFileName,
         commonApps
+      )
+    ) {
+      continue;
+    }
+
+    if (
+      !aiConfirmedDetectionFor(
+        item.recoveredFileName,
+        item.recoveredUrl,
+        item.sourceArtifact
       )
     ) {
       continue;
