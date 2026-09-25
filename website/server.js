@@ -1137,10 +1137,10 @@ async function processSubmittedReportWithRetry(
   for (let attempt = 1; attempt <= totalAttempts; attempt++) {
     try {
       await pool.query(
-        \`UPDATE analyses
+        `UPDATE analyses
          SET processing_stage=$2,
              processing_message=$3
-         WHERE id=$1\`,
+         WHERE id=$1`,
         [
           analysis.id,
           attempt === 1
