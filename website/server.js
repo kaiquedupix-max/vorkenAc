@@ -268,6 +268,50 @@ function loadCommonAppCatalog() {
 
 const commonAppCatalog = loadCommonAppCatalog();
 
+const trustedExecutableCatalogPath = path.join(
+  __dirname,
+  "data",
+  "trusted-executables.json.gz.b64"
+);
+
+function loadAbsoluteTrustedExecutableCatalog() {
+  try {
+    const encoded =
+      fs.readFileSync(
+        trustedExecutableCatalogPath,
+        "utf8"
+      ).trim();
+
+    const raw =
+      gunzipSync(
+        Buffer.from(encoded, "base64")
+      ).toString("utf8");
+
+    const payload =
+      JSON.parse(raw);
+
+    return new Set(
+      (Array.isArray(payload) ? payload : [])
+        .map((item) =>
+          String(item || "")
+            .trim()
+            .toLowerCase()
+        )
+        .filter(Boolean)
+    );
+  } catch (error) {
+    console.error(
+      "Falha ao carregar catálogo absoluto de programas confiáveis:",
+      error.message
+    );
+
+    return new Set();
+  }
+}
+
+const absoluteTrustedExecutableCatalog =
+  loadAbsoluteTrustedExecutableCatalog();
+
 const activeRebuilds = new Set();
 
 app.disable("x-powered-by");
@@ -3539,6 +3583,123 @@ function isVorkenOwnedArtifact(value, evidence = {}) {
   );
 }
 
+function trustedCatalogCandidateName(value) {
+  const raw =
+    String(value || "").trim();
+
+  if (!raw)
+    return "";
+
+  try {
+    const parsed =
+      new URL(raw);
+
+    const urlName =
+      decodeURIComponent(
+        parsed.pathname
+          .split("/")
+          .filter(Boolean)
+          .at(-1) || ""
+      )
+        .trim()
+        .toLowerCase();
+
+    if (urlName)
+      return urlName;
+  } catch {
+  }
+
+  const normalized =
+    raw
+      .replaceAll("/", "\\")
+      .replace(/^["']+|["']+$/g, "")
+      .trim();
+
+  const parts =
+    normalized
+      .split("\\")
+      .filter(Boolean);
+
+  let name =
+    String(parts.at(-1) || normalized)
+      .trim()
+      .toLowerCase();
+
+  // Commands may append arguments after the executable path.
+  const quoted =
+    name.match(/^"([^"]+)"/);
+
+  if (quoted?.[1])
+    name =
+      String(
+        quoted[1]
+          .split("\\")
+          .filter(Boolean)
+          .at(-1) || quoted[1]
+      ).toLowerCase();
+
+  const extensionMatch =
+    name.match(
+      /([^\\/:*?"<>|]+\.(?:exe|com|sys|dll|msi|msc|ps1|bat|cmd|scr))\b/i
+    );
+
+  return String(
+    extensionMatch?.[1] || name
+  )
+    .trim()
+    .toLowerCase();
+}
+
+function isAbsoluteTrustedCatalogArtifact(
+  artifactType,
+  artifactValue,
+  evidence = {}
+) {
+  // Explicit exception: a real EXE/ZIP attachment downloaded from
+  // Discord is always priority maximum, even when its filename
+  // appears in the trusted catalog.
+  if (
+    isAllowedDiscordExecutableOrZipDownload(
+      evidence,
+      artifactValue
+    )
+  ) {
+    return false;
+  }
+
+  const values = [
+    artifactValue,
+    evidence?.name,
+    evidence?.fileName,
+    evidence?.path,
+    evidence?.fullPath,
+    evidence?.targetPath,
+    evidence?.currentPath,
+    evidence?.originalPath,
+    evidence?.executablePath,
+    evidence?.processPath,
+    evidence?.processName,
+    evidence?.modulePath,
+    evidence?.nativeExecutablePath,
+    evidence?.resolvedExecutablePath,
+    evidence?.executableName,
+    evidence?.recoveredFileName,
+    evidence?.command,
+    evidence?.imagePath,
+    evidence?.servicePath,
+  ].filter(Boolean);
+
+  return values.some((value) => {
+    const name =
+      trustedCatalogCandidateName(value);
+
+    return Boolean(
+      name &&
+      absoluteTrustedExecutableCatalog.has(name)
+    );
+  });
+}
+
 function isTrustedPortableExecutableName(value) {
   const name = path.basename(
     String(value || "")
@@ -3685,6 +3846,15 @@ async function rebuildFindings(analysisId, report) {
       if (!matchesRule(rule, artifact)) continue;
       if (isKnownBenignPeNoise(artifact.value)) continue;
       if (
+        isAbsoluteTrustedCatalogArtifact(
+          artifact.type,
+          artifact.value,
+          artifact.evidence || {}
+        )
+      ) {
+        continue;
+      }
+      if (
         shouldSuppressDiscordWebFinding(
           artifact.type,
           artifact.value,
@@ -3782,6 +3952,16 @@ async function insertReviewFinding(
 
   if (isKnownBenignPeNoise(normalizedValue))
     return;
+
+  if (
+    isAbsoluteTrustedCatalogArtifact(
+      artifactType,
+      normalizedValue,
+      evidence || {}
+    )
+  ) {
+    return;
+  }
 
   if (
     shouldSuppressDiscordWebFinding(
@@ -4500,8 +4680,8 @@ async function addBuiltInReviewFindings(analysisId, report) {
       severity = "medium";
       title = "Pesquisa recuperada relacionada ao catálogo Rust";
     } else if (discordPayload) {
-      severity = "medium";
-      title = "EXE/ZIP baixado do Discord recuperado do histórico";
+      severity = "critical";
+      title = "PRIORIDADE MÁXIMA: EXE/ZIP baixado do Discord recuperado do histórico";
     } else if (socialFile) {
       severity = "medium";
       title = "Download/arquivo social recuperado do histórico";
@@ -5577,28 +5757,49 @@ async function addBuiltInReviewFindings(analysisId, report) {
     const danger = chromiumDangerInfo(download.dangerType);
     const officialDiscordDownload =
       isOfficialDiscordInstallerOrUpdate(download);
-    const discordAttachmentExe =
-      ext === ".exe" &&
-      isDiscordAttachmentDownload(download) &&
-      !findCommonAppByFileName(name) &&
-      !isKnownBenignPeNoise(name);
+    const discordAttachmentPriority =
+      [".exe", ".zip"].includes(ext) &&
+      isDiscordAttachmentDownload(download);
 
-    if (
+    if (discordAttachmentPriority) {
+      await insertReviewFinding(
+        analysisId,
+        ext === ".zip"
+          ? "PRIORIDADE MÁXIMA: ZIP baixado de anexo CDN do Discord"
+          : "PRIORIDADE MÁXIMA: EXE baixado de anexo CDN do Discord",
+        "critical",
+        "browser_download",
+        download.targetPath ||
+          download.fileName ||
+          download.finalUrl ||
+          download.sourceUrl ||
+          "download",
+        {
+          ...download,
+          originKind: "Discord",
+          discordAttachment: true,
+          priorityMaximum: true,
+          protectedByTechnicalEngine: true,
+          confidence: "high",
+          note:
+            "Arquivo " +
+            ext.toUpperCase() +
+            " baixado por URL real de attachment/CDN do Discord. Esta regra tem prioridade máxima e ignora a allowlist de programas confiáveis.",
+        }
+      );
+    } else if (
       originKind &&
       isRiskyDownloadName(name) &&
       !officialDiscordDownload
     ) {
       const severity =
-        discordAttachmentExe ? "critical" :
         randomExecutable ? "critical" :
         doubleExtension ? "high" :
         "medium";
 
       await insertReviewFinding(
         analysisId,
-        discordAttachmentExe
-          ? "PRIORIDADE MÁXIMA: EXE baixado de anexo CDN do Discord"
-          : "Arquivo baixado do " + originKind,
+        "Arquivo baixado do " + originKind,
         severity,
         "browser_download",
         download.targetPath || download.fileName || "download",
@@ -5607,14 +5808,10 @@ async function addBuiltInReviewFindings(analysisId, report) {
           originKind,
           doubleExtension,
           randomExecutable,
-          discordAttachment: discordAttachmentExe,
-          priorityMaximum: discordAttachmentExe,
           confidence: severity === "critical" ? "high" : "medium",
-          note: discordAttachmentExe
-            ? "Executável não reconhecido como aplicativo confiável foi baixado por URL real de anexo do CDN do Discord. Atualizadores oficiais do Discord são excluídos desta regra."
-            : doubleExtension
-              ? "Download originado do " + originKind + " usa dupla extensão que termina em .exe. Deve ser revisado."
-              : "Download executável/compactado originado do " + originKind + ". Classificado no mínimo como ocorrência média para revisão.",
+          note: doubleExtension
+            ? "Download originado do " + originKind + " usa dupla extensão que termina em .exe. Deve ser revisado."
+            : "Download executável/compactado originado do " + originKind + ". Classificado no mínimo como ocorrência média para revisão.",
         }
       );
     }
