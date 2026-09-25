@@ -1298,7 +1298,7 @@ internal sealed class AgentMainForm : Form
                 detectionCount.ToString(),
                 "Detecções registradas",
                 "Detalhes restritos",
-                detectionCount > 0 ? Warning : Accent,
+                hasCritical ? Danger : hasReview ? Warning : Accent,
                 18));
         }
 
@@ -1351,7 +1351,11 @@ internal sealed class AgentMainForm : Form
             _evidenceDetailPanel.Controls.Add(restricted);
         }
 
-        SetHeaderState(success ? "CONCLUÍDO" : "ERRO", success ? Accent : Danger);
+        SetHeaderState(
+            success
+                ? (hasCritical ? "CRÍTICO" : hasReview ? "REVISAR" : autoApproved ? "VERIFICADO" : "LIMPO")
+                : "ERRO",
+            success ? resultAccent : Danger);
     }
 
     private VorkenCard MakeFindingColumn(
