@@ -283,7 +283,7 @@ const commonAppCatalog = loadCommonAppCatalog();
 
 const activeRebuilds = new Set();
 
-const AI_REVIEW_POLICY_VERSION = "v7-groq-primary-red-only";
+const AI_REVIEW_POLICY_VERSION = "v8-gemini-red-only";
 
 const aiReviewConfig = {
   enabled:
@@ -296,22 +296,6 @@ const aiReviewConfig = {
         Number(process.env.AI_TIMEOUT_MS || 60000)
       )
     ),
-  // Groq é a primeira opção. Gemini fica como fallback automático caso
-  // GROQ_API_KEY não esteja configurada ou a chamada Groq falhe/retorne 429.
-  groq: {
-    apiKey:
-      String(process.env.GROQ_API_KEY || "").trim(),
-    baseUrl:
-      String(
-        process.env.GROQ_BASE_URL ||
-        "https://api.groq.com/openai/v1"
-      ).replace(/\/$/, ""),
-    model:
-      String(
-        process.env.GROQ_MODEL ||
-        "openai/gpt-oss-20b"
-      ).trim(),
-  },
   gemini: {
     apiKey:
       String(
@@ -330,23 +314,13 @@ const aiReviewConfig = {
         "gemini-3.5-flash-lite"
       ).trim(),
   },
-  // Chave de cache inclui a ordem/provedores atuais para não reutilizar
-  // decisões antigas de outra configuração de IA.
   model:
-    [
-      "groq:" +
-        String(
-          process.env.GROQ_MODEL ||
-          "openai/gpt-oss-20b"
-        ).trim(),
-      "gemini:" +
-        String(
-          process.env.GEMINI_MODEL ||
-          "gemini-3.5-flash-lite"
-        ).trim(),
-    ].join("|"),
-  // Revisão deliberadamente unitária: cada finding recebe uma decisão
-  // independente para evitar que um caso influencie outro no mesmo prompt.
+    "gemini:" +
+    String(
+      process.env.GEMINI_MODEL ||
+      "gemini-3.5-flash-lite"
+    ).trim(),
+  // Modo econômico: um único finding vermelho por chamada.
   batchSize: 1,
   falsePositiveThreshold:
     Math.max(
@@ -373,19 +347,12 @@ const aiReviewConfig = {
     ),
 };
 
+
 function aiReviewAvailable() {
   return Boolean(
     aiReviewConfig.enabled &&
-    (
-      (
-        aiReviewConfig.groq.apiKey &&
-        aiReviewConfig.groq.model
-      ) ||
-      (
-        aiReviewConfig.gemini.apiKey &&
-        aiReviewConfig.gemini.model
-      )
-    )
+    aiReviewConfig.gemini.apiKey &&
+    aiReviewConfig.gemini.model
   );
 }
 
@@ -1399,28 +1366,6 @@ async function callAiReviewBatch(cases) {
     }
   };
 
-  let groqError = null;
-
-  if (
-    aiReviewConfig.groq.apiKey &&
-    aiReviewConfig.groq.model
-  ) {
-    try {
-      return await callGroq();
-    } catch (error) {
-      groqError = error;
-
-      console.warn(
-        "Falha na revisão primária pelo Groq; tentando Gemini:",
-        {
-          status: error?.status,
-          message:
-            error?.message,
-        }
-      );
-    }
-  }
-
   if (
     aiReviewConfig.gemini.apiKey &&
     aiReviewConfig.gemini.model
@@ -1428,12 +1373,10 @@ async function callAiReviewBatch(cases) {
     return await callGemini();
   }
 
-  if (groqError)
-    throw groqError;
-
   throw new Error(
-    "Nenhum provedor de IA configurado."
+    "Gemini não configurado."
   );
+
 }
 async function reviewFindingsWithAi(analysisId) {
   if (!aiReviewAvailable()) {
@@ -1618,7 +1561,7 @@ async function reviewFindingsWithAi(analysisId) {
           await callAiReviewBatch(batch);
       } catch (error) {
         console.error(
-          "Falha na revisão por IA; mantendo candidato na camada azul:",
+          "Falha na revisão pelo Gemini; mantendo candidato na camada azul:",
           {
             analysisId,
             status: error?.status,
