@@ -466,6 +466,38 @@
     </section>
   </main>
 
-  <script src="/admin.js?v=20260924-local-filters"></script>
+  <dialog id="banReasonDialog" class="gf-ban-dialog">
+    <form method="dialog" class="gf-ban-dialog-card">
+      <div class="eyebrow">GUERRA FRIA · BANIMENTO</div>
+      <h2>Selecionar motivo</h2>
+      <p class="muted">Escolha o motivo padronizado que será enviado junto com as evidências selecionadas.</p>
+
+      <label>Motivo do banimento
+        <select id="banReasonSelect">
+          <option value="Cheat / Trapaça">Cheat / Trapaça</option>
+          <option value="Ban Evasion / Evasão de ban">Ban Evasion / Evasão de ban</option>
+          <option value="Associação com jogador banido">Associação com jogador banido</option>
+          <option value="Violação de regra de duo/time">Violação de regra de duo/time</option>
+          <option value="Violação de limite de equipe">Violação de limite de equipe</option>
+          <option value="Script / Macro proibido">Script / Macro proibido</option>
+          <option value="Racismo / Discurso de ódio">Racismo / Discurso de ódio</option>
+          <option value="Recusa de verificação">Recusa de verificação</option>
+          <option value="Evasão / tentativa de burlar verificação">Evasão / tentativa de burlar verificação</option>
+          <option value="Outro">Outro</option>
+        </select>
+      </label>
+
+      <label id="banReasonCustomWrap" class="hidden">Motivo personalizado
+        <textarea id="banReasonCustom" rows="3" maxlength="500" placeholder="Descreva o motivo..."></textarea>
+      </label>
+
+      <div class="gf-ban-dialog-actions">
+        <button id="banReasonCancelBtn" class="button ghost" type="button">Cancelar</button>
+        <button id="banReasonConfirmBtn" class="button gf-ban-button" type="button">Continuar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/admin.js?v=20260925-ban-reasons"></script>
 </body>
 </html>
