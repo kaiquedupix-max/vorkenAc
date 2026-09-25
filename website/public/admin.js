@@ -407,12 +407,11 @@ function processingStageLabel(stage, status) {
     waiting: "Aguardando cliente",
     collecting: "Coletando evidências",
     preparing: "Preparando análise",
-    normal_filter: "Aplicando filtro técnico",
-    review_filter: "Aplicando revisão final",
+    normal_filter: "Aplicando filtros locais",
     finalizing: "Preparando resultado final",
     completed: "Concluído",
     needs_review: "Resultado técnico disponível",
-    review_error: "Revisão final indisponível · resultado técnico",
+    filter_error: "Erro parcial nos filtros",
   };
 
   return map[stage] || statusLabel(status);
@@ -420,9 +419,9 @@ function processingStageLabel(stage, status) {
 
 function processingStageTag(stage, status) {
   if (stage === "completed") return "low";
+  if (stage === "filter_error") return "high";
   if (stage === "needs_review") return "medium";
-  if (stage === "review_error") return "high";
-  if (stage === "review_filter") return "medium";
+
   if (
     ["collecting", "preparing", "normal_filter", "finalizing"]
       .includes(stage)
@@ -440,7 +439,6 @@ function isProcessingStage(stage) {
     "collecting",
     "preparing",
     "normal_filter",
-    "review_filter",
     "finalizing",
   ].includes(String(stage || ""));
 }
@@ -455,33 +453,17 @@ function updateAnalysisProcessingBanner(status) {
     status?.processing_message ||
     processingStageLabel(stage, status?.status);
 
-  if (showTechnicalResult) {
-    banner.className = "message";
-    banner.textContent =
-      "Visualizando o resultado técnico antes da revisão final. " +
-      (isProcessingStage(stage) ? message : "");
-    return;
-  }
-
   if (isProcessingStage(stage)) {
     banner.className = "message";
     banner.textContent = message;
     return;
   }
 
-  if (stage === "needs_review") {
-    banner.className = "message";
-    banner.textContent =
-      message ||
-      "Esta análise ainda não passou pela revisão final. Use Reprocessar análise.";
-    return;
-  }
-
-  if (stage === "review_error") {
+  if (stage === "filter_error") {
     banner.className = "message error";
     banner.textContent =
       message ||
-      "A revisão final não foi concluída. O resultado técnico continua disponível.";
+      "A análise terminou com erro parcial em um dos filtros locais. O relatório bruto foi preservado.";
     return;
   }
 
@@ -798,13 +780,8 @@ document.getElementById("clientReportToggleBtn")?.addEventListener("click", asyn
     button.disabled = false;
   }
 });
-document.getElementById("toggleReviewViewBtn").addEventListener("click", async () => {
-  if (!currentReportId) return;
-
-  showTechnicalResult =
-    !showTechnicalResult;
-
-  await openReport(currentReportId);
+document.getElementById("toggleReviewViewBtn")?.addEventListener("click", () => {
+  // Filtro local é a única classificação ativa.
 });
 
 document.getElementById("rebuildFindingsBtn").addEventListener("click", async () => {
@@ -841,7 +818,7 @@ document.getElementById("rebuildFindingsBtn").addEventListener("click", async ()
 
         if (status.reviewStatus === "error") {
           alert(
-            "O filtro técnico foi recalculado, mas a revisão final encontrou um erro. " +
+            "O filtro técnico foi recalculado, mas a classificação local encontrou um erro. " +
             (status.reviewError || "O resultado normal foi mantido.")
           );
         }
@@ -982,22 +959,10 @@ async function openReport(id) {
   const analysis = data.analysis || {};
   const report = data.report || null;
   const commonApps = safeArray(data.commonApps);
-  const filteredFindings = safeArray(data.filteredFindings)
-    .filter((finding) => !shouldHideFindingClient(finding, commonApps));
+  const filteredFindings = [];
   const finalFindings = safeArray(data.findings)
     .filter((finding) => !shouldHideFindingClient(finding, commonApps));
-  // No resultado final, itens liberados pela IA continuam visíveis como
-  // coleta azul e itens inconclusivos ficam amarelos. Só o que a IA confirma
-  // (ou hard-stop técnico) permanece vermelho.
-  const findings = [
-    ...finalFindings,
-    ...filteredFindings.filter(
-      (item) => !finalFindings.some(
-        (base) => String(base.id) === String(item.id)
-      )
-    ),
-  ];
-  const reviewState = data.reviewState || {};
+  const findings = finalFindings;
   const relatedAnalyses = safeArray(data.relatedAnalyses);
   const payload = report?.payload && typeof report.payload === "object"
     ? report.payload
@@ -1178,27 +1143,8 @@ async function openReport(id) {
   const disconnectedUsb =
     arrays.usbHistory.filter((item) => item.present === false).length;
 
-  const effectiveFindingSeverity = (item) => {
-    if (showTechnicalResult)
-      return item.severity || "info";
-
-    const verdict =
-      item.review_layer?.verdict;
-
-    if (verdict === "likely_false_positive")
-      return "info";
-
-    if (verdict === "needs_review")
-      return "medium";
-
-    return item.severity || "info";
-  };
-
-  const collectedFindings =
-    filteredFindings.filter(
-      (item) =>
-        item.review_layer?.verdict === "likely_false_positive"
-    );
+  const effectiveFindingSeverity = (item) =>
+    item.severity || "info";
 
   const criticalFindings =
     findings
@@ -1233,6 +1179,8 @@ async function openReport(id) {
           effectiveFindingSeverity(item)
         )
     );
+
+  const collectedFindings = infoFindings;
 
   const hardwareCount =
     disconnectedUsb +
@@ -1269,12 +1217,12 @@ async function openReport(id) {
 
   document.getElementById("reportMetrics").innerHTML = `
     <div class="metric"><small>STATUS</small><strong>${escapeHtml(currentStageLabel)}</strong></div>
-    <div class="metric"><small>VISUALIZAÇÃO</small><strong>${showTechnicalResult ? "TÉCNICO" : reviewState.status === "completed" ? "FINAL" : reviewState.status === "partial_error" ? "PARCIAL" : "TÉCNICO"}</strong><span>${showTechnicalResult ? "Filtro técnico original" : reviewState.status === "completed" ? "Resultado final filtrado" : reviewState.status === "partial_error" ? "Filtro parcial; revise o aviso" : "Revisão final pendente"}</span></div>
-    <div class="metric danger-metric"><small>VERMELHO · CRÍTICO/ALTO</small><strong>${criticalFindings.length}</strong><span>${showTechnicalResult ? "Filtro técnico original" : reviewState.status === "completed" ? "Resultado final revisado" : reviewState.status === "partial_error" ? "Resultado parcialmente revisado" : "Resultado técnico atual"}</span></div>
-    <div class="metric warning-metric"><small>AMARELO · REVISAR</small><strong>${mediumFindings.length}</strong><span>${showTechnicalResult ? "Filtro técnico original" : reviewState.status === "completed" ? "Resultado final revisado" : reviewState.status === "partial_error" ? "Resultado parcialmente revisado" : "Resultado técnico atual"}</span></div>
-    <div class="metric info-metric"><small>AZUL · COLETADO</small><strong>${collectedFindings.length}</strong><span>IA verificou e liberou como evidência não crítica</span></div>
+    <div class="metric"><small>CLASSIFICAÇÃO</small><strong>FILTRO LOCAL</strong><span>Sem IA / sem serviços externos de decisão</span></div>
+    <div class="metric danger-metric"><small>VERMELHO · CRÍTICO/ALTO</small><strong>${criticalFindings.length}</strong><span>Regras locais de alta prioridade</span></div>
+    <div class="metric warning-metric"><small>AMARELO · REVISAR</small><strong>${mediumFindings.length}</strong><span>Sinais que exigem contexto humano</span></div>
+    <div class="metric info-metric"><small>AZUL · COLETADO</small><strong>${collectedFindings.length}</strong><span>Evidência informativa / não crítica</span></div>
     <div class="metric hardware-metric"><small>HARDWARE / USB</small><strong>${hardwareCount}</strong><span>Pendrives e placas separados</span></div>
-    <div class="metric priority-metric"><small>ARQUIVOS PRIORITÁRIOS</small><strong id="summaryPriorityCount">0</strong><span>EXE/ZIP/RAR/7Z suspeitos</span></div>
+    <div class="metric priority-metric"><small>ARQUIVOS PRIORITÁRIOS</small><strong id="summaryPriorityCount">0</strong><span>EXE suspeito apagado/removível no topo</span></div>
     <div class="metric"><small>MÓDULOS FORENSES</small><strong>${advancedForensicsCount}</strong><span>PE · USN · rede · PowerShell · WER</span></div>
     <div class="metric info-metric"><small>AZUL · INVENTÁRIO</small><strong>${informationalCount}</strong><span>Oculto até você abrir</span></div>
   `;
@@ -1315,16 +1263,6 @@ async function openReport(id) {
   document.getElementById("filterSerialCount")?.replaceChildren(String(arrays.serialDevices.length));
   document.getElementById("filterInventoryCount")?.replaceChildren(String(informationalCount));
 
-  const reviewStatusLabel = {
-    completed: "Concluída",
-    running: "Em andamento",
-    partial_error: "Parcial · alguns lotes falharam",
-    disabled: "Indisponível",
-    not_configured: "Indisponível",
-    error: "Falhou · resultado técnico mantido",
-    pending: "Pendente",
-  }[reviewState.status] || reviewState.status || "Pendente";
-
   document.getElementById("reportMeta").innerHTML = `
     <div class="kv"><span>Computador</span><span>${escapeHtml(analysis.machine_name || "—")}</span></div>
     <div class="kv"><span>Sistema</span><span>${escapeHtml(analysis.os_version || "—")}</span></div>
@@ -1332,8 +1270,7 @@ async function openReport(id) {
     ${currentGuerraFriaLinked ? '<div class="kv"><span>Guerra Fria · SteamID</span><span>' + escapeHtml(analysis.external_player_id || "—") + '</span></div>' : ""}
     ${currentGuerraFriaLinked ? '<div class="kv"><span>Código da verificação</span><span>' + escapeHtml(analysis.external_verification_code || "—") + '</span></div>' : ""}
     ${analysis.external_evidence_url ? '<div class="kv"><span>Provas publicadas</span><span><a class="analysis-link" target="_blank" rel="noopener" href="' + escapeHtml(analysis.external_evidence_url) + '">Abrir resultados do Vorken</a></span></div>' : ""}
-    <div class="kv"><span>Revisão final</span><span>${escapeHtml(reviewStatusLabel)}</span></div>
-    <div class="kv"><span>Última revisão</span><span>${escapeHtml(formatDate(reviewState.reviewedAt))}</span></div>
+    <div class="kv"><span>Classificação</span><span>Filtros locais Vorken</span></div>
     <div class="kv"><span>Início</span><span>${escapeHtml(formatDate(analysis.started_at))}</span></div>
     <div class="kv"><span>Conclusão</span><span>${escapeHtml(formatDate(analysis.finished_at))}</span></div>
   `;
@@ -1349,47 +1286,20 @@ async function openReport(id) {
 
     for (const finding of rows) {
       const element = document.createElement("article");
-      element.className = "finding severity-card " + escapeHtml(finding.severity || "info");
-
       const evidence = finding.evidence || {};
-      const review = finding.review_layer || null;
-      const filteredByReview =
-        !showTechnicalResult &&
-        review?.verdict === "likely_false_positive";
-      const needsReviewByAi =
-        !showTechnicalResult &&
-        review?.verdict === "needs_review";
-      const displaySeverity =
-        effectiveFindingSeverity(finding);
+      const displaySeverity = effectiveFindingSeverity(finding);
       element.className = "finding severity-card " + escapeHtml(displaySeverity);
 
       const catalogName = evidence.catalogMatch?.name
         ? '<div class="kv"><span>Catálogo</span><span>' + escapeHtml(evidence.catalogMatch.name) + '</span></div>'
         : "";
 
-      const reviewLabel = review
-        ? review.verdict === "likely_cheat"
-          ? "REVISÃO CONFIRMOU"
-          : review.verdict === "likely_false_positive"
-            ? "COLETADO"
-            : "REVISAR"
-        : "";
-
       const reviewBlock =
-        evidence.priorityMaximum === true ||
-        (
-          evidence.protectedByTechnicalEngine === true &&
-          evidence.executionConfirmed === true &&
-          (
-            evidence.usbExecution === true ||
-            evidence.strongCorrelation === true
-          )
-        )
-        ? '<div class="kv"><span>Motor técnico</span><span>PROTEGIDO · execução/evidência forte confirmada · a revisão final não pode remover nem rebaixar</span></div>'
-        : review ? '<div class="kv"><span>' + escapeHtml(reviewLabel) + '</span><span>' +
-              escapeHtml(review.reason || "Sem justificativa.") +
-            '</span></div>'
-          : '<div class="kv"><span>Revisão</span><span>Revisão necessária</span></div>';
+        evidence.priorityMaximum === true
+          ? '<div class="kv"><span>Motor local</span><span>PRIORIDADE MÁXIMA · regra técnica protegida</span></div>'
+          : evidence.protectedByTechnicalEngine === true
+            ? '<div class="kv"><span>Motor local</span><span>Evidência técnica protegida</span></div>'
+            : '<div class="kv"><span>Motor local</span><span>Classificado pelos filtros Vorken</span></div>';
 
       const selectable =
         currentGuerraFriaLinked &&
@@ -1399,7 +1309,7 @@ async function openReport(id) {
         ? `<label class="ban-evidence-select"><input type="checkbox" class="ban-evidence-checkbox" data-finding-id="${escapeHtml(finding.id)}" ${selectedBanEvidenceIds.has(Number(finding.id)) ? "checked" : ""}><span>Usar como prova do banimento</span></label>`
         : "";
       element.innerHTML = `
-        <div class="finding-head"><h4>${escapeHtml(finding.title)}</h4><span class="tag ${escapeHtml(displaySeverity)}">${escapeHtml(filteredByReview ? "COLETADO" : needsReviewByAi ? "REVISAR" : severityLabel(displaySeverity))}</span></div>
+        <div class="finding-head"><h4>${escapeHtml(finding.title)}</h4><span class="tag ${escapeHtml(displaySeverity)}">${escapeHtml(severityLabel(displaySeverity))}</span></div>
         <code>${escapeHtml(finding.artifact_value)}</code>
         ${selectionBlock}
         ${catalogName}
@@ -1444,38 +1354,20 @@ async function openReport(id) {
     "Nenhum achado informativo/baixo."
   );
 
-  document.getElementById("filteredCountBadge").textContent =
-    collectedFindings.length;
+  document.getElementById("filteredCountBadge").textContent = "0";
 
   const reviewBox = document.getElementById("reviewStatusBox");
-  reviewBox.className =
-    "message " +
-    (reviewState.status === "completed"
-      ? "ok"
-      : reviewState.status === "error"
-        ? "error"
-        : "");
-
+  reviewBox.className = "message ok";
   reviewBox.textContent =
-    showTechnicalResult
-      ? "Visualização técnica ativa: a lista principal mostra o resultado anterior à revisão final."
-      : reviewState.status === "completed"
-        ? "Revisão final concluída. A lista principal mostra o resultado final."
-        : reviewState.status === "partial_error"
-          ? "A revisão final foi parcial; os itens não revisados continuam visíveis."
-          : reviewState.status === "error"
-            ? "A revisão final falhou. O Vorken manteve o resultado técnico."
-            : reviewState.status === "disabled"
-              ? "Revisão final indisponível. Resultado técnico exibido."
-              : reviewState.status === "not_configured"
-                ? "Revisão final indisponível. Resultado técnico exibido."
-                : "Revisão final pendente ou em andamento.";
+    "Filtros locais ativos. O Vorken usa catálogo confiável, correlação de execução, USB, histórico, origem e regras forenses sem IA.";
 
-  renderFindings(
-    "filteredFindingsList",
-    filteredFindings,
-    "Nenhum provável falso positivo foi filtrado nesta análise."
-  );
+  const filteredList =
+    document.getElementById("filteredFindingsList");
+
+  if (filteredList) {
+    filteredList.innerHTML =
+      '<div class="message ok">Nenhum filtro por IA está ativo. Aplicativos confiáveis são descartados diretamente pelos filtros locais.</div>';
+  }
 
   const unknownAppFindings = findings.filter((item) =>
     item.artifact_type === "unknown_app"
@@ -2041,44 +1933,7 @@ async function openReport(id) {
       }).join("")
     : '<div class="message ok">Nenhum download sinalizado como perigoso/incomum pelo navegador foi preservado no histórico.</div>';
 
-  const filteredNames = new Set();
-
-  for (const finding of filteredFindings) {
-    const candidates = [
-      finding.artifact_value,
-      finding.evidence?.fileName,
-      finding.evidence?.name,
-      finding.evidence?.path,
-      finding.evidence?.targetPath,
-      finding.evidence?.currentPath,
-      finding.evidence?.originalPath,
-      finding.evidence?.recoveredFileName
-    ].filter(Boolean);
-
-    for (const value of candidates) {
-      const normalized = String(value || "")
-        .replaceAll("/", "\\")
-        .toLowerCase()
-        .trim();
-
-      const name = normalized.split("\\").filter(Boolean).at(-1);
-      if (name) filteredNames.add(name);
-    }
-  }
-
-  const wasFilteredByReview = (...values) =>
-    values
-      .flat(Infinity)
-      .filter(Boolean)
-      .some((value) => {
-        const normalized = String(value || "")
-          .replaceAll("/", "\\")
-          .toLowerCase()
-          .trim();
-
-        const name = normalized.split("\\").filter(Boolean).at(-1);
-        return Boolean(name && filteredNames.has(name));
-      });
+  const wasFilteredByReview = () => false;
 
   const finalDetectionText =
     finalFindings
@@ -2429,7 +2284,6 @@ async function openReport(id) {
   const prioritySeen = new Set();
   const priorityUnique = priorityFiles
     .filter((item) =>
-      showTechnicalResult ||
       !wasFilteredByReview(
         item.name,
         item.path
