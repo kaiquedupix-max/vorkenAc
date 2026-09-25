@@ -1124,6 +1124,80 @@ async function enrichSteamAccountReport(
   return report;
 }
 
+
+async function processSubmittedReportWithRetry(
+  analysis,
+  report,
+  attempts = 3
+) {
+  let lastError = null;
+  const totalAttempts =
+    Math.max(1, Math.min(5, Number(attempts || 3)));
+
+  for (let attempt = 1; attempt <= totalAttempts; attempt++) {
+    try {
+      await pool.query(
+        \`UPDATE analyses
+         SET processing_stage=$2,
+             processing_message=$3
+         WHERE id=$1\`,
+        [
+          analysis.id,
+          attempt === 1
+            ? "external_checks"
+            : "preparing",
+          attempt === 1
+            ? "Consultando histórico das contas Steam na Steam e no Server Armour..."
+            : "Falha temporária detectada. Reprocessando os filtros automaticamente (" +
+              String(attempt) + "/" + String(totalAttempts) + ")...",
+        ]
+      );
+
+      await enrichSteamAccountReport(
+        report,
+        analysis.external_player_id
+      );
+
+      await persistEnrichedSteamReport(
+        analysis.id,
+        report
+      );
+
+      await rebuildFindings(
+        analysis.id,
+        report
+      );
+
+      return {
+        ok: true,
+        attemptsUsed: attempt,
+      };
+    } catch (error) {
+      lastError = error;
+
+      console.warn(
+        "Tentativa de processamento do relatório falhou:",
+        {
+          analysisId: analysis.id,
+          attempt,
+          totalAttempts,
+          message: error?.message,
+          code: error?.code,
+        }
+      );
+
+      if (attempt < totalAttempts) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, 750 * attempt)
+        );
+      }
+    }
+  }
+
+  throw lastError ||
+    new Error("Falha desconhecida ao processar relatório.");
+}
+
 async function persistEnrichedSteamReport(
   analysisId,
   report
@@ -2636,7 +2710,8 @@ async function tryAutoApproveCleanGuerraFriaAnalysis(
        external_player_id,
        external_discord_user_id,
        external_ticket_channel_id,
-       external_decision
+       external_decision,
+       processing_stage
      FROM analyses
      WHERE id=$1
      LIMIT 1`,
@@ -2649,6 +2724,7 @@ async function tryAutoApproveCleanGuerraFriaAnalysis(
   if (
     !analysis ||
     analysis.status !== "completed" ||
+    analysis.processing_stage !== "completed" ||
     analysis.external_source !== "guerra_fria" ||
     !STEAM_ID64_PATTERN.test(
       String(
@@ -7606,24 +7682,11 @@ app.post("/api/agent/:token/report", async (req, res) => {
 
     setImmediate(async () => {
       try {
-        await pool.query(
-          "UPDATE analyses SET processing_stage='external_checks', processing_message='Consultando histórico das contas Steam na Steam e no Server Armour...' WHERE id=$1",
-          [analysis.id]
-        );
-
-        await enrichSteamAccountReport(
+        await processSubmittedReportWithRetry(
+          analysis,
           report,
-          analysis.external_player_id
+          3
         );
-
-        await persistEnrichedSteamReport(
-          analysis.id,
-          report
-        );
-
-        await rebuildFindings(
-          analysis.id,
-          report);
 
         await pool.query(
           `UPDATE analyses
@@ -7677,7 +7740,7 @@ app.post("/api/agent/:token/report", async (req, res) => {
             `UPDATE analyses
              SET status='completed',
                  processing_stage='filter_error',
-                 processing_message='Falha ao concluir os filtros locais. O relatório bruto e o resultado técnico disponível foram preservados.',
+                 processing_message='Falha ao concluir os filtros após novas tentativas. Revisão administrativa obrigatória; esta análise não pode ser liberada automaticamente.',
                  finished_at=COALESCE(finished_at, NOW())
              WHERE id=$1`,
             [analysis.id]
@@ -7686,7 +7749,7 @@ app.post("/api/agent/:token/report", async (req, res) => {
           await notifyGuerraFriaProgress(
             analysis.id,
             "completed",
-            "A verificação foi finalizada com relatório técnico preservado. Aguarde a decisão da administração."
+            "A análise teve erro parcial nos filtros e não foi liberada automaticamente. Aguarde a verificação administrativa."
           );
         } catch (statusError) {
           console.error(
@@ -7861,21 +7924,25 @@ app.get("/api/agent/:token/result", async (req, res) => {
         inventory,
       },
       verificationState:
-        critical > 0
-          ? "critical"
-          : review > 0
-            ? "review"
-            : analysis.external_decision === "approve"
-              ? "approved"
-              : "clean",
+        analysis.processing_stage === "filter_error"
+          ? "error"
+          : critical > 0
+            ? "critical"
+            : review > 0
+              ? "review"
+              : analysis.external_decision === "approve"
+                ? "approved"
+                : "clean",
       verificationMessage:
-        critical > 0
-          ? "Possível trapaceiro detectado. Aguarde a análise administrativa."
-          : review > 0
-            ? "Itens suspeitos encontrados. Aguarde a verificação administrativa."
-            : analysis.external_decision === "approve"
-              ? "Verificação aprovada automaticamente. Nenhum item suspeito foi encontrado."
-              : "Nenhum item suspeito foi encontrado.",
+        analysis.processing_stage === "filter_error"
+          ? "Falha parcial nos filtros. Esta análise exige verificação administrativa e não pode ser liberada automaticamente."
+          : critical > 0
+            ? "Possível trapaceiro detectado. Aguarde a análise administrativa."
+            : review > 0
+              ? "Itens suspeitos encontrados. Aguarde a verificação administrativa."
+              : analysis.external_decision === "approve"
+                ? "Verificação aprovada automaticamente. Nenhum item suspeito foi encontrado."
+                : "Nenhum item suspeito foi encontrado.",
       externalDecision:
         analysis.external_decision || null,
       externalDecisionResult:
