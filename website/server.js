@@ -1169,42 +1169,74 @@ async function enrichSteamAccountReport(
 }
 
 
+
 async function processSubmittedReportWithRetry(
   analysis,
   report,
   attempts = 3
 ) {
-  let lastError = null;
   const totalAttempts =
     Math.max(1, Math.min(5, Number(attempts || 3)));
+
+  // Consultas externas são enriquecimento opcional. Uma falha da Steam,
+  // Server Armour ou da persistência enriquecida nunca deve derrubar os
+  // filtros locais nem transformar uma análise válida em filter_error.
+  try {
+    await pool.query(
+      \`UPDATE analyses
+       SET processing_stage='external_checks',
+           processing_message='Consultando histórico das contas Steam na Steam e no Server Armour...'
+       WHERE id=$1\`,
+      [analysis.id]
+    );
+
+    await enrichSteamAccountReport(
+      report,
+      analysis.external_player_id
+    );
+
+    try {
+      await persistEnrichedSteamReport(
+        analysis.id,
+        report
+      );
+    } catch (persistError) {
+      console.warn(
+        "Falha ao persistir enriquecimento externo; seguindo com filtros locais:",
+        {
+          analysisId: analysis.id,
+          message: persistError?.message,
+          code: persistError?.code,
+        }
+      );
+    }
+  } catch (externalError) {
+    console.warn(
+      "Consulta externa falhou; seguindo com filtros locais:",
+      {
+        analysisId: analysis.id,
+        message: externalError?.message,
+        code: externalError?.code,
+      }
+    );
+  }
+
+  let lastFilterError = null;
 
   for (let attempt = 1; attempt <= totalAttempts; attempt++) {
     try {
       await pool.query(
-        `UPDATE analyses
-         SET processing_stage=$2,
-             processing_message=$3
-         WHERE id=$1`,
+        \`UPDATE analyses
+         SET processing_stage='preparing',
+             processing_message=$2
+         WHERE id=$1\`,
         [
           analysis.id,
           attempt === 1
-            ? "external_checks"
-            : "preparing",
-          attempt === 1
-            ? "Consultando histórico das contas Steam na Steam e no Server Armour..."
-            : "Falha temporária detectada. Reprocessando os filtros automaticamente (" +
+            ? "Aplicando filtros locais..."
+            : "Falha temporária nos filtros. Reprocessando automaticamente (" +
               String(attempt) + "/" + String(totalAttempts) + ")...",
         ]
-      );
-
-      await enrichSteamAccountReport(
-        report,
-        analysis.external_player_id
-      );
-
-      await persistEnrichedSteamReport(
-        analysis.id,
-        report
       );
 
       await rebuildFindings(
@@ -1217,16 +1249,19 @@ async function processSubmittedReportWithRetry(
         attemptsUsed: attempt,
       };
     } catch (error) {
-      lastError = error;
+      lastFilterError = error;
 
       console.warn(
-        "Tentativa de processamento do relatório falhou:",
+        "Tentativa dos filtros locais falhou:",
         {
           analysisId: analysis.id,
           attempt,
           totalAttempts,
           message: error?.message,
           code: error?.code,
+          detail: error?.detail,
+          hint: error?.hint,
+          where: error?.where,
         }
       );
 
@@ -1238,8 +1273,8 @@ async function processSubmittedReportWithRetry(
     }
   }
 
-  throw lastError ||
-    new Error("Falha desconhecida ao processar relatório.");
+  throw lastFilterError ||
+    new Error("Falha desconhecida ao processar filtros locais.");
 }
 
 async function persistEnrichedSteamReport(
