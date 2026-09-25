@@ -901,13 +901,15 @@ async function loadAnalyses() {
         : "";
 
     const sessionKind =
-      criticalCount > 0
-        ? "critical"
-        : reviewCount > 0
-          ? "review"
-          : item.status === "completed"
-            ? "clean"
-            : "review";
+      item.processing_stage === "filter_error"
+        ? "review"
+        : criticalCount > 0
+          ? "critical"
+          : reviewCount > 0
+            ? "review"
+            : item.status === "completed"
+              ? "clean"
+              : "review";
 
     row.dataset.sessionKind = sessionKind;
     row.dataset.analysisId = String(item.id);
@@ -1239,6 +1241,9 @@ async function openReport(id) {
       analysis.status
     );
 
+  const hasFilterError =
+    analysis.processing_stage === "filter_error";
+
   document.getElementById("reportMetrics").innerHTML = `
     <div class="metric"><small>STATUS</small><strong>${escapeHtml(currentStageLabel)}</strong></div>
     <div class="metric"><small>CONTAS STEAM</small><strong>${arrays.steamAccounts.length}</strong><span>${arrays.steamAccounts.filter((x) => x?.banConsensus?.banDetected === true).length} com histórico de ban</span></div>
@@ -1255,17 +1260,21 @@ async function openReport(id) {
   const resultFinalLabel = document.getElementById("resultFinalLabel");
   if (resultFinalLabel) {
     resultFinalLabel.textContent =
-      criticalFindings.length > 0
-        ? "Possível trapaceiro detectado"
-        : mediumFindings.length > 0
-          ? "Itens suspeitos · revisão necessária"
-          : "Limpo · liberação automática";
+      hasFilterError
+        ? "Erro nos filtros · revisão obrigatória"
+        : criticalFindings.length > 0
+          ? "Possível trapaceiro detectado"
+          : mediumFindings.length > 0
+            ? "Itens suspeitos · revisão necessária"
+            : "Limpo · liberação automática";
     resultFinalLabel.style.color =
-      criticalFindings.length > 0
-        ? "#ff5769"
-        : mediumFindings.length > 0
-          ? "#f4b72c"
-          : "#2bf0c9";
+      hasFilterError
+        ? "#ffad66"
+        : criticalFindings.length > 0
+          ? "#ff5769"
+          : mediumFindings.length > 0
+            ? "#ffad66"
+            : "#2bf0c9";
   }
 
   const sideRecommendationLabel =
@@ -1275,20 +1284,24 @@ async function openReport(id) {
 
   if (sideRecommendationLabel) {
     sideRecommendationLabel.textContent =
-      criticalFindings.length > 0
-        ? "Análise administrativa urgente"
-        : mediumFindings.length > 0
-          ? "Verificação administrativa"
-          : "Liberação automática";
+      hasFilterError
+        ? "Reprocessamento necessário"
+        : criticalFindings.length > 0
+          ? "Análise administrativa urgente"
+          : mediumFindings.length > 0
+            ? "Verificação administrativa"
+            : "Liberação automática";
   }
 
   if (sideRecommendationText) {
     sideRecommendationText.textContent =
-      criticalFindings.length > 0
-        ? "Há evidência crítica. Possível trapaceiro detectado; revise antes de aplicar qualquer punição."
-        : mediumFindings.length > 0
-          ? "Há itens suspeitos em laranja. Revise o contexto antes de concluir a verificação."
-          : "Nenhum item vermelho ou laranja foi encontrado. A integração pode aprovar o jogador automaticamente.";
+      hasFilterError
+        ? "A classificação não terminou corretamente. Esta sessão não é considerada limpa e não pode ser liberada automaticamente. Reprocesse ou revise a análise."
+        : criticalFindings.length > 0
+          ? "Há evidência crítica. Possível trapaceiro detectado; revise antes de aplicar qualquer punição."
+          : mediumFindings.length > 0
+            ? "Há itens suspeitos em laranja. Revise o contexto antes de concluir a verificação."
+            : "Nenhum item vermelho ou laranja foi encontrado. A integração pode aprovar o jogador automaticamente.";
   }
 
   const sideStatsMirror = document.getElementById("sideStatsMirror");
