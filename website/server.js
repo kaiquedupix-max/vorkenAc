@@ -1255,7 +1255,7 @@ async function reviewFindingsWithAi(analysisId) {
            evidence
          FROM scan_findings
          WHERE analysis_id = $1
-           AND severity IN ('medium','high','critical')
+           AND severity IN ('high','critical')
          ORDER BY
            CASE severity
              WHEN 'critical' THEN 3
@@ -1387,7 +1387,7 @@ async function reviewFindingsWithAi(analysisId) {
           await callAiReviewBatch(batch);
       } catch (error) {
         console.error(
-          "Falha na revisão pelo Gemini; mantendo filtro normal:",
+          "Falha na revisão pelo Gemini; mantendo candidato na camada azul:",
           {
             analysisId,
             status: error?.status,
@@ -6967,7 +6967,10 @@ app.get("/api/admin/analyses", requireAdmin, async (_req, res) => {
               AND LOWER(COALESCE(sf.evidence::text,'')) NOT LIKE '%vorken%'
               AND (
                 sf.evidence->>'priorityMaximum' = 'true'
-                OR ar.verdict = 'likely_cheat'
+                OR (
+                  sf.severity IN ('high','critical')
+                  AND ar.verdict = 'likely_cheat'
+                )
               )
           ) AS total_findings,
         COUNT(DISTINCT LOWER(sf.artifact_type) || '|' || LOWER(TRIM(sf.artifact_value)))
@@ -6977,7 +6980,10 @@ app.get("/api/admin/analyses", requireAdmin, async (_req, res) => {
               AND LOWER(COALESCE(sf.evidence::text,'')) NOT LIKE '%vorken%'
               AND (
                 sf.evidence->>'priorityMaximum' = 'true'
-                OR ar.verdict = 'likely_cheat'
+                OR (
+                  sf.severity IN ('high','critical')
+                  AND ar.verdict = 'likely_cheat'
+                )
               )
           ) AS high_findings
       FROM scan_findings sf
@@ -7108,7 +7114,8 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
            )
          )
          OR (
-           ar.verdict = 'likely_cheat'
+           sf.severity IN ('high','critical')
+           AND ar.verdict = 'likely_cheat'
            AND COALESCE(ar.confidence, 0) >= 0.70
          )
        )
