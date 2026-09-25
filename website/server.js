@@ -2537,6 +2537,21 @@ async function notifyGuerraFriaProgress(analysisId, stage, message) {
       return;
     }
 
+    const playerNameResult = await pool.query(
+      `SELECT player_name
+       FROM guerra_fria_verifications
+       WHERE analysis_id=$1
+       ORDER BY id DESC
+       LIMIT 1`,
+      [analysisId]
+    );
+
+    const playerName =
+      cleanText(
+        playerNameResult.rows[0]?.player_name,
+        100
+      ) || cleanText(analysis.external_player_id, 100);
+
     await fetch(
       baseUrl + "/api/integrations/vorken/progress",
       {
@@ -2562,6 +2577,223 @@ async function notifyGuerraFriaProgress(analysisId, stage, message) {
       error?.message || error
     );
   }
+}
+
+
+async function getAnalysisDecisionCounts(analysisId) {
+  const result = await pool.query(
+    \`SELECT
+       COUNT(DISTINCT LOWER(sf.artifact_type) || '|' || LOWER(TRIM(sf.artifact_value)))
+         FILTER (
+           WHERE sf.severity='critical'
+             AND LOWER(COALESCE(sf.artifact_value,'')) NOT LIKE '%vorken%'
+             AND LOWER(COALESCE(sf.evidence::text,'')) NOT LIKE '%vorken%'
+         )::int AS critical_findings,
+       COUNT(DISTINCT LOWER(sf.artifact_type) || '|' || LOWER(TRIM(sf.artifact_value)))
+         FILTER (
+           WHERE sf.severity IN ('high','medium')
+             AND LOWER(COALESCE(sf.artifact_value,'')) NOT LIKE '%vorken%'
+             AND LOWER(COALESCE(sf.evidence::text,'')) NOT LIKE '%vorken%'
+         )::int AS review_findings
+     FROM scan_findings sf
+     WHERE sf.analysis_id=$1\`,
+    [analysisId]
+  );
+
+  return {
+    critical:
+      Number(result.rows[0]?.critical_findings || 0),
+    review:
+      Number(result.rows[0]?.review_findings || 0),
+  };
+}
+
+async function tryAutoApproveCleanGuerraFriaAnalysis(
+  analysisId
+) {
+  const counts =
+    await getAnalysisDecisionCounts(
+      analysisId
+    );
+
+  if (
+    counts.critical > 0 ||
+    counts.review > 0
+  ) {
+    return {
+      eligible: false,
+      approved: false,
+      counts,
+    };
+  }
+
+  const analysisResult = await pool.query(
+    \`SELECT
+       id,
+       status,
+       label,
+       external_source,
+       external_player_id,
+       external_discord_user_id,
+       external_ticket_channel_id,
+       external_decision
+     FROM analyses
+     WHERE id=$1
+     LIMIT 1\`,
+    [analysisId]
+  );
+
+  const analysis =
+    analysisResult.rows[0];
+
+  if (
+    !analysis ||
+    analysis.status !== "completed" ||
+    analysis.external_source !== "guerra_fria" ||
+    !STEAM_ID64_PATTERN.test(
+      String(
+        analysis.external_player_id || ""
+      )
+    )
+  ) {
+    return {
+      eligible: true,
+      approved: false,
+      skipped: "not_linked",
+      counts,
+    };
+  }
+
+  if (analysis.external_decision) {
+    return {
+      eligible: true,
+      approved:
+        analysis.external_decision === "approve",
+      skipped: "already_decided",
+      counts,
+    };
+  }
+
+  const baseUrl =
+    String(
+      process.env.GUERRA_FRIA_INTEGRATION_URL ||
+      ""
+    )
+      .trim()
+      .replace(/\/$/, "");
+
+  const key =
+    String(
+      process.env.VORKEN_GF_INTEGRATION_KEY ||
+      ""
+    ).trim();
+
+  if (!baseUrl || !key) {
+    return {
+      eligible: true,
+      approved: false,
+      skipped: "integration_not_configured",
+      counts,
+    };
+  }
+
+  const reason =
+    "Verificação automática aprovada pelo Vorken: nenhum item crítico ou suspeito foi encontrado.";
+
+  let response;
+  let body = {};
+
+  try {
+    response = await fetch(
+      baseUrl +
+        "/api/integrations/vorken/decision",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-vorken-integration-key": key,
+        },
+        body: JSON.stringify({
+          analysisId,
+          decision: "approve",
+          reason,
+          evidenceUrl: null,
+          evidenceCount: 0,
+          steamId:
+            analysis.external_player_id,
+          discordUserId:
+            analysis.external_discord_user_id,
+          ticketChannelId:
+            analysis.external_ticket_channel_id,
+          automatic: true,
+          source: "vorken_clean_scan",
+        }),
+        signal:
+          AbortSignal.timeout(15000),
+      }
+    );
+
+    body =
+      await response
+        .json()
+        .catch(() => ({}));
+  } catch (error) {
+    console.warn(
+      "Falha na liberação automática do Guerra Fria:",
+      error?.message || error
+    );
+
+    return {
+      eligible: true,
+      approved: false,
+      skipped: "request_failed",
+      counts,
+    };
+  }
+
+  if (!response.ok) {
+    console.warn(
+      "Guerra Fria recusou a liberação automática:",
+      body?.message ||
+      body?.error ||
+      response.status
+    );
+
+    return {
+      eligible: true,
+      approved: false,
+      skipped: "decision_failed",
+      counts,
+    };
+  }
+
+  const decisionResult =
+    cleanText(
+      body?.result,
+      900
+    ) ||
+    "Verificação limpa aprovada automaticamente.";
+
+  await pool.query(
+    \`UPDATE analyses
+     SET external_decision='approve',
+         external_decision_at=NOW(),
+         external_decision_result=$2,
+         processing_message='Análise limpa. Verificação aprovada automaticamente.'
+     WHERE id=$1
+       AND external_decision IS NULL\`,
+    [
+      analysisId,
+      decisionResult,
+    ]
+  );
+
+  return {
+    eligible: true,
+    approved: true,
+    result: decisionResult,
+    counts,
+  };
 }
 
 function sanitizeWindowsFileName(value) {
@@ -6297,6 +6529,8 @@ app.get("/api/admin/analyses", requireAdmin, async (_req, res) => {
       a.external_decision_result,
       a.external_evidence_url,
       COALESCE(f.total_findings, 0)::int AS total_findings,
+      COALESCE(f.critical_findings, 0)::int AS critical_findings,
+      COALESCE(f.review_findings, 0)::int AS review_findings,
       COALESCE(f.high_findings, 0)::int AS high_findings
     FROM analyses a
     LEFT JOIN (
@@ -6308,6 +6542,18 @@ app.get("/api/admin/analyses", requireAdmin, async (_req, res) => {
               AND LOWER(COALESCE(sf.artifact_value,'')) NOT LIKE '%vorken%'
               AND LOWER(COALESCE(sf.evidence::text,'')) NOT LIKE '%vorken%'
           ) AS total_findings,
+        COUNT(DISTINCT LOWER(sf.artifact_type) || '|' || LOWER(TRIM(sf.artifact_value)))
+          FILTER (
+            WHERE sf.severity='critical'
+              AND LOWER(COALESCE(sf.artifact_value,'')) NOT LIKE '%vorken%'
+              AND LOWER(COALESCE(sf.evidence::text,'')) NOT LIKE '%vorken%'
+          ) AS critical_findings,
+        COUNT(DISTINCT LOWER(sf.artifact_type) || '|' || LOWER(TRIM(sf.artifact_value)))
+          FILTER (
+            WHERE sf.severity IN ('high','medium')
+              AND LOWER(COALESCE(sf.artifact_value,'')) NOT LIKE '%vorken%'
+              AND LOWER(COALESCE(sf.evidence::text,'')) NOT LIKE '%vorken%'
+          ) AS review_findings,
         COUNT(DISTINCT LOWER(sf.artifact_type) || '|' || LOWER(TRIM(sf.artifact_value)))
           FILTER (
             WHERE sf.severity IN ('high','critical')
@@ -7376,11 +7622,30 @@ app.post("/api/agent/:token/report", async (req, res) => {
           [analysis.id]
         );
 
-        await notifyGuerraFriaProgress(
-          analysis.id,
-          "completed",
-          "A verificação foi finalizada. Aguarde a decisão da administração."
-        );
+        const autoDecision =
+          await tryAutoApproveCleanGuerraFriaAnalysis(
+            analysis.id
+          );
+
+        if (autoDecision.approved) {
+          await notifyGuerraFriaProgress(
+            analysis.id,
+            "completed",
+            "Verificação limpa. O jogador foi aprovado automaticamente."
+          );
+        } else {
+          await notifyGuerraFriaProgress(
+            analysis.id,
+            "completed",
+            autoDecision.eligible === false
+              ? (
+                  autoDecision.counts?.critical > 0
+                    ? "Possível trapaceiro detectado. Aguarde a análise administrativa."
+                    : "Itens suspeitos encontrados. Aguarde a verificação administrativa."
+                )
+              : "A verificação foi finalizada. Aguarde a decisão da administração."
+          );
+        }
       } catch (error) {
         console.error(
           "Falha ao processar findings do relatório:",
@@ -7545,12 +7810,12 @@ app.get("/api/agent/:token/result", async (req, res) => {
 
     const critical =
       allFindings.filter((item) =>
-        item.severity === "critical" ||
-        item.severity === "high"
+        item.severity === "critical"
       ).length;
 
     const review =
       allFindings.filter((item) =>
+        item.severity === "high" ||
         item.severity === "medium"
       ).length;
 
@@ -7582,6 +7847,26 @@ app.get("/api/agent/:token/result", async (req, res) => {
         review,
         inventory,
       },
+      verificationState:
+        critical > 0
+          ? "critical"
+          : review > 0
+            ? "review"
+            : analysis.external_decision === "approve"
+              ? "approved"
+              : "clean",
+      verificationMessage:
+        critical > 0
+          ? "Possível trapaceiro detectado. Aguarde a análise administrativa."
+          : review > 0
+            ? "Itens suspeitos encontrados. Aguarde a verificação administrativa."
+            : analysis.external_decision === "approve"
+              ? "Verificação aprovada automaticamente. Nenhum item suspeito foi encontrado."
+              : "Nenhum item suspeito foi encontrado.",
+      externalDecision:
+        analysis.external_decision || null,
+      externalDecisionResult:
+        analysis.external_decision_result || null,
       findings,
     });
   } catch (error) {
