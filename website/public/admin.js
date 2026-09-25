@@ -13,6 +13,98 @@ let selectedBanEvidenceIds = new Set();
 let dashboardPollTimer = null;
 let lastOpenReportProcessing = null;
 
+function requestGuerraFriaBanReason() {
+  return new Promise((resolve) => {
+    const dialog =
+      document.getElementById("banReasonDialog");
+    const select =
+      document.getElementById("banReasonSelect");
+    const customWrap =
+      document.getElementById("banReasonCustomWrap");
+    const custom =
+      document.getElementById("banReasonCustom");
+    const confirmBtn =
+      document.getElementById("banReasonConfirmBtn");
+    const cancelBtn =
+      document.getElementById("banReasonCancelBtn");
+
+    if (
+      !dialog ||
+      !select ||
+      !customWrap ||
+      !custom ||
+      !confirmBtn ||
+      !cancelBtn
+    ) {
+      resolve(
+        window.prompt(
+          "Motivo do banimento:",
+          "Cheat / Trapaça"
+        )
+      );
+      return;
+    }
+
+    select.value = "Cheat / Trapaça";
+    custom.value = "";
+    customWrap.classList.add("hidden");
+
+    const onSelect = () => {
+      customWrap.classList.toggle(
+        "hidden",
+        select.value !== "Outro"
+      );
+    };
+
+    const cleanup = () => {
+      select.removeEventListener("change", onSelect);
+      confirmBtn.removeEventListener("click", onConfirm);
+      cancelBtn.removeEventListener("click", onCancel);
+      dialog.removeEventListener("cancel", onDialogCancel);
+    };
+
+    const finish = (value) => {
+      cleanup();
+
+      if (dialog.open)
+        dialog.close();
+
+      resolve(value);
+    };
+
+    const onConfirm = () => {
+      const selected =
+        String(select.value || "").trim();
+
+      const reason =
+        selected === "Outro"
+          ? String(custom.value || "").trim()
+          : selected;
+
+      if (!reason) {
+        alert("Informe o motivo do banimento.");
+        return;
+      }
+
+      finish(reason);
+    };
+
+    const onCancel = () => finish(null);
+
+    const onDialogCancel = (event) => {
+      event.preventDefault();
+      finish(null);
+    };
+
+    select.addEventListener("change", onSelect);
+    confirmBtn.addEventListener("click", onConfirm);
+    cancelBtn.addEventListener("click", onCancel);
+    dialog.addEventListener("cancel", onDialogCancel);
+
+    dialog.showModal();
+  });
+}
+
 async function api(url, options = {}) {
   const response = await fetch(url, {
     headers: {
@@ -670,10 +762,7 @@ async function queueGuerraFriaDecision(action) {
 
   let reason =
     isBan
-      ? window.prompt(
-          "Motivo do banimento:",
-          "Trapaça confirmada na verificação Vorken."
-        )
+      ? await requestGuerraFriaBanReason()
       : "Verificação Vorken concluída sem bloqueio.";
 
   if (isBan && reason === null)
