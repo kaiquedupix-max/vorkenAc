@@ -5,6 +5,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync, gunzipSync } from "node:zlib";
+import dns from "node:dns/promises";
+import net from "node:net";
 import pg from "pg";
 
 const { Pool } = pg;
@@ -368,6 +370,403 @@ function redactTechnicalValueForAi(value) {
   }
 }
 
+function isPrivateIpAddress(value) {
+  const ip = String(value || "").trim();
+  const family = net.isIP(ip);
+
+  if (family === 4) {
+    const parts = ip.split(".").map(Number);
+    const [a, b] = parts;
+
+    return (
+      a === 10 ||
+      a === 127 ||
+      a === 0 ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) ||
+      (a === 100 && b >= 64 && b <= 127) ||
+      a >= 224
+    );
+  }
+
+  if (family === 6) {
+    const lower = ip.toLowerCase();
+
+    return (
+      lower === "::1" ||
+      lower === "::" ||
+      lower.startsWith("fc") ||
+      lower.startsWith("fd") ||
+      lower.startsWith("fe8") ||
+      lower.startsWith("fe9") ||
+      lower.startsWith("fea") ||
+      lower.startsWith("feb")
+    );
+  }
+
+  return true;
+}
+
+async function isSafePublicHttpUrl(value) {
+  let parsed;
+
+  try {
+    parsed = new URL(String(value || ""));
+  } catch {
+    return null;
+  }
+
+  if (!["http:", "https:"].includes(parsed.protocol))
+    return null;
+
+  if (
+    parsed.username ||
+    parsed.password ||
+    !parsed.hostname
+  ) {
+    return null;
+  }
+
+  const host =
+    parsed.hostname
+      .replace(/^\[|\]$/g, "")
+      .toLowerCase();
+
+  if (
+    host === "localhost" ||
+    host.endsWith(".localhost") ||
+    host.endsWith(".local") ||
+    host.endsWith(".internal")
+  ) {
+    return null;
+  }
+
+  if (net.isIP(host)) {
+    return isPrivateIpAddress(host)
+      ? null
+      : parsed;
+  }
+
+  try {
+    const addresses =
+      await dns.lookup(
+        host,
+        { all: true, verbatim: true }
+      );
+
+    if (
+      !addresses.length ||
+      addresses.some((item) =>
+        isPrivateIpAddress(item.address)
+      )
+    ) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+
+  return parsed;
+}
+
+function extractHtmlMetadata(text) {
+  const html =
+    String(text || "").slice(0, 131072);
+
+  const title =
+    html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || "";
+
+  const description =
+    html.match(
+      /<meta[^>]+(?:name|property)=["'](?:description|og:description)["'][^>]+content=["']([^"']*)["'][^>]*>/i
+    )?.[1] ||
+    html.match(
+      /<meta[^>]+content=["']([^"']*)["'][^>]+(?:name|property)=["'](?:description|og:description)["'][^>]*>/i
+    )?.[1] ||
+    "";
+
+  const normalize =
+    (value) =>
+      String(value || "")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/&nbsp;/gi, " ")
+        .replace(/&amp;/gi, "&")
+        .replace(/\s+/g, " ")
+        .trim();
+
+  return {
+    title: normalize(title).slice(0, 240),
+    description: normalize(description).slice(0, 500),
+  };
+}
+
+async function inspectPublicWebPage(value) {
+  let current =
+    await isSafePublicHttpUrl(value);
+
+  if (!current)
+    return null;
+
+  const redirectChain = [];
+
+  for (let hop = 0; hop < 4; hop++) {
+    const controller =
+      new AbortController();
+
+    const timer =
+      setTimeout(
+        () => controller.abort(),
+        Math.min(aiReviewConfig.timeoutMs, 8000)
+      );
+
+    try {
+      const response =
+        await fetch(
+          current,
+          {
+            method: "GET",
+            redirect: "manual",
+            headers: {
+              "user-agent":
+                "Vorken-Review/1.0 (+defensive URL verification)",
+              accept:
+                "text/html,application/xhtml+xml;q=0.9,*/*;q=0.2",
+            },
+            signal: controller.signal,
+          }
+        );
+
+      const status =
+        Number(response.status || 0);
+
+      const location =
+        response.headers.get("location");
+
+      if (
+        status >= 300 &&
+        status < 400 &&
+        location
+      ) {
+        const next =
+          await isSafePublicHttpUrl(
+            new URL(location, current).toString()
+          );
+
+        if (!next)
+          return {
+            requestedUrl: String(value || ""),
+            finalUrl: current.toString(),
+            redirectChain,
+            status,
+            blockedRedirect: true,
+          };
+
+        redirectChain.push(
+          next.toString()
+        );
+
+        current = next;
+        continue;
+      }
+
+      const contentType =
+        String(
+          response.headers.get("content-type") || ""
+        ).toLowerCase();
+
+      let metadata = {
+        title: "",
+        description: "",
+      };
+
+      if (
+        contentType.includes("text/html") ||
+        contentType.includes("application/xhtml+xml")
+      ) {
+        const reader =
+          response.body?.getReader();
+
+        if (reader) {
+          const chunks = [];
+          let total = 0;
+
+          while (total < 131072) {
+            const { value: chunk, done } =
+              await reader.read();
+
+            if (done || !chunk)
+              break;
+
+            const remaining =
+              131072 - total;
+
+            const piece =
+              chunk.byteLength > remaining
+                ? chunk.slice(0, remaining)
+                : chunk;
+
+            chunks.push(piece);
+            total += piece.byteLength;
+
+            if (piece.byteLength < chunk.byteLength)
+              break;
+          }
+
+          try {
+            await reader.cancel();
+          } catch {
+          }
+
+          metadata =
+            extractHtmlMetadata(
+              Buffer.concat(
+                chunks.map((item) =>
+                  Buffer.from(item)
+                )
+              ).toString("utf8")
+            );
+        }
+      }
+
+      return {
+        requestedUrl: String(value || ""),
+        finalUrl: current.toString(),
+        hostname: current.hostname,
+        status,
+        contentType,
+        redirectChain,
+        title: metadata.title,
+        description: metadata.description,
+      };
+    } catch (error) {
+      return {
+        requestedUrl: String(value || ""),
+        finalUrl: current.toString(),
+        hostname: current.hostname,
+        error:
+          String(error?.name || error?.message || "fetch_failed")
+            .slice(0, 120),
+        redirectChain,
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  return {
+    requestedUrl: String(value || ""),
+    finalUrl: current.toString(),
+    hostname: current.hostname,
+    redirectChain,
+    tooManyRedirects: true,
+  };
+}
+
+function firstReviewUrl(evidence = {}, artifactValue = "") {
+  const candidates = [
+    evidence?.finalUrl,
+    evidence?.sourceUrl,
+    evidence?.pageUrl,
+    evidence?.siteUrl,
+    evidence?.referrerUrl,
+    evidence?.recoveredUrl,
+    ...(Array.isArray(evidence?.urlChain)
+      ? evidence.urlChain
+      : []),
+    artifactValue,
+  ].filter(Boolean);
+
+  return candidates.find((value) => {
+    try {
+      const url =
+        new URL(String(value || ""));
+
+      return ["http:", "https:"]
+        .includes(url.protocol);
+    } catch {
+      return false;
+    }
+  }) || "";
+}
+
+async function enrichFindingForAi(finding) {
+  const evidence =
+    finding?.evidence || {};
+
+  const artifactValue =
+    finding?.artifact_value || "";
+
+  const appInfo =
+    findCommonAppByFileName(
+      evidence?.fileName ||
+      evidence?.name ||
+      evidence?.path ||
+      evidence?.fullPath ||
+      evidence?.targetPath ||
+      evidence?.currentPath ||
+      evidence?.originalPath ||
+      artifactValue
+    );
+
+  const reviewUrl =
+    firstReviewUrl(
+      evidence,
+      artifactValue
+    );
+
+  const pageInspection =
+    reviewUrl
+      ? await inspectPublicWebPage(reviewUrl)
+      : null;
+
+  const executableIdentity =
+    appInfo
+      ? {
+          expectedApplication:
+            trimAiString(appInfo.name, 160),
+          signerMatched:
+            signerMatchesCommonApp(
+              appInfo,
+              evidence?.signerSubject ||
+              evidence?.publisher ||
+              evidence?.companyName
+            ),
+          officialSourceMatched:
+            downloadMatchesOfficialSource(
+              appInfo,
+              evidence
+            ),
+          observedSigner:
+            trimAiString(
+              evidence?.signerSubject ||
+              evidence?.publisher ||
+              evidence?.companyName,
+              240
+            ),
+          sha256:
+            trimAiString(
+              evidence?.sha256,
+              80
+            ),
+          observedPath:
+            redactTechnicalValueForAi(
+              evidence?.path ||
+              evidence?.fullPath ||
+              evidence?.targetPath ||
+              evidence?.currentPath ||
+              evidence?.originalPath ||
+              artifactValue
+            ),
+        }
+      : null;
+
+  return {
+    pageInspection,
+    executableIdentity,
+  };
+}
+
 function aiEvidenceSubset(evidence = {}) {
   const catalogMatch = evidence?.catalogMatch
     ? {
@@ -443,19 +842,23 @@ function isAiProtectedFinding(finding) {
   const evidence = finding?.evidence || {};
   const title = String(finding?.title || "").toLowerCase();
 
-  // Apenas evidências técnicas duras ficam fora do poder de revisão da IA.
-  // Todo o restante — inclusive downloads, páginas, nomes estranhos, catálogo
-  // e aplicativos conhecidos — passa individualmente pela revisão final.
+  // Só hard-stops inequívocos pulam a revisão. Todo o resto é candidato e
+  // precisa da decisão final da IA antes de aparecer como detecção vermelha.
   return (
     evidence.priorityMaximum === true ||
-    evidence.usbExecution === true ||
-    evidence.protectedByTechnicalEngine === true ||
-    evidence.strongCorrelation === true ||
+    (
+      evidence.protectedByTechnicalEngine === true &&
+      evidence.executionConfirmed === true &&
+      (
+        evidence.usbExecution === true ||
+        evidence.strongCorrelation === true
+      )
+    ) ||
     title.includes("prioridade máxima")
   );
 }
 
-function buildAiReviewCase(finding) {
+async function buildAiReviewCase(finding) {
   const value =
     redactTechnicalValueForAi(
       finding?.artifact_value
@@ -475,6 +878,9 @@ function buildAiReviewCase(finding) {
       evidence?.originalPath ||
       finding?.artifact_value
     );
+
+  const enrichment =
+    await enrichFindingForAi(finding);
 
   const caseData = {
     title: trimAiString(finding?.title, 220),
@@ -505,6 +911,10 @@ function buildAiReviewCase(finding) {
         }
       : null,
     evidence: aiEvidenceSubset(evidence),
+    pageInspection:
+      enrichment.pageInspection,
+    executableIdentity:
+      enrichment.executableIdentity,
   };
 
   const fingerprint =
@@ -606,13 +1016,13 @@ async function callAiReviewBatch(cases) {
     "A primeira camada gera CANDIDATOS técnicos. Você é a camada final que decide se cada candidato deve permanecer como detecção vermelha ou ser rebaixado para coleta/revisão.",
     "Analise UM caso por vez. Só use likely_cheat quando as evidências fornecidas forem realmente fortes e específicas. Aplicativo comum, download apagado, arquivo movido, nome estranho, Temp, ausência de assinatura ou USN isolados NÃO bastam.",
     "Classifique cada caso como likely_cheat, likely_false_positive ou needs_review.",
-    "Se faltar evidência, use needs_review.",
+    "Se faltar evidência, use needs_review. needs_review NÃO é detecção vermelha: significa somente coleta/revisão azul.",
     "Não invente fatos, arquivos, assinaturas, origem ou execução que não estejam no JSON.",
     "Dê peso alto a execução confirmada, origem de download, assinatura/publisher, catálogo conhecido e correlação entre fontes.",
     "Casos protegidos pelo motor técnico NÃO são enviados para você. Não tente inferir ou rebaixar uma execução confirmada em mídia removível, cheat conhecido executado, origem direta de domínio conhecido de cheat ou correlação forte download+execução+exclusão.",
     "Windows/System32/SysWOW64/WinSxS, Program Files, Steam, Discord, Node.js, Visual Studio/Build Tools, CapCut, ExitLag, AnyDesk, navegadores, launchers, runtimes, drivers, Easy Anti-Cheat, BattlEye, Riot Vanguard e outros softwares comuns devem tender a likely_false_positive quando nome, assinatura, publisher, origem oficial ou caminho forem coerentes e não existir sinal independente forte.",
-    "Quando commonApplication estiver presente, compare o nome, signer/publisher e officialSources. Se for coerente com software legítimo, classifique likely_false_positive. Se houver apenas o nome conhecido mas origem/assinatura conflitante, use needs_review ou likely_cheat conforme a força do restante.",
-    "Para páginas/URLs, use catalogMatch, domínio, URL, referrer, origem e contexto fornecidos. Não suponha que uma plataforma genérica é maliciosa. Sem evidência específica, use needs_review em vez de likely_cheat.",
+    "Quando commonApplication ou executableIdentity estiver presente, valide nome + signer/publisher + origem oficial + hash/caminho observado. Steam, AnyDesk, CapCut, Node.js, VS Build Tools e software conhecido coerente devem ser likely_false_positive. Nome conhecido sozinho não basta para liberar se assinatura/origem contradizem os metadados.",
+    "Para páginas/URLs, use também pageInspection (status HTTP, hostname, redirects, title e description obtidos pelo backend com proteção SSRF). Confirme se a página observada é coerente com a alegação de cheat/script/loader; plataforma genérica ou página inocente deve ser likely_false_positive/needs_review, não likely_cheat.",
     "Use sourceUrl/finalUrl/pageUrl/siteUrl/referrerUrl/recoveredUrl para classificar a ORIGEM. Diferencie cheat/script/loader/macro de software legítimo. Uma pesquisa no Google/Bing é apenas needs_review; acesso/download direto de domínio conhecido do catálogo é sinal forte.",
     "O catálogo OSINT 2026-09-24 inclui fontes verificadas, providers/aliases, keywords e infraestrutura de venda. Um catalogMatch de fonte verificada é sinal forte; provider/alias ou keyword isolado é apenas contexto e precisa de Rust/origem/execução ou outro sinal independente.",
     "Vocabulário contextual carregado da planilha (não use isoladamente como prova): " + osintAiContext,
@@ -816,7 +1226,7 @@ async function reviewFindingsWithAi(analysisId) {
 
     for (const finding of findings) {
       const built =
-        buildAiReviewCase(finding);
+        await buildAiReviewCase(finding);
 
       if (!grouped.has(built.fingerprint)) {
         grouped.set(
@@ -932,8 +1342,44 @@ async function reviewFindingsWithAi(analysisId) {
           )
         );
 
-        // Não grave uma revisão falsa quando a API falhar. Assim o lote
-        // continua elegível para uma nova tentativa no próximo recálculo.
+        // Falha da IA nunca transforma candidato em vermelho. Registramos
+        // needs_review para mantê-lo na camada azul/técnica, salvo hard-stop.
+        for (const group of batch) {
+          for (const finding of group.findings) {
+            await pool.query(
+              `INSERT INTO ai_finding_reviews(
+                 analysis_id,
+                 finding_id,
+                 fingerprint,
+                 verdict,
+                 confidence,
+                 reason,
+                 model,
+                 cached
+               )
+               VALUES ($1,$2,$3,'needs_review',0,$4,$5,FALSE)
+               ON CONFLICT (analysis_id, finding_id)
+               DO UPDATE SET
+                 fingerprint=EXCLUDED.fingerprint,
+                 verdict='needs_review',
+                 confidence=0,
+                 reason=EXCLUDED.reason,
+                 model=EXCLUDED.model,
+                 cached=FALSE,
+                 updated_at=NOW()`,
+              [
+                analysisId,
+                finding.id,
+                group.fingerprint,
+                "Revisão automática indisponível; candidato mantido apenas na camada técnica/azul.",
+                aiReviewConfig.model,
+              ]
+            );
+          }
+        }
+
+        // O lote continua elegível para nova tentativa em um recálculo futuro
+        // porque a política/fingerprint muda quando o enriquecimento mudar.
         if (
           [400, 401, 403, 404, 429].includes(
             Number(error?.status || 0)
@@ -963,6 +1409,39 @@ async function reviewFindingsWithAi(analysisId) {
 
         if (!raw) {
           missingReviews++;
+
+          for (const finding of group.findings) {
+            await pool.query(
+              `INSERT INTO ai_finding_reviews(
+                 analysis_id,
+                 finding_id,
+                 fingerprint,
+                 verdict,
+                 confidence,
+                 reason,
+                 model,
+                 cached
+               )
+               VALUES ($1,$2,$3,'needs_review',0,$4,$5,FALSE)
+               ON CONFLICT (analysis_id, finding_id)
+               DO UPDATE SET
+                 fingerprint=EXCLUDED.fingerprint,
+                 verdict='needs_review',
+                 confidence=0,
+                 reason=EXCLUDED.reason,
+                 model=EXCLUDED.model,
+                 cached=FALSE,
+                 updated_at=NOW()`,
+              [
+                analysisId,
+                finding.id,
+                group.fingerprint,
+                "A revisão automática não retornou decisão estruturada; mantido apenas na camada técnica/azul.",
+                aiReviewConfig.model,
+              ]
+            );
+          }
+
           continue;
         }
 
@@ -6528,7 +7007,18 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
        AND LOWER(COALESCE(sf.evidence::text,'')) NOT LIKE '%vorken%'
        AND (
          sf.evidence->>'priorityMaximum' = 'true'
-         OR ar.verdict = 'likely_cheat'
+         OR (
+           sf.evidence->>'protectedByTechnicalEngine' = 'true'
+           AND sf.evidence->>'executionConfirmed' = 'true'
+           AND (
+             sf.evidence->>'usbExecution' = 'true'
+             OR sf.evidence->>'strongCorrelation' = 'true'
+           )
+         )
+         OR (
+           ar.verdict = 'likely_cheat'
+           AND COALESCE(ar.confidence, 0) >= 0.70
+         )
        )
      ORDER BY
        CASE WHEN sf.evidence->>'priorityMaximum' = 'true' THEN 100 ELSE 0 END DESC,
@@ -6565,7 +7055,13 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
      WHERE sf.analysis_id = $1
        AND LOWER(COALESCE(sf.artifact_value,'')) NOT LIKE '%vorken%'
        AND LOWER(COALESCE(sf.evidence::text,'')) NOT LIKE '%vorken%'
-       AND ar.verdict IN ('likely_false_positive','needs_review')
+       AND (
+         ar.verdict IN ('likely_false_positive','needs_review')
+         OR (
+           ar.verdict = 'likely_cheat'
+           AND COALESCE(ar.confidence, 0) < 0.70
+         )
+       )
        AND COALESCE(sf.evidence->>'priorityMaximum', 'false') <> 'true'
      ORDER BY sf.id ASC`,
     [id]
