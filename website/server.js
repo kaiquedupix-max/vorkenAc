@@ -8460,13 +8460,41 @@ app.get("/resultados/:token", async (req, res) => {
       )
       .join("");
 
+    const artifactType =
+      String(item?.artifactType || "");
+
+    const artifactValue =
+      String(item?.artifactValue || "");
+
+    const steamIds =
+      artifactValue
+        .split(",")
+        .map((value) => value.trim())
+        .filter((value) => /^7656119\d{10}$/.test(value));
+
+    const artifactDisplay =
+      ["steam_account_ban", "steam_ban_evasion_context"].includes(artifactType) &&
+      steamIds.length
+        ? (
+            '<div class="steam-links">' +
+            steamIds
+              .map((steamId) =>
+                '<a href="https://steamcommunity.com/profiles/' +
+                encodeURIComponent(steamId) +
+                '" target="_blank" rel="noopener noreferrer">Abrir perfil Steam</a>'
+              )
+              .join(" · ") +
+            '</div>'
+          )
+        : '<div class="path">' + htmlEscape(artifactValue || "—") + '</div>';
+
     return `
       <article class="finding ${htmlEscape(item.severity || "info")}">
         <div class="head">
           <h2>${htmlEscape(item.title || "Evidência")}</h2>
           <b>${htmlEscape(String(item.severity || "info").toUpperCase())}</b>
         </div>
-        <div class="path">${htmlEscape(item.artifactValue || "—")}</div>
+        ${artifactDisplay}
         ${meta}
       </article>
     `;
@@ -8485,7 +8513,7 @@ app.get("/resultados/:token", async (req, res) => {
 main{width:min(1080px,calc(100% - 32px));margin:0 auto;padding:52px 0 80px}
 .brand{display:flex;align-items:center;gap:12px;margin-bottom:36px}.brand img{width:42px;height:42px;border-radius:10px}.brand strong{letter-spacing:.08em}.brand small{display:block;color:var(--accent);margin-top:3px}
 .hero{border:1px solid var(--line);background:rgba(9,19,26,.9);border-radius:18px;padding:28px;margin-bottom:18px}.hero h1{margin:0 0 10px;font-size:30px}.hero p{color:var(--muted);line-height:1.65}.pill{display:inline-flex;padding:6px 9px;border:1px solid #235f57;border-radius:999px;color:var(--accent);font:700 11px Consolas,monospace}
-.finding{border:1px solid var(--line);background:rgba(9,19,26,.9);border-radius:16px;padding:20px;margin-top:12px}.finding.critical,.finding.high{border-color:#6b2833}.finding.medium{border-color:#68541f}.head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start}.head h2{font-size:17px;margin:0}.head b{font:700 10px Consolas,monospace;color:var(--accent)}.path{margin:13px 0;padding:11px;border-radius:9px;background:#04090c;color:#b9d4d0;font-family:Consolas,monospace;word-break:break-all}.kv{display:grid;grid-template-columns:180px 1fr;gap:10px;padding:8px 0;border-top:1px solid #12262d}.kv span{color:var(--muted)}.kv code{white-space:pre-wrap;word-break:break-word;color:#d7e9e5}
+.finding{border:1px solid var(--line);background:rgba(9,19,26,.9);border-radius:16px;padding:20px;margin-top:12px}.finding.critical,.finding.high{border-color:#6b2833}.finding.medium{border-color:#68541f}.head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start}.head h2{font-size:17px;margin:0}.head b{font:700 10px Consolas,monospace;color:var(--accent)}.path{margin:13px 0;padding:11px;border-radius:9px;background:#04090c;color:#b9d4d0;font-family:Consolas,monospace;word-break:break-all}.steam-links{margin:13px 0;padding:11px;border-radius:9px;background:#04090c}.steam-links a,.hero a{color:var(--accent);font-weight:700;text-decoration:none}.steam-links a:hover,.hero a:hover{text-decoration:underline}.kv{display:grid;grid-template-columns:180px 1fr;gap:10px;padding:8px 0;border-top:1px solid #12262d}.kv span{color:var(--muted)}.kv code{white-space:pre-wrap;word-break:break-word;color:#d7e9e5}
 .notice{margin-top:24px;color:#70898e;font-size:12px;line-height:1.6}
 </style>
 </head>
@@ -8494,7 +8522,7 @@ main{width:min(1080px,calc(100% - 32px));margin:0 auto;padding:52px 0 80px}
 <section class="hero">
 <span class="pill">ANÁLISE #${htmlEscape(row.analysis_id)}</span>
 <h1>Evidências selecionadas pela administração</h1>
-<p><strong>SteamID:</strong> ${htmlEscape(row.external_player_id || "—")}<br>
+<p><strong>Perfil Steam:</strong> ${/^7656119\\d{10}$/.test(String(row.external_player_id || "")) ? '<a href="https://steamcommunity.com/profiles/' + encodeURIComponent(String(row.external_player_id)) + '" target="_blank" rel="noopener noreferrer">Abrir perfil do jogador</a>' : htmlEscape(row.external_player_id || "—")}<br>
 <strong>Motivo:</strong> ${htmlEscape(row.reason || "—")}<br>
 <strong>Gerado em:</strong> ${htmlEscape(new Date(row.created_at).toLocaleString("pt-BR"))}</p>
 </section>
