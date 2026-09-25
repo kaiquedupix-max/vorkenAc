@@ -4897,6 +4897,20 @@ async function addBuiltInReviewFindings(analysisId, report) {
     if (!executable || isTrustedInstalledPath(executable))
       continue;
 
+    if (
+      isTrustedExecutableCandidate(executable) ||
+      isTrustedCommonAppArtifact(
+        executable,
+        {
+          ...item,
+          path: item.executablePath || executable,
+          fileName: fileName(item.executablePath || executable),
+        }
+      )
+    ) {
+      continue;
+    }
+
     const userWritable =
       item.userWritablePath === true ||
       isSuspiciousUserPath(executable);
