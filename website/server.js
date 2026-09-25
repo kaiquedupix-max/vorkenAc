@@ -7733,7 +7733,7 @@ app.get("/api/agent/:token/result", async (req, res) => {
          AND LOWER(COALESCE(sf.evidence::text,'')) NOT LIKE '%vorken%'
          AND (
            sf.evidence->>'priorityMaximum' = 'true'
-           OR ar.verdict IS DISTINCT FROM 'likely_false_positive'
+           OR ar.verdict = 'likely_cheat'
          )
        ORDER BY
          CASE WHEN sf.evidence->>'priorityMaximum' = 'true' THEN 100 ELSE 0 END DESC,
