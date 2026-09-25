@@ -698,63 +698,217 @@ async function querySteamOfficialBatch(steamIds) {
 }
 
 
-function buildSteamBanAssessment(steam) {
-  if (!steam || steam.status !== "ok") {
-    return {
-      strategy: "steam_only",
-      totalSources: 1,
-      availableSources: [],
-      unavailableSources: ["steam"],
-      positiveSources: [],
-      negativeSources: [],
-      rustSpecificSources: [],
-      positiveVotes: 0,
-      availableVotes: 0,
-      score: null,
-      banDetected: false,
-      corroborated: false,
-      rustSpecific: false,
-      code: "source_unavailable",
-      label: "A API da Steam está indisponível ou não foi configurada.",
-    };
+
+async function queryServerArmourPlayer(steamId) {
+  const key =
+    String(process.env.SERVER_ARMOUR_KEY || "").trim();
+
+  if (!key) {
+    return externalProviderUnavailable(
+      "server_armour",
+      "SERVER_ARMOUR_KEY não configurada."
+    );
   }
 
-  const banned =
-    steam.banned === true;
+  if (!STEAM_ID64_PATTERN.test(String(steamId || ""))) {
+    return externalProviderUnavailable(
+      "server_armour",
+      "SteamID64 inválida."
+    );
+  }
 
-  const rustSpecific =
-    banned &&
-    steam.rustSpecific === true;
+  const response =
+    await fetchExternalJson(
+      "https://serverarmour.com/api/v1/plugin/player/" +
+        encodeURIComponent(String(steamId)) +
+        "?bans=true&linked=false",
+      {
+        method: "POST",
+        headers: {
+          server_key: key,
+          accept: "application/json",
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: "ipAddress=0.0.0.0",
+      },
+      15000
+    );
+
+  if (!response.ok || !response.payload) {
+    return externalProviderUnavailable(
+      "server_armour",
+      "Server Armour respondeu HTTP " +
+        String(response.status || 0) +
+        "."
+    );
+  }
+
+  const bans =
+    safeArray(response.payload?.bans)
+      .slice(0, 100)
+      .map((ban) => {
+        const banUntil =
+          cleanText(ban?.banUntil, 80) || null;
+
+        let active = true;
+
+        if (
+          banUntil &&
+          banUntil !== "-1"
+        ) {
+          const untilMs =
+            new Date(
+              banUntil
+                .replace(" ", "T")
+            ).getTime();
+
+          if (Number.isFinite(untilMs))
+            active = untilMs > Date.now();
+        }
+
+        return {
+          id:
+            Number(ban?.id || 0) || null,
+          serverId:
+            Number(ban?.serverId || 0) || null,
+          serverName:
+            cleanText(ban?.serverName, 220),
+          serverIp:
+            cleanText(ban?.serverIp, 120),
+          reason:
+            cleanText(ban?.reason, 600),
+          banLength:
+            cleanText(ban?.banLength, 80),
+          dateTime:
+            cleanText(ban?.dateTime, 80) || null,
+          created:
+            cleanText(ban?.created, 80) || null,
+          banUntil,
+          gameId:
+            Number(ban?.gameId || 0) || null,
+          active,
+        };
+      });
+
+  const activeBans =
+    bans.filter((ban) =>
+      ban.active === true);
 
   return {
-    strategy: "steam_only",
-    totalSources: 1,
-    availableSources: ["steam"],
-    unavailableSources: [],
-    positiveSources:
-      banned ? ["steam"] : [],
-    negativeSources:
-      banned ? [] : ["steam"],
-    rustSpecificSources:
-      rustSpecific ? ["steam"] : [],
-    positiveVotes:
-      banned ? 1 : 0,
-    availableVotes: 1,
-    score:
-      banned ? 1 : 0,
-    banDetected: banned,
-    corroborated: false,
-    rustSpecific,
-    code:
-      banned
-        ? "ban_detected"
-        : "no_known_ban",
-    label:
-      rustSpecific
+    source: "server_armour",
+    status: "ok",
+    banned: bans.length > 0,
+    rustSpecific: bans.length > 0,
+    playerFound: true,
+    personaName:
+      cleanText(
+        response.payload?.personaname,
+        160
+      ),
+    serverBanCount:
+      bans.length,
+    activeServerBanCount:
+      activeBans.length,
+    bans,
+  };
+}
+
+function buildSteamAndServerArmourAssessment(
+  steam,
+  serverArmour
+) {
+  const entries = [
+    steam,
+    serverArmour,
+  ];
+
+  const available =
+    entries.filter((item) =>
+      item?.status === "ok");
+
+  const positive =
+    available.filter((item) =>
+      item?.banned === true);
+
+  const steamPositive =
+    steam?.status === "ok" &&
+    steam?.banned === true;
+
+  const serverArmourPositive =
+    serverArmour?.status === "ok" &&
+    serverArmour?.banned === true;
+
+  const rustSpecific =
+    steam?.rustSpecific === true ||
+    serverArmourPositive;
+
+  let code = "source_unavailable";
+  let label =
+    "Steam e Server Armour estão indisponíveis.";
+
+  if (serverArmourPositive && steamPositive) {
+    code = "ban_detected";
+    label =
+      "Steam e Server Armour retornaram histórico de ban para esta conta.";
+  } else if (serverArmourPositive) {
+    code = "ban_detected";
+    label =
+      "Server Armour encontrou " +
+      String(serverArmour?.serverBanCount || 0) +
+      " ban(s) em servidor(es).";
+  } else if (steamPositive) {
+    code = "ban_detected";
+    label =
+      steam?.rustSpecific === true
         ? "A Steam retornou ban com evidência relacionada ao Rust."
-        : banned
-          ? "A Steam retornou histórico de ban para esta conta."
-          : "A Steam não retornou ban conhecido para esta conta.",
+        : "A Steam retornou histórico de ban para esta conta.";
+  } else if (available.length > 0) {
+    code = "no_known_ban";
+    label =
+      available.length === 2
+        ? "Steam e Server Armour não retornaram bans conhecidos."
+        : "Nenhuma fonte disponível retornou ban conhecido; uma consulta ficou indisponível.";
+  }
+
+  return {
+    strategy: "steam_plus_server_armour",
+    totalSources: 2,
+    availableSources:
+      available
+        .map((item) => item.source),
+    unavailableSources:
+      entries
+        .filter((item) =>
+          item?.status !== "ok")
+        .map((item) => item?.source)
+        .filter(Boolean),
+    positiveSources:
+      positive
+        .map((item) => item.source),
+    negativeSources:
+      available
+        .filter((item) =>
+          item?.banned !== true)
+        .map((item) => item.source),
+    positiveVotes:
+      positive.length,
+    availableVotes:
+      available.length,
+    score:
+      available.length
+        ? positive.length / available.length
+        : null,
+    banDetected:
+      positive.length > 0,
+    corroborated:
+      positive.length >= 2,
+    rustSpecific,
+    serverBanCount:
+      Number(serverArmour?.serverBanCount || 0),
+    activeServerBanCount:
+      Number(serverArmour?.activeServerBanCount || 0),
+    code,
+    label,
   };
 }
 
@@ -791,6 +945,45 @@ async function enrichSteamAccountReport(
     await querySteamOfficialBatch(
       steamIds);
 
+  const serverArmourById =
+    new Map();
+
+  let nextServerArmourIndex = 0;
+
+  const serverArmourWorker = async () => {
+    while (
+      nextServerArmourIndex <
+      rawAccounts.length
+    ) {
+      const index =
+        nextServerArmourIndex++;
+
+      const steamId =
+        String(
+          rawAccounts[index]?.steamId64 ||
+          ""
+        );
+
+      serverArmourById.set(
+        steamId,
+        await queryServerArmourPlayer(
+          steamId)
+      );
+    }
+  };
+
+  await Promise.all(
+    Array.from(
+      {
+        length: Math.max(
+          1,
+          Math.min(4, rawAccounts.length)
+        ),
+      },
+      () => serverArmourWorker()
+    )
+  );
+
   const enriched = [];
 
   for (const raw of rawAccounts) {
@@ -804,13 +997,22 @@ async function enrichSteamAccountReport(
         "Steam não retornou esta conta."
       );
 
+    const serverArmour =
+      serverArmourById.get(steamId) ||
+      externalProviderUnavailable(
+        "server_armour",
+        "Server Armour não retornou esta conta."
+      );
+
     const providers = {
       steam,
+      serverArmour,
     };
 
     const consensus =
-      buildSteamBanAssessment(
-        steam);
+      buildSteamAndServerArmourAssessment(
+        steam,
+        serverArmour);
 
     const profile =
       steam?.profile || {};
@@ -951,10 +1153,12 @@ async function addSteamAccountBanFindings(
 
     await insertReviewFinding(
       analysisId,
-      consensus?.rustSpecific === true
-        ? "Conta Steam com ban relacionado ao Rust"
-        : "Conta Steam com histórico de ban",
-      consensus?.rustSpecific === true
+      Number(account?.providerChecks?.serverArmour?.serverBanCount || 0) > 0
+        ? "Conta Steam com ban em servidor(es) Rust"
+        : consensus?.rustSpecific === true
+          ? "Conta Steam com ban relacionado ao Rust"
+          : "Conta Steam com histórico de ban",
+      account?.providerChecks?.steam?.rustSpecific === true
         ? "high"
         : "medium",
       "steam_account_ban",
@@ -979,13 +1183,15 @@ async function addSteamAccountBanFindings(
         banConsensus:
           consensus,
         confidence:
-          consensus?.rustSpecific === true
+          account?.providerChecks?.steam?.rustSpecific === true
             ? "high"
             : "medium",
         note:
-          consensus?.rustSpecific === true
-            ? "Ao menos uma fonte trouxe evidência específica relacionada ao AppID do Rust. Revise os detalhes de cada provedor antes de qualquer decisão."
-            : "Há histórico de ban em uma ou mais fontes. Ban genérico/VAC/game ban não deve ser tratado automaticamente como ban de Rust.",
+          Number(account?.providerChecks?.serverArmour?.serverBanCount || 0) > 0
+            ? "O Server Armour retornou ban(s) aplicado(s) por servidor(es). O motivo pode ser cheat, violação de regra ou outra infração; revise servidor, motivo e data antes de qualquer decisão."
+            : consensus?.rustSpecific === true
+              ? "A Steam trouxe evidência específica relacionada ao AppID do Rust. Revise os detalhes antes de qualquer decisão."
+              : "Há histórico de ban na Steam. Ban genérico/VAC/game ban não deve ser tratado automaticamente como ban de Rust.",
       }
     );
   }
@@ -7142,7 +7348,7 @@ app.post("/api/agent/:token/report", async (req, res) => {
     setImmediate(async () => {
       try {
         await pool.query(
-          "UPDATE analyses SET processing_stage='external_checks', processing_message='Consultando histórico das contas Steam na API oficial da Steam...' WHERE id=$1",
+          "UPDATE analyses SET processing_stage='external_checks', processing_message='Consultando histórico das contas Steam na Steam e no Server Armour...' WHERE id=$1",
           [analysis.id]
         );
 
