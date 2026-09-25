@@ -1314,7 +1314,7 @@ async function openReport(id) {
       steamCorrelation.note ||
       (
         steamAccounts.length
-          ? "As contas encontradas foram cruzadas igualmente entre Steam, SteamID.com e BattleMetrics."
+          ? "As contas encontradas foram consultadas na API oficial da Steam."
           : "Nenhuma conta Steam foi encontrada nesta análise."
       );
   }
@@ -1322,10 +1322,6 @@ async function openReport(id) {
   const providerName = (key) => {
     if (key === "steam")
       return "Steam";
-    if (key === "steamId")
-      return "SteamID.com";
-    if (key === "battleMetrics")
-      return "BattleMetrics";
     return key;
   };
 
@@ -1372,20 +1368,16 @@ async function openReport(id) {
               "Conta Steam";
 
             const tagClass =
-              consensus?.code === "multi_source"
-                ? "high"
-                : consensus?.code === "single_source"
-                  ? "medium"
-                  : "info";
+              consensus?.code === "ban_detected"
+                ? (consensus?.rustSpecific === true ? "high" : "medium")
+                : "info";
 
             const tagText =
-              consensus?.code === "multi_source"
-                ? "BAN CORROBORADO"
-                : consensus?.code === "single_source"
-                  ? "BAN · 1 FONTE"
-                  : consensus?.code === "no_known_ban"
-                    ? "SEM BAN"
-                    : "APIS INDISPONÍVEIS";
+              consensus?.code === "ban_detected"
+                ? (consensus?.rustSpecific === true ? "BAN · RUST" : "BAN DETECTADO")
+                : consensus?.code === "no_known_ban"
+                  ? "SEM BAN"
+                  : "API INDISPONÍVEL";
 
             const profileUrl =
               /^7656119\d{10}$/.test(steamId)
@@ -1397,7 +1389,7 @@ async function openReport(id) {
               "Steam";
 
             const providerRows =
-              ["steam", "steamId", "battleMetrics"]
+              ["steam"]
                 .map((key) => {
                   const provider =
                     checks?.[key];
@@ -1465,9 +1457,7 @@ async function openReport(id) {
                 '<div class="kv"><span>Votos</span><span>' +
                   escapeHtml(
                     String(consensus?.positiveVotes ?? 0) +
-                    " positivos de " +
-                    String(consensus?.availableVotes ?? 0) +
-                    " fontes disponíveis"
+                    " resultado positivo na API Steam"
                   ) +
                 '</span></div>' +
                 (
@@ -1477,7 +1467,7 @@ async function openReport(id) {
                       '">Abrir Steam</a></span></div>'
                     : ""
                 ) +
-                '<details class="evidence-details"><summary>Ver resultado das 3 fontes</summary><div>' +
+                '<details class="evidence-details"><summary>Ver resultado da API Steam</summary><div>' +
                   providerRows +
                 '</div></details>' +
               '</article>'
