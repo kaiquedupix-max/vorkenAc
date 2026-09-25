@@ -7130,6 +7130,19 @@ app.post("/api/admin/analyses/:id/rebuild", requireAdmin, async (req, res) => {
          WHERE id=$1`,
         [id]
       );
+
+      const autoDecision =
+        await tryAutoApproveCleanGuerraFriaAnalysis(
+          id
+        );
+
+      if (autoDecision.approved) {
+        await notifyGuerraFriaProgress(
+          id,
+          "completed",
+          "Verificação limpa. O jogador foi aprovado automaticamente."
+        );
+      }
     } catch (error) {
       console.error(
         "Falha ao recalcular filtros locais:",
