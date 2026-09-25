@@ -986,16 +986,17 @@ async function openReport(id) {
     .filter((finding) => !shouldHideFindingClient(finding, commonApps));
   const finalFindings = safeArray(data.findings)
     .filter((finding) => !shouldHideFindingClient(finding, commonApps));
-  const findings = showTechnicalResult
-    ? [
-        ...finalFindings,
-        ...filteredFindings.filter(
-          (item) => !finalFindings.some(
-            (base) => String(base.id) === String(item.id)
-          )
-        ),
-      ]
-    : finalFindings;
+  // No resultado final, itens liberados pela IA continuam visíveis como
+  // coleta azul e itens inconclusivos ficam amarelos. Só o que a IA confirma
+  // (ou hard-stop técnico) permanece vermelho.
+  const findings = [
+    ...finalFindings,
+    ...filteredFindings.filter(
+      (item) => !finalFindings.some(
+        (base) => String(base.id) === String(item.id)
+      )
+    ),
+  ];
   const reviewState = data.reviewState || {};
   const relatedAnalyses = safeArray(data.relatedAnalyses);
   const payload = report?.payload && typeof report.payload === "object"
@@ -1177,9 +1178,34 @@ async function openReport(id) {
   const disconnectedUsb =
     arrays.usbHistory.filter((item) => item.present === false).length;
 
+  const effectiveFindingSeverity = (item) => {
+    if (showTechnicalResult)
+      return item.severity || "info";
+
+    const verdict =
+      item.review_layer?.verdict;
+
+    if (verdict === "likely_false_positive")
+      return "info";
+
+    if (verdict === "needs_review")
+      return "medium";
+
+    return item.severity || "info";
+  };
+
+  const collectedFindings =
+    filteredFindings.filter(
+      (item) =>
+        item.review_layer?.verdict === "likely_false_positive"
+    );
+
   const criticalFindings =
     findings
-      .filter((item) => ["critical", "high"].includes(item.severity))
+      .filter((item) =>
+        ["critical", "high"].includes(
+          effectiveFindingSeverity(item)
+        ))
       .sort((a, b) => {
         const aPriority = a.evidence?.priorityMaximum === true ? 1 : 0;
         const bPriority = b.evidence?.priorityMaximum === true ? 1 : 0;
@@ -1188,14 +1214,25 @@ async function openReport(id) {
           return bPriority - aPriority;
 
         const rank = { critical: 2, high: 1 };
-        return (rank[b.severity] || 0) - (rank[a.severity] || 0);
+        return (
+          (rank[effectiveFindingSeverity(b)] || 0) -
+          (rank[effectiveFindingSeverity(a)] || 0)
+        );
       });
 
   const mediumFindings =
-    findings.filter((item) => item.severity === "medium");
+    findings.filter(
+      (item) =>
+        effectiveFindingSeverity(item) === "medium"
+    );
 
   const infoFindings =
-    findings.filter((item) => ["low", "info"].includes(item.severity));
+    findings.filter(
+      (item) =>
+        ["low", "info"].includes(
+          effectiveFindingSeverity(item)
+        )
+    );
 
   const hardwareCount =
     disconnectedUsb +
@@ -1235,7 +1272,7 @@ async function openReport(id) {
     <div class="metric"><small>VISUALIZAÇÃO</small><strong>${showTechnicalResult ? "TÉCNICO" : reviewState.status === "completed" ? "FINAL" : reviewState.status === "partial_error" ? "PARCIAL" : "TÉCNICO"}</strong><span>${showTechnicalResult ? "Filtro técnico original" : reviewState.status === "completed" ? "Resultado final filtrado" : reviewState.status === "partial_error" ? "Filtro parcial; revise o aviso" : "Revisão final pendente"}</span></div>
     <div class="metric danger-metric"><small>VERMELHO · CRÍTICO/ALTO</small><strong>${criticalFindings.length}</strong><span>${showTechnicalResult ? "Filtro técnico original" : reviewState.status === "completed" ? "Resultado final revisado" : reviewState.status === "partial_error" ? "Resultado parcialmente revisado" : "Resultado técnico atual"}</span></div>
     <div class="metric warning-metric"><small>AMARELO · REVISAR</small><strong>${mediumFindings.length}</strong><span>${showTechnicalResult ? "Filtro técnico original" : reviewState.status === "completed" ? "Resultado final revisado" : reviewState.status === "partial_error" ? "Resultado parcialmente revisado" : "Resultado técnico atual"}</span></div>
-    <div class="metric info-metric"><small>FILTRADO</small><strong>${filteredFindings.length}</strong><span>Prováveis falsos positivos</span></div>
+    <div class="metric info-metric"><small>AZUL · COLETADO</small><strong>${collectedFindings.length}</strong><span>IA verificou e liberou como evidência não crítica</span></div>
     <div class="metric hardware-metric"><small>HARDWARE / USB</small><strong>${hardwareCount}</strong><span>Pendrives e placas separados</span></div>
     <div class="metric priority-metric"><small>ARQUIVOS PRIORITÁRIOS</small><strong id="summaryPriorityCount">0</strong><span>EXE/ZIP/RAR/7Z suspeitos</span></div>
     <div class="metric"><small>MÓDULOS FORENSES</small><strong>${advancedForensicsCount}</strong><span>PE · USN · rede · PowerShell · WER</span></div>
@@ -1319,10 +1356,11 @@ async function openReport(id) {
       const filteredByReview =
         !showTechnicalResult &&
         review?.verdict === "likely_false_positive";
+      const needsReviewByAi =
+        !showTechnicalResult &&
+        review?.verdict === "needs_review";
       const displaySeverity =
-        filteredByReview
-          ? "info"
-          : (finding.severity || "info");
+        effectiveFindingSeverity(finding);
       element.className = "finding severity-card " + escapeHtml(displaySeverity);
 
       const catalogName = evidence.catalogMatch?.name
@@ -1333,24 +1371,35 @@ async function openReport(id) {
         ? review.verdict === "likely_cheat"
           ? "REVISÃO CONFIRMOU"
           : review.verdict === "likely_false_positive"
-            ? "FILTRADO"
+            ? "COLETADO"
             : "REVISAR"
         : "";
 
-      const reviewBlock = evidence.priorityMaximum === true ||
-        evidence.protectedByTechnicalEngine === true
+      const reviewBlock =
+        evidence.priorityMaximum === true ||
+        (
+          evidence.protectedByTechnicalEngine === true &&
+          evidence.executionConfirmed === true &&
+          (
+            evidence.usbExecution === true ||
+            evidence.strongCorrelation === true
+          )
+        )
         ? '<div class="kv"><span>Motor técnico</span><span>PROTEGIDO · execução/evidência forte confirmada · a revisão final não pode remover nem rebaixar</span></div>'
         : review ? '<div class="kv"><span>' + escapeHtml(reviewLabel) + '</span><span>' +
               escapeHtml(review.reason || "Sem justificativa.") +
             '</span></div>'
           : '<div class="kv"><span>Revisão</span><span>Revisão necessária</span></div>';
 
-      const selectable = currentGuerraFriaLinked && Number.isInteger(Number(finding.id));
+      const selectable =
+        currentGuerraFriaLinked &&
+        ["critical", "high"].includes(displaySeverity) &&
+        Number.isInteger(Number(finding.id));
       const selectionBlock = selectable
         ? `<label class="ban-evidence-select"><input type="checkbox" class="ban-evidence-checkbox" data-finding-id="${escapeHtml(finding.id)}" ${selectedBanEvidenceIds.has(Number(finding.id)) ? "checked" : ""}><span>Usar como prova do banimento</span></label>`
         : "";
       element.innerHTML = `
-        <div class="finding-head"><h4>${escapeHtml(finding.title)}</h4><span class="tag ${escapeHtml(displaySeverity)}">${escapeHtml(filteredByReview ? "FILTRADO" : severityLabel(finding.severity))}</span></div>
+        <div class="finding-head"><h4>${escapeHtml(finding.title)}</h4><span class="tag ${escapeHtml(displaySeverity)}">${escapeHtml(filteredByReview ? "COLETADO" : needsReviewByAi ? "REVISAR" : severityLabel(displaySeverity))}</span></div>
         <code>${escapeHtml(finding.artifact_value)}</code>
         ${selectionBlock}
         ${catalogName}
@@ -1396,7 +1445,7 @@ async function openReport(id) {
   );
 
   document.getElementById("filteredCountBadge").textContent =
-    filteredFindings.length;
+    collectedFindings.length;
 
   const reviewBox = document.getElementById("reviewStatusBox");
   reviewBox.className =
