@@ -51,7 +51,7 @@ internal static class SteamAccountCollector
 
         AddRegistryPath(
             paths,
-            Registry.CurrentUser,
+            Microsoft.Win32.Registry.CurrentUser,
             @"Software\Valve\Steam",
             "SteamPath");
 
