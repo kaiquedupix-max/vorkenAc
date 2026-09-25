@@ -3323,28 +3323,6 @@ async function rebuildFindings(analysisId, report) {
       if (!matchesRule(rule, artifact)) continue;
       if (isKnownBenignPeNoise(artifact.value)) continue;
 
-      const strongIndependentSignal =
-        artifact.evidence?.priorityMaximum === true ||
-        artifact.evidence?.protectedByTechnicalEngine === true ||
-        artifact.evidence?.usbExecution === true ||
-        artifact.evidence?.knownCheatDomain === true ||
-        artifact.evidence?.directCatalogMatch === true ||
-        artifact.evidence?.executionConfirmed === true &&
-          (
-            artifact.evidence?.catalogMatch ||
-            Array.isArray(artifact.evidence?.catalogMatches) &&
-            artifact.evidence.catalogMatches.length > 0
-          );
-
-      if (
-        !strongIndependentSignal &&
-        isTrustedCommonAppArtifact(
-          artifact.value,
-          artifact.evidence || {}
-        )
-      ) {
-        continue;
-      }
 
       const severity = forceInformationalFinding(
         artifact.type,
@@ -3448,16 +3426,6 @@ async function insertReviewFinding(
         )
       )
     );
-
-  if (
-    !protectedFinding &&
-    isTrustedCommonAppArtifact(
-      normalizedValue,
-      evidence || {}
-    )
-  ) {
-    return;
-  }
 
   if (
     !protectedFinding &&
