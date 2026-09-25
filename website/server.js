@@ -1639,7 +1639,7 @@ async function initDb() {
         WHEN status='completed' AND ai_review_status='completed'
           THEN 'completed'
         WHEN status='completed' AND ai_review_status<>'completed'
-          THEN 'needs_ai'
+          THEN 'needs_review'
         WHEN status='running'
           THEN 'collecting'
         ELSE processing_stage
@@ -1657,11 +1657,11 @@ async function initDb() {
 
     UPDATE analyses
     SET processing_message = CASE
-      WHEN processing_stage='ai_filter' THEN 'Aplicando revisão final e reduzindo falsos positivos...'
+      WHEN processing_stage='finalizing' THEN 'Aplicando filtros locais e reduzindo falsos positivos...'
       WHEN processing_stage='finalizing' THEN 'Preparando o resultado final...'
       WHEN processing_stage='completed' THEN 'Análise concluída e resultado final preparado.'
-      WHEN processing_stage='ai_error' THEN 'Análise técnica concluída. A revisão final não foi concluída.'
-      WHEN processing_stage='needs_ai' THEN 'Resultado técnico disponível para revisão.'
+      WHEN processing_stage='filter_error' THEN 'Análise técnica concluída com erro parcial nos filtros.'
+      WHEN processing_stage='needs_review' THEN 'Resultado técnico disponível.'
       ELSE processing_message
     END
     WHERE processing_message ILIKE '%gemini%'
@@ -3355,7 +3355,7 @@ async function addBuiltInReviewFindings(analysisId, report) {
       ageDays(item.timestampUtc) <= 3;
 
     // DLL deletion/name alone is not a critical anti-cheat signal. Keep it
-    // available for Gemini/human correlation, but never promote it to red/high.
+    // available for local/human correlation, but never promote it to red/high.
     if (extension === ".dll") {
       if (strongMatch || removable || executed) {
         await insertReviewFinding(
@@ -5559,33 +5559,14 @@ app.get("/api/admin/analyses", requireAdmin, async (_req, res) => {
             WHERE sf.severity IN ('medium','high','critical')
               AND LOWER(COALESCE(sf.artifact_value,'')) NOT LIKE '%vorken%'
               AND LOWER(COALESCE(sf.evidence::text,'')) NOT LIKE '%vorken%'
-              AND (
-                sf.evidence->>'priorityMaximum' = 'true'
-                OR (
-                  sf.severity IN ('high','critical')
-                  AND ar.verdict = 'likely_cheat'
-                  AND COALESCE(ar.confidence, 0) >= 0.70
-                )
-              )
           ) AS total_findings,
         COUNT(DISTINCT LOWER(sf.artifact_type) || '|' || LOWER(TRIM(sf.artifact_value)))
           FILTER (
             WHERE sf.severity IN ('high','critical')
               AND LOWER(COALESCE(sf.artifact_value,'')) NOT LIKE '%vorken%'
               AND LOWER(COALESCE(sf.evidence::text,'')) NOT LIKE '%vorken%'
-              AND (
-                sf.evidence->>'priorityMaximum' = 'true'
-                OR (
-                  sf.severity IN ('high','critical')
-                  AND ar.verdict = 'likely_cheat'
-                  AND COALESCE(ar.confidence, 0) >= 0.70
-                )
-              )
           ) AS high_findings
       FROM scan_findings sf
-      LEFT JOIN ai_finding_reviews ar
-        ON ar.analysis_id = sf.analysis_id
-       AND ar.finding_id = sf.id
       GROUP BY sf.analysis_id
     ) f ON f.analysis_id = a.id
     ORDER BY a.id DESC
@@ -5684,37 +5665,11 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
        sf.artifact_value,
        sf.evidence,
        sf.created_at,
-       CASE
-         WHEN ar.id IS NULL THEN NULL
-         ELSE json_build_object(
-           'verdict', ar.verdict,
-           'confidence', ar.confidence,
-           'reason', ar.reason
-         )
-       END AS review_layer
+       NULL::json AS review_layer
      FROM scan_findings sf
-     LEFT JOIN ai_finding_reviews ar
-       ON ar.analysis_id = sf.analysis_id
-      AND ar.finding_id = sf.id
      WHERE sf.analysis_id = $1
        AND LOWER(COALESCE(sf.artifact_value,'')) NOT LIKE '%vorken%'
        AND LOWER(COALESCE(sf.evidence::text,'')) NOT LIKE '%vorken%'
-       AND (
-         sf.evidence->>'priorityMaximum' = 'true'
-         OR (
-           sf.evidence->>'protectedByTechnicalEngine' = 'true'
-           AND sf.evidence->>'executionConfirmed' = 'true'
-           AND (
-             sf.evidence->>'usbExecution' = 'true'
-             OR sf.evidence->>'strongCorrelation' = 'true'
-           )
-         )
-         OR (
-           sf.severity IN ('high','critical')
-           AND ar.verdict = 'likely_cheat'
-           AND COALESCE(ar.confidence, 0) >= 0.70
-         )
-       )
      ORDER BY
        CASE WHEN sf.evidence->>'priorityMaximum' = 'true' THEN 100 ELSE 0 END DESC,
        CASE sf.severity
@@ -5728,39 +5683,9 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
     [id]
   );
 
-  const aiFilteredResult = await pool.query(
-    `SELECT
-       sf.id,
-       sf.rule_id,
-       sf.title,
-       sf.severity,
-       sf.artifact_type,
-       sf.artifact_value,
-       sf.evidence,
-       sf.created_at,
-       json_build_object(
-         'verdict', ar.verdict,
-         'confidence', ar.confidence,
-         'reason', ar.reason
-       ) AS review_layer
-     FROM scan_findings sf
-     JOIN ai_finding_reviews ar
-       ON ar.analysis_id = sf.analysis_id
-      AND ar.finding_id = sf.id
-     WHERE sf.analysis_id = $1
-       AND LOWER(COALESCE(sf.artifact_value,'')) NOT LIKE '%vorken%'
-       AND LOWER(COALESCE(sf.evidence::text,'')) NOT LIKE '%vorken%'
-       AND (
-         ar.verdict IN ('likely_false_positive','needs_review')
-         OR (
-           ar.verdict = 'likely_cheat'
-           AND COALESCE(ar.confidence, 0) < 0.70
-         )
-       )
-       AND COALESCE(sf.evidence->>'priorityMaximum', 'false') <> 'true'
-     ORDER BY sf.id ASC`,
-    [id]
-  );
+  const aiFilteredResult = {
+    rows: [],
+  };
 
   let relatedAnalyses = [];
 
@@ -5798,14 +5723,11 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
       internalDetailStage,
       analysis.status);
 
-  const internalReviewResult = await pool.query(
-    `SELECT ai_review_status, ai_review_error, ai_reviewed_at
-     FROM analyses
-     WHERE id=$1
-     LIMIT 1`,
-    [id]
-  );
-  const analysisInternal = internalReviewResult.rows[0] || {};
+  const analysisInternal = {
+    ai_review_status: "local_filters",
+    ai_review_error: null,
+    ai_reviewed_at: null,
+  };
 
   res.json({
     analysis,
@@ -6138,7 +6060,7 @@ app.get("/api/admin/analyses/:id/rebuild-status", requireAdmin, async (req, res)
         "collecting",
         "preparing",
         "normal_filter",
-        "ai_filter",
+        "finalizing",
         "finalizing",
       ].includes(internalStage),
     status: row.status || "waiting",
@@ -6197,10 +6119,11 @@ app.post("/api/admin/analyses/:id/rebuild", requireAdmin, async (req, res) => {
 
   await pool.query(
     `UPDATE analyses
-     SET ai_review_status='running',
+     SET ai_review_status='disabled',
          ai_review_error=NULL,
+         ai_reviewed_at=NULL,
          processing_stage='preparing',
-         processing_message='Preparando recálculo e revisão final...'
+         processing_message='Preparando recálculo dos filtros locais...'
      WHERE id=$1`,
     [id]
   );
@@ -6214,33 +6137,16 @@ app.post("/api/admin/analyses/:id/rebuild", requireAdmin, async (req, res) => {
     try {
       await rebuildFindings(id, report);
 
-      const finalState =
-        await pool.query(
-          "SELECT ai_review_status FROM analyses WHERE id=$1",
-          [id]
-        );
-
-      const aiStatus =
-        finalState.rows[0]?.ai_review_status || "pending";
-
       await pool.query(
         `UPDATE analyses
-         SET processing_stage=$2,
-             processing_message=$3
+         SET processing_stage='completed',
+             processing_message='Recálculo concluído e resultado final preparado.'
          WHERE id=$1`,
-        [
-          id,
-          aiStatus === "completed"
-            ? "completed"
-            : "ai_error",
-          aiStatus === "completed"
-            ? "Recálculo concluído e resultado final preparado."
-            : "Recálculo técnico concluído; a revisão final não foi finalizada.",
-        ]
+        [id]
       );
     } catch (error) {
       console.error(
-        "Falha ao recalcular achados/IA:",
+        "Falha ao recalcular filtros locais:",
         {
           analysisId: id,
           message: error?.message,
@@ -6255,19 +6161,13 @@ app.post("/api/admin/analyses/:id/rebuild", requireAdmin, async (req, res) => {
       try {
         await pool.query(
           `UPDATE analyses
-           SET ai_review_status='error',
-               ai_review_error=$2,
-               ai_reviewed_at=NOW(),
-               processing_stage='ai_error',
-               processing_message='Falha durante a revisão final. O resultado técnico continua disponível.'
+           SET ai_review_status='disabled',
+               ai_review_error=NULL,
+               ai_reviewed_at=NULL,
+               processing_stage='filter_error',
+               processing_message='Falha parcial ao recalcular os filtros locais. O relatório bruto foi preservado.'
            WHERE id=$1`,
-          [
-            id,
-            trimAiString(
-              error?.message || "Erro desconhecido durante o recálculo.",
-              1000
-            ),
-          ]
+          [id]
         );
       } catch (statusError) {
         console.error(
@@ -6714,31 +6614,17 @@ app.post("/api/agent/:token/report", async (req, res) => {
           analysis.id,
           report);
 
-        const finalState =
-          await pool.query(
-            "SELECT ai_review_status FROM analyses WHERE id=$1",
-            [analysis.id]
-          );
-
-        const aiStatus =
-          finalState.rows[0]?.ai_review_status || "pending";
-
         await pool.query(
           `UPDATE analyses
            SET status='completed',
-               processing_stage=$2,
-               processing_message=$3,
+               ai_review_status='disabled',
+               ai_review_error=NULL,
+               ai_reviewed_at=NULL,
+               processing_stage='completed',
+               processing_message='Análise concluída e resultado final preparado.',
                finished_at=NOW()
            WHERE id=$1`,
-          [
-            analysis.id,
-            aiStatus === "completed"
-              ? "completed"
-              : "ai_error",
-            aiStatus === "completed"
-              ? "Análise concluída e resultado final preparado."
-              : "Análise técnica concluída; a revisão final não foi finalizada.",
-          ]
+          [analysis.id]
         );
 
         await notifyGuerraFriaProgress(
@@ -6763,8 +6649,11 @@ app.post("/api/agent/:token/report", async (req, res) => {
           await pool.query(
             `UPDATE analyses
              SET status='completed',
-                 processing_stage='ai_error',
-                 processing_message='Falha ao concluir os filtros. O relatório bruto e o resultado técnico disponível foram preservados.',
+                 ai_review_status='disabled',
+                 ai_review_error=NULL,
+                 ai_reviewed_at=NULL,
+                 processing_stage='filter_error',
+                 processing_message='Falha ao concluir os filtros locais. O relatório bruto e o resultado técnico disponível foram preservados.',
                  finished_at=COALESCE(finished_at, NOW())
              WHERE id=$1`,
             [analysis.id]
@@ -6811,15 +6700,7 @@ app.post("/api/agent/:token/report", async (req, res) => {
 
 
 function publicProcessingStage(stage) {
-  const value = String(stage || "waiting");
-
-  const map = {
-    ai_filter: "review_filter",
-    ai_error: "review_error",
-    needs_ai: "needs_review",
-  };
-
-  return map[value] || value;
+  return String(stage || "waiting");
 }
 
 function publicAgentProcessingMessage(stage, status) {
@@ -6828,14 +6709,10 @@ function publicAgentProcessingMessage(stage, status) {
     collecting: "Coletando evidências técnicas...",
     preparing: "Preparando os dados coletados...",
     normal_filter: "Classificando evidências...",
-    ai_filter: "Aplicando revisão final...",
-    review_filter: "Aplicando revisão final...",
-    finalizing: "Preparando o resultado final...",
+    finalizing: "Aplicando filtros locais...",
     completed: "Análise concluída.",
-    needs_ai: "Resultado técnico preparado.",
+    filter_error: "Análise concluída com erro parcial nos filtros.",
     needs_review: "Resultado técnico preparado.",
-    ai_error: "Análise concluída.",
-    review_error: "Análise concluída.",
   };
 
   return map[String(stage || "")] ||
@@ -6884,23 +6761,16 @@ app.get("/api/agent/:token/result", async (req, res) => {
          sf.artifact_value,
          sf.evidence
        FROM scan_findings sf
-       LEFT JOIN ai_finding_reviews ar
-         ON ar.analysis_id = sf.analysis_id
-        AND ar.finding_id = sf.id
        WHERE sf.analysis_id = $1
          AND LOWER(COALESCE(sf.artifact_value,'')) NOT LIKE '%vorken%'
          AND LOWER(COALESCE(sf.evidence::text,'')) NOT LIKE '%vorken%'
-         AND (
-           sf.evidence->>'priorityMaximum' = 'true'
-           OR ar.verdict = 'likely_cheat'
-         )
+         AND sf.severity IN ('medium','high','critical')
        ORDER BY
          CASE WHEN sf.evidence->>'priorityMaximum' = 'true' THEN 100 ELSE 0 END DESC,
          CASE sf.severity
            WHEN 'critical' THEN 5
            WHEN 'high' THEN 4
            WHEN 'medium' THEN 3
-           WHEN 'low' THEN 2
            ELSE 1
          END DESC,
          sf.id ASC
