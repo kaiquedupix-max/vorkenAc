@@ -281,7 +281,7 @@ const commonAppCatalog = loadCommonAppCatalog();
 
 const activeRebuilds = new Set();
 
-const AI_REVIEW_POLICY_VERSION = "v4-osint-spreadsheet-catalog";
+const AI_REVIEW_POLICY_VERSION = "v5-ai-final-arbiter";
 
 const aiReviewConfig = {
   provider: "gemini",
@@ -312,7 +312,7 @@ const aiReviewConfig = {
       1,
       Math.min(
         30,
-        Number(process.env.AI_REVIEW_BATCH_SIZE || 20)
+        Number(process.env.AI_REVIEW_BATCH_SIZE || 1)
       )
     ),
   falsePositiveThreshold:
@@ -320,7 +320,7 @@ const aiReviewConfig = {
       0.5,
       Math.min(
         0.99,
-        Number(process.env.AI_FALSE_POSITIVE_THRESHOLD || 0.85)
+        Number(process.env.AI_FALSE_POSITIVE_THRESHOLD || 0.72)
       )
     ),
   maxFindings:
@@ -403,6 +403,14 @@ function aiEvidenceSubset(evidence = {}) {
     discordAttachment: evidence?.discordAttachment,
     officialDiscordUpdate: evidence?.officialDiscordUpdate,
     originReviewRequested: evidence?.originReviewRequested === true,
+    fileName: trimAiString(evidence?.fileName || evidence?.name, 240),
+    path: redactTechnicalValueForAi(
+      evidence?.path ||
+      evidence?.fullPath ||
+      evidence?.targetPath ||
+      evidence?.currentPath ||
+      evidence?.originalPath
+    ),
     sourceUrl: redactTechnicalValueForAi(evidence?.sourceUrl),
     finalUrl: redactTechnicalValueForAi(evidence?.finalUrl),
     pageUrl: redactTechnicalValueForAi(evidence?.pageUrl),
@@ -434,40 +442,15 @@ function aiEvidenceSubset(evidence = {}) {
 function isAiProtectedFinding(finding) {
   const evidence = finding?.evidence || {};
   const title = String(finding?.title || "").toLowerCase();
-  const artifactType = String(finding?.artifact_type || "").toLowerCase();
 
-  const protectedCatalogExecution =
-    evidence.executionConfirmed === true &&
-    (
-      evidence.catalogMatch ||
-      (Array.isArray(evidence.catalogMatches) && evidence.catalogMatches.length > 0)
-    );
-
-  const protectedDirectCatalogOrigin =
-    evidence.directCatalogPriority === true ||
-    evidence.knownCheatDomain === true ||
-    (
-      ["browser_download", "browser_history", "browser_recovery", "zone_identifier"]
-        .includes(artifactType) &&
-      evidence.catalogMatch &&
-      evidence.directCatalogMatch === true
-    );
-
-  const protectedCorrelation =
-    evidence.strongCorrelation === true ||
-    (
-      evidence.downloadConfirmed === true &&
-      evidence.executionConfirmed === true &&
-      evidence.deletedAfterExecution === true
-    );
-
+  // Apenas evidências técnicas duras ficam fora do poder de revisão da IA.
+  // Todo o restante — inclusive downloads, páginas, nomes estranhos, catálogo
+  // e aplicativos conhecidos — passa individualmente pela revisão final.
   return (
     evidence.priorityMaximum === true ||
-    evidence.protectedByTechnicalEngine === true ||
     evidence.usbExecution === true ||
-    protectedCatalogExecution ||
-    protectedDirectCatalogOrigin ||
-    protectedCorrelation ||
+    evidence.protectedByTechnicalEngine === true ||
+    evidence.strongCorrelation === true ||
     title.includes("prioridade máxima")
   );
 }
@@ -478,12 +461,50 @@ function buildAiReviewCase(finding) {
       finding?.artifact_value
     );
 
+  const evidence =
+    finding?.evidence || {};
+
+  const commonApp =
+    findCommonAppByFileName(
+      evidence?.fileName ||
+      evidence?.name ||
+      evidence?.path ||
+      evidence?.fullPath ||
+      evidence?.targetPath ||
+      evidence?.currentPath ||
+      evidence?.originalPath ||
+      finding?.artifact_value
+    );
+
   const caseData = {
     title: trimAiString(finding?.title, 220),
     severity: trimAiString(finding?.severity, 30),
     artifactType: trimAiString(finding?.artifact_type, 80),
     artifactValue: value,
-    evidence: aiEvidenceSubset(finding?.evidence || {}),
+    commonApplication: commonApp
+      ? {
+          name: trimAiString(commonApp.name, 160),
+          expectedSigners: (commonApp.signerContains || [])
+            .slice(0, 8)
+            .map((item) => trimAiString(item, 160)),
+          officialSources: (commonApp.officialUrlIncludes || [])
+            .slice(0, 8)
+            .map((item) => trimAiString(item, 220)),
+          officialSourceMatched:
+            downloadMatchesOfficialSource(
+              commonApp,
+              evidence
+            ),
+          signerMatched:
+            signerMatchesCommonApp(
+              commonApp,
+              evidence?.signerSubject ||
+              evidence?.publisher ||
+              evidence?.companyName
+            ),
+        }
+      : null,
+    evidence: aiEvidenceSubset(evidence),
   };
 
   const fingerprint =
@@ -582,13 +603,16 @@ async function callAiReviewBatch(cases) {
 
   const systemPrompt = [
     "Você é a segunda camada de revisão de um sistema anti-cheat.",
-    "A primeira camada já gerou achados técnicos. Sua tarefa é SOMENTE reduzir falsos positivos.",
+    "A primeira camada gera CANDIDATOS técnicos. Você é a camada final que decide se cada candidato deve permanecer como detecção vermelha ou ser rebaixado para coleta/revisão.",
+    "Analise UM caso por vez. Só use likely_cheat quando as evidências fornecidas forem realmente fortes e específicas. Aplicativo comum, download apagado, arquivo movido, nome estranho, Temp, ausência de assinatura ou USN isolados NÃO bastam.",
     "Classifique cada caso como likely_cheat, likely_false_positive ou needs_review.",
     "Se faltar evidência, use needs_review.",
     "Não invente fatos, arquivos, assinaturas, origem ou execução que não estejam no JSON.",
     "Dê peso alto a execução confirmada, origem de download, assinatura/publisher, catálogo conhecido e correlação entre fontes.",
     "Casos protegidos pelo motor técnico NÃO são enviados para você. Não tente inferir ou rebaixar uma execução confirmada em mídia removível, cheat conhecido executado, origem direta de domínio conhecido de cheat ou correlação forte download+execução+exclusão.",
-    "Windows/System32/SysWOW64/WinSxS, Program Files, Steam, anti-cheats legítimos (Easy Anti-Cheat, BattlEye, Riot Vanguard e componentes assinados de jogos como Warframe), instaladores/updaters assinados e software conhecido devem tender a likely_false_positive quando os metadados forem coerentes.",
+    "Windows/System32/SysWOW64/WinSxS, Program Files, Steam, Discord, Node.js, Visual Studio/Build Tools, CapCut, ExitLag, AnyDesk, navegadores, launchers, runtimes, drivers, Easy Anti-Cheat, BattlEye, Riot Vanguard e outros softwares comuns devem tender a likely_false_positive quando nome, assinatura, publisher, origem oficial ou caminho forem coerentes e não existir sinal independente forte.",
+    "Quando commonApplication estiver presente, compare o nome, signer/publisher e officialSources. Se for coerente com software legítimo, classifique likely_false_positive. Se houver apenas o nome conhecido mas origem/assinatura conflitante, use needs_review ou likely_cheat conforme a força do restante.",
+    "Para páginas/URLs, use catalogMatch, domínio, URL, referrer, origem e contexto fornecidos. Não suponha que uma plataforma genérica é maliciosa. Sem evidência específica, use needs_review em vez de likely_cheat.",
     "Use sourceUrl/finalUrl/pageUrl/siteUrl/referrerUrl/recoveredUrl para classificar a ORIGEM. Diferencie cheat/script/loader/macro de software legítimo. Uma pesquisa no Google/Bing é apenas needs_review; acesso/download direto de domínio conhecido do catálogo é sinal forte.",
     "O catálogo OSINT 2026-09-24 inclui fontes verificadas, providers/aliases, keywords e infraestrutura de venda. Um catalogMatch de fonte verificada é sinal forte; provider/alias ou keyword isolado é apenas contexto e precisa de Rust/origem/execução ou outro sinal independente.",
     "Vocabulário contextual carregado da planilha (não use isoladamente como prova): " + osintAiContext,
@@ -6404,7 +6428,7 @@ app.get("/api/admin/analyses", requireAdmin, async (_req, res) => {
               AND LOWER(COALESCE(sf.evidence::text,'')) NOT LIKE '%vorken%'
               AND (
                 sf.evidence->>'priorityMaximum' = 'true'
-                OR ar.verdict IS DISTINCT FROM 'likely_false_positive'
+                OR ar.verdict = 'likely_cheat'
               )
           ) AS total_findings,
         COUNT(DISTINCT LOWER(sf.artifact_type) || '|' || LOWER(TRIM(sf.artifact_value)))
@@ -6414,7 +6438,7 @@ app.get("/api/admin/analyses", requireAdmin, async (_req, res) => {
               AND LOWER(COALESCE(sf.evidence::text,'')) NOT LIKE '%vorken%'
               AND (
                 sf.evidence->>'priorityMaximum' = 'true'
-                OR ar.verdict IS DISTINCT FROM 'likely_false_positive'
+                OR ar.verdict = 'likely_cheat'
               )
           ) AS high_findings
       FROM scan_findings sf
@@ -6536,7 +6560,7 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
        AND LOWER(COALESCE(sf.evidence::text,'')) NOT LIKE '%vorken%'
        AND (
          sf.evidence->>'priorityMaximum' = 'true'
-         OR ar.verdict IS DISTINCT FROM 'likely_false_positive'
+         OR ar.verdict = 'likely_cheat'
        )
      ORDER BY
        CASE WHEN sf.evidence->>'priorityMaximum' = 'true' THEN 100 ELSE 0 END DESC,
@@ -6573,7 +6597,7 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
      WHERE sf.analysis_id = $1
        AND LOWER(COALESCE(sf.artifact_value,'')) NOT LIKE '%vorken%'
        AND LOWER(COALESCE(sf.evidence::text,'')) NOT LIKE '%vorken%'
-       AND ar.verdict = 'likely_false_positive'
+       AND ar.verdict IN ('likely_false_positive','needs_review')
        AND COALESCE(sf.evidence->>'priorityMaximum', 'false') <> 'true'
      ORDER BY sf.id ASC`,
     [id]
