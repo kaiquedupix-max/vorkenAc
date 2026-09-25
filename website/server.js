@@ -1255,7 +1255,12 @@ async function reviewFindingsWithAi(analysisId) {
            evidence
          FROM scan_findings
          WHERE analysis_id = $1
+           -- Modo econômico: somente candidatos vermelhos entram no Gemini.
+           -- medium/low/info permanecem fora da fila de IA e não gastam cota.
            AND severity IN ('high','critical')
+           -- Artefatos do próprio Vorken nunca devem consumir revisão.
+           AND LOWER(COALESCE(artifact_value,'')) NOT LIKE '%vorken%'
+           AND LOWER(COALESCE(evidence::text,'')) NOT LIKE '%vorken%'
          ORDER BY
            CASE severity
              WHEN 'critical' THEN 3
@@ -6970,6 +6975,7 @@ app.get("/api/admin/analyses", requireAdmin, async (_req, res) => {
                 OR (
                   sf.severity IN ('high','critical')
                   AND ar.verdict = 'likely_cheat'
+                  AND COALESCE(ar.confidence, 0) >= 0.70
                 )
               )
           ) AS total_findings,
@@ -6983,6 +6989,7 @@ app.get("/api/admin/analyses", requireAdmin, async (_req, res) => {
                 OR (
                   sf.severity IN ('high','critical')
                   AND ar.verdict = 'likely_cheat'
+                  AND COALESCE(ar.confidence, 0) >= 0.70
                 )
               )
           ) AS high_findings
