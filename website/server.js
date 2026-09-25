@@ -1812,6 +1812,139 @@ function isDiscordAttachmentDownload(download) {
   });
 }
 
+
+function isDiscordRelatedWebEvidence(evidence = {}, artifactValue = "") {
+  const values = [
+    artifactValue,
+    evidence?.url,
+    evidence?.sourceUrl,
+    evidence?.finalUrl,
+    evidence?.pageUrl,
+    evidence?.siteUrl,
+    evidence?.referrerUrl,
+    evidence?.recoveredUrl,
+    evidence?.host,
+    ...(Array.isArray(evidence?.urlChain) ? evidence.urlChain : []),
+  ]
+    .filter(Boolean)
+    .map((value) => String(value).toLowerCase());
+
+  return values.some((value) =>
+    value.includes("discord.com/") ||
+    value.includes("discord.gg/") ||
+    value.includes("discordapp.com/") ||
+    value.includes("discordapp.net/") ||
+    value.includes("discordattachments.com/")
+  );
+}
+
+function discordDownloadedPayloadName(evidence = {}, artifactValue = "") {
+  const candidates = [
+    evidence?.fileName,
+    evidence?.targetPath,
+    evidence?.currentPath,
+    evidence?.recoveredFileName,
+    artifactValue,
+  ].filter(Boolean);
+
+  for (const value of candidates) {
+    const raw = String(value || "");
+
+    try {
+      const parsed = new URL(raw);
+      const name = decodeURIComponent(
+        parsed.pathname.split("/").filter(Boolean).at(-1) || ""
+      );
+      if (name)
+        return name;
+    } catch {
+    }
+
+    const normalized = raw.replaceAll("/", "\\");
+    const name = normalized.split("\\").filter(Boolean).at(-1) || "";
+    if (name)
+      return name;
+  }
+
+  return "";
+}
+
+function isAllowedDiscordExecutableOrZipDownload(
+  evidence = {},
+  artifactValue = ""
+) {
+  if (!isDiscordRelatedWebEvidence(evidence, artifactValue))
+    return false;
+
+  const attachmentLike = [
+    evidence?.sourceUrl,
+    evidence?.finalUrl,
+    evidence?.pageUrl,
+    evidence?.siteUrl,
+    evidence?.referrerUrl,
+    evidence?.recoveredUrl,
+    artifactValue,
+    ...(Array.isArray(evidence?.urlChain) ? evidence.urlChain : []),
+  ]
+    .filter(Boolean)
+    .some((value) => {
+      try {
+        const parsed = new URL(String(value));
+        const host = parsed.hostname.toLowerCase();
+        const pathname = parsed.pathname.toLowerCase();
+
+        return (
+          (
+            host === "cdn.discordapp.com" ||
+            host === "media.discordapp.net" ||
+            host.endsWith(".discordattachments.com")
+          ) &&
+          (
+            pathname.includes("/attachments/") ||
+            host.endsWith(".discordattachments.com")
+          )
+        );
+      } catch {
+        return false;
+      }
+    });
+
+  if (!attachmentLike)
+    return false;
+
+  const payloadName =
+    discordDownloadedPayloadName(
+      evidence,
+      artifactValue
+    );
+
+  return /\.(exe|zip)$/i.test(payloadName);
+}
+
+function shouldSuppressDiscordWebFinding(
+  artifactType,
+  artifactValue,
+  evidence = {}
+) {
+  if (
+    ![
+      "browser_history",
+      "browser_recovery",
+      "browser_download",
+    ].includes(String(artifactType || ""))
+  ) {
+    return false;
+  }
+
+  if (!isDiscordRelatedWebEvidence(evidence, artifactValue))
+    return false;
+
+  return !isAllowedDiscordExecutableOrZipDownload(
+    evidence,
+    artifactValue
+  );
+}
+
 function downloadOriginKind(download) {
   const values = downloadUrlCandidates(download)
     .map((value) => String(value).toLowerCase());
@@ -3551,6 +3684,15 @@ async function rebuildFindings(analysisId, report) {
       if (isVorkenOwnedArtifact(artifact.value, artifact.evidence)) continue;
       if (!matchesRule(rule, artifact)) continue;
       if (isKnownBenignPeNoise(artifact.value)) continue;
+      if (
+        shouldSuppressDiscordWebFinding(
+          artifact.type,
+          artifact.value,
+          artifact.evidence || {}
+        )
+      ) {
+        continue;
+      }
 
       const strongIndependentSignal =
         artifact.evidence?.priorityMaximum === true ||
@@ -3640,6 +3782,16 @@ async function insertReviewFinding(
 
   if (isKnownBenignPeNoise(normalizedValue))
     return;
+
+  if (
+    shouldSuppressDiscordWebFinding(
+      artifactType,
+      normalizedValue,
+      evidence || {}
+    )
+  ) {
+    return;
+  }
 
   const protectedFinding =
     evidence?.priorityMaximum === true ||
@@ -4080,7 +4232,12 @@ async function addBuiltInReviewFindings(analysisId, report) {
       const directCatalogPriority =
         ["browser_history", "browser_recovery", "browser_download"]
           .includes(artifactType) &&
-        isDirectCatalogWebMatch(match, evidence);
+        isDirectCatalogWebMatch(match, evidence) &&
+        !shouldSuppressDiscordWebFinding(
+          artifactType,
+          artifactValue,
+          evidence
+        );
 
       const fileLikeArtifact =
         ["file", "browser_download", "usn_delete", "recycle_bin"]
@@ -4293,12 +4450,39 @@ async function addBuiltInReviewFindings(analysisId, report) {
       Array.isArray(item.matchedTerms) &&
       item.matchedTerms.length >= 2;
 
+    const discordPayload =
+      isAllowedDiscordExecutableOrZipDownload(
+        {
+          ...item,
+          recoveredUrl,
+          recoveredFileName,
+        },
+        recoveredUrl || recoveredFileName
+      );
+
+    const discordRelated =
+      isDiscordRelatedWebEvidence(
+        {
+          ...item,
+          recoveredUrl,
+          recoveredFileName,
+        },
+        recoveredUrl || recoveredFileName
+      );
+
     const socialFile =
       item.socialOrigin === true &&
-      Boolean(recoveredFileName);
+      Boolean(recoveredFileName) &&
+      (
+        !discordRelated ||
+        discordPayload
+      );
 
     let severity = "";
     let title = "";
+
+    if (discordRelated && !discordPayload)
+      continue;
 
     if (
       (
@@ -4315,6 +4499,9 @@ async function addBuiltInReviewFindings(analysisId, report) {
     } else if (searchEngine && recoveredCatalogMatches.length > 0) {
       severity = "medium";
       title = "Pesquisa recuperada relacionada ao catálogo Rust";
+    } else if (discordPayload) {
+      severity = "medium";
+      title = "EXE/ZIP baixado do Discord recuperado do histórico";
     } else if (socialFile) {
       severity = "medium";
       title = "Download/arquivo social recuperado do histórico";
