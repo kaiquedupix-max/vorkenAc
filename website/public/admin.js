@@ -1521,6 +1521,47 @@ async function openReport(id) {
             const serverArmourBans =
               Number(checks?.serverArmour?.serverBanCount || 0);
 
+            const steamAccountFinding =
+              findings.find((finding) =>
+                String(finding?.artifact_type || "") === "steam_account_ban" &&
+                String(finding?.artifact_value || "") === steamId
+              );
+
+            const banEvasionFinding =
+              findings.find((finding) =>
+                String(finding?.artifact_type || "") === "steam_ban_evasion_context" &&
+                String(finding?.artifact_value || "")
+                  .split(",")
+                  .map((value) => value.trim())
+                  .includes(steamId)
+              );
+
+            const selectableSteamFinding =
+              steamAccountFinding ||
+              banEvasionFinding ||
+              null;
+
+            const steamEvidenceSelection =
+              currentGuerraFriaLinked &&
+              selectableSteamFinding &&
+              Number.isInteger(Number(selectableSteamFinding.id))
+                ? (
+                    '<label class="ban-evidence-select">' +
+                      '<input type="checkbox" class="ban-evidence-checkbox steam-ban-evidence-checkbox" ' +
+                        'data-finding-id="' + escapeHtml(selectableSteamFinding.id) + '" ' +
+                        (selectedBanEvidenceIds.has(Number(selectableSteamFinding.id)) ? 'checked' : '') +
+                      '>' +
+                      '<span>' +
+                        (
+                          String(selectableSteamFinding.artifact_type || "") === "steam_ban_evasion_context"
+                            ? "Usar ban evasion como prova do banimento"
+                            : "Usar histórico de ban desta conta como prova"
+                        ) +
+                      '</span>' +
+                    '</label>'
+                  )
+                : "";
+
             const tagClass =
               consensus?.code === "ban_detected"
                 ? (checks?.steam?.rustSpecific === true ? "high" : "medium")
@@ -1628,6 +1669,7 @@ async function openReport(id) {
                 '<code>' +
                   escapeHtml(steamId || "—") +
                 '</code>' +
+                steamEvidenceSelection +
                 '<div class="kv"><span>AccountName</span><span>' +
                   escapeHtml(account?.accountName || "—") +
                 '</span></div>' +
@@ -1673,6 +1715,36 @@ async function openReport(id) {
             );
           }).join("")
         : '<div class="message ok">Nenhuma conta Steam detectada em loginusers.vdf ou userdata.</div>';
+
+    steamAccountsTarget
+      .querySelectorAll(".steam-ban-evidence-checkbox")
+      .forEach((checkbox) => {
+        checkbox.addEventListener("change", () => {
+          const findingId =
+            Number(checkbox.dataset.findingId);
+
+          if (!Number.isInteger(findingId))
+            return;
+
+          if (checkbox.checked)
+            selectedBanEvidenceIds.add(findingId);
+          else
+            selectedBanEvidenceIds.delete(findingId);
+
+          const banButton =
+            document.getElementById("gfBanBtn");
+
+          if (banButton) {
+            const count =
+              selectedBanEvidenceIds.size;
+
+            banButton.textContent =
+              count > 0
+                ? "⚠ Banir jogador · " + count + " prova(s)"
+                : "⚠ Banir jogador";
+          }
+        });
+      });
   }
 
 
@@ -1704,7 +1776,16 @@ async function openReport(id) {
 
       const selectable =
         currentGuerraFriaLinked &&
-        ["critical", "high"].includes(displaySeverity) &&
+        (
+          ["critical", "high"].includes(displaySeverity) ||
+          (
+            displaySeverity === "medium" &&
+            [
+              "steam_account_ban",
+              "steam_ban_evasion_context",
+            ].includes(String(finding.artifact_type || ""))
+          )
+        ) &&
         Number.isInteger(Number(finding.id));
       const selectionBlock = selectable
         ? `<label class="ban-evidence-select"><input type="checkbox" class="ban-evidence-checkbox" data-finding-id="${escapeHtml(finding.id)}" ${selectedBanEvidenceIds.has(Number(finding.id)) ? "checked" : ""}><span>Usar como prova do banimento</span></label>`
