@@ -309,14 +309,9 @@ const aiReviewConfig = {
         Number(process.env.AI_TIMEOUT_MS || 60000)
       )
     ),
-  batchSize:
-    Math.max(
-      1,
-      Math.min(
-        30,
-        Number(process.env.AI_REVIEW_BATCH_SIZE || 1)
-      )
-    ),
+  // Revisão deliberadamente unitária: cada finding recebe uma decisão
+  // independente para evitar que um caso influencie outro no mesmo prompt.
+  batchSize: 1,
   falsePositiveThreshold:
     Math.max(
       0.5,
@@ -5387,108 +5382,120 @@ async function addBuiltInReviewFindings(analysisId, report) {
     );
   }
 
-  // Known applications are trusted only when their signature and/or
-  // download source matches the official vendor catalog. A familiar filename
-  // by itself is never enough to suppress a finding.
+  // Aplicativos conhecidos também entram na revisão quando foram coletados
+  // por algum sinal técnico. A IA recebe identidade, assinatura e origem e
+  // decide explicitamente se libera para a camada azul.
   for (const item of report.files || []) {
-    const ext = String(item.extension || path.extname(item.name || "")).toLowerCase();
+    const ext =
+      String(
+        item.extension ||
+        path.extname(item.name || "")
+      ).toLowerCase();
+
     if (ext !== ".exe" && ext !== ".msi")
       continue;
 
-    const appInfo = findCommonAppByFileName(item.name || item.path);
-    const signerOk = appInfo
-      ? signerMatchesCommonApp(appInfo, item.signerSubject)
-      : false;
+    const appInfo =
+      findCommonAppByFileName(
+        item.name ||
+        item.path
+      );
 
-    const officialDownloadOk = appInfo
-      ? (report.browserDownloads || []).some((download) => {
-          const downloadName = path.basename(
-            String(download.fileName || download.targetPath || "")
-          ).toLowerCase();
+    if (!appInfo)
+      continue;
 
-          const itemName = path.basename(
-            String(item.name || item.path || "")
-          ).toLowerCase();
+    const signerOk =
+      signerMatchesCommonApp(
+        appInfo,
+        item.signerSubject
+      );
+
+    const officialDownloadOk =
+      (report.browserDownloads || [])
+        .some((download) => {
+          const downloadName =
+            path.basename(
+              String(
+                download.fileName ||
+                download.targetPath ||
+                ""
+              )
+            ).toLowerCase();
+
+          const itemName =
+            path.basename(
+              String(
+                item.name ||
+                item.path ||
+                ""
+              )
+            ).toLowerCase();
 
           return (
             downloadName &&
             itemName &&
             downloadName === itemName &&
-            downloadMatchesOfficialSource(appInfo, download)
+            downloadMatchesOfficialSource(
+              appInfo,
+              download
+            )
           );
-        })
-      : false;
+        });
 
-    if (appInfo) {
-      const expectedSigners = appInfo.signerContains || [];
-      const explicitSignerMismatch =
-        item.signed === true &&
-        expectedSigners.length > 0 &&
-        signerOk !== true;
+    const expectedSigners =
+      appInfo.signerContains || [];
 
-      if (signerOk)
-        continue;
+    const explicitSignerMismatch =
+      item.signed === true &&
+      expectedSigners.length > 0 &&
+      signerOk !== true;
 
-      if (explicitSignerMismatch) {
-        await insertReviewFinding(
-          analysisId,
-          "Aplicativo conhecido assinado por entidade inesperada",
-          "high",
-          "unknown_app",
-          item.path || item.name || appInfo.name,
-          {
-            ...item,
-            expectedApplication: appInfo.name,
-            expectedSigners,
-            signatureMatched: false,
-            officialDownloadMatched: officialDownloadOk,
-            confidence: "high",
-            note: "A assinatura Authenticode é válida, porém o certificado não corresponde ao fabricante esperado para este nome de aplicativo.",
-          }
-        );
+    const collectedForReview =
+      explicitSignerMismatch ||
+      signerOk ||
+      officialDownloadOk ||
+      isTrustedInstalledPathForCommonApp(
+        item.path
+      );
 
-        continue;
-      }
-
-      if (officialDownloadOk)
-        continue;
-
-      if (
-        isTrustedInstalledPathForCommonApp(item.path) &&
-        explicitSignerMismatch !== true
-      ) {
-        continue;
-      }
-
-      if (
-        item.signed !== true ||
-        !isTrustedInstalledPathForCommonApp(item.path)
-      ) {
-        await insertReviewFinding(
-          analysisId,
-          "Aplicativo conhecido com assinatura/origem não confirmada",
-          "medium",
-          "unknown_app",
-          item.path || item.name || appInfo.name,
-          {
-            ...item,
-            expectedApplication: appInfo.name,
-            expectedSigners,
-            signatureMatched: signerOk,
-            officialDownloadMatched: officialDownloadOk,
-            confidence: "medium",
-            note: "Aplicativo conhecido sem assinatura/origem confirmada. Mantido apenas para revisão; caminhos protegidos como WindowsApps/Program Files não geram alerta.",
-          }
-        );
-      }
-
+    if (!collectedForReview)
       continue;
-    }
 
-    // Executável desconhecido e não assinado, por si só, fica apenas no
-    // inventário técnico. Ele só sobe para achado quando existe outro sinal
-    // forte (nome aleatório, origem suspeita, catálogo, execução removível,
-    // reputação, dupla extensão etc.).
+    await insertReviewFinding(
+      analysisId,
+      explicitSignerMismatch
+        ? "Aplicativo conhecido com identidade divergente"
+        : "Aplicativo conhecido coletado para validação",
+      explicitSignerMismatch
+        ? "high"
+        : "medium",
+      "known_application",
+      item.path ||
+        item.name ||
+        appInfo.name,
+      {
+        ...item,
+        expectedApplication:
+          appInfo.name,
+        expectedSigners,
+        signatureMatched:
+          signerOk,
+        officialDownloadMatched:
+          officialDownloadOk,
+        trustedInstalledPath:
+          isTrustedInstalledPathForCommonApp(
+            item.path
+          ),
+        confidence:
+          explicitSignerMismatch
+            ? "high"
+            : "review",
+        note:
+          explicitSignerMismatch
+            ? "Nome de aplicativo conhecido com assinatura válida divergente do fabricante esperado. A IA deve revisar identidade e origem."
+            : "Aplicativo conhecido coletado pelo scanner. A IA deve confirmar assinatura/origem/caminho e, se coerentes, rebaixar para a camada azul."
+      }
+    );
   }
 
   for (const download of report.browserDownloads || []) {
