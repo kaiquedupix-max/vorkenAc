@@ -283,7 +283,7 @@ const commonAppCatalog = loadCommonAppCatalog();
 
 const activeRebuilds = new Set();
 
-const AI_REVIEW_POLICY_VERSION = "v5-ai-final-arbiter";
+const AI_REVIEW_POLICY_VERSION = "v6-ai-grounded-final-arbiter";
 
 const aiReviewConfig = {
   provider: "gemini",
@@ -317,9 +317,19 @@ const aiReviewConfig = {
       0.5,
       Math.min(
         0.99,
-        Number(process.env.AI_FALSE_POSITIVE_THRESHOLD || 0.72)
+        Number(process.env.AI_FALSE_POSITIVE_THRESHOLD || 0.68)
       )
     ),
+  cheatConfidenceThreshold:
+    Math.max(
+      0.8,
+      Math.min(
+        0.99,
+        Number(process.env.AI_CHEAT_CONFIDENCE_THRESHOLD || 0.90)
+      )
+    ),
+  webGroundingEnabled:
+    String(process.env.AI_WEB_GROUNDING_ENABLED || "true").toLowerCase() !== "false",
   maxFindings:
     Math.max(
       0,
@@ -779,6 +789,12 @@ function aiEvidenceSubset(evidence = {}) {
     signed: evidence?.signed,
     signerSubject: trimAiString(evidence?.signerSubject, 240),
     publisher: trimAiString(evidence?.publisher, 240),
+    companyName: trimAiString(evidence?.companyName, 240),
+    productName: trimAiString(evidence?.productName, 240),
+    originalFilename: trimAiString(evidence?.originalFilename, 240),
+    fileDescription: trimAiString(evidence?.fileDescription, 320),
+    fileVersion: trimAiString(evidence?.fileVersion, 80),
+    signatureStatus: trimAiString(evidence?.signatureStatus, 100),
     expectedApplication: trimAiString(evidence?.expectedApplication, 180),
     signatureMatched: evidence?.signatureMatched,
     officialDownloadMatched: evidence?.officialDownloadMatched,
@@ -952,6 +968,52 @@ function normalizeAiConfidence(value) {
   return Math.max(0, Math.min(1, number));
 }
 
+function aiCaseContainsUrl(caseData) {
+  const values = [
+    caseData?.artifactValue,
+    caseData?.evidence?.sourceUrl,
+    caseData?.evidence?.finalUrl,
+    caseData?.evidence?.pageUrl,
+    caseData?.evidence?.siteUrl,
+    caseData?.evidence?.referrerUrl,
+    caseData?.evidence?.recoveredUrl,
+    caseData?.pageInspection?.finalUrl,
+  ];
+
+  return values.some((value) =>
+    /^https?:\/\//i.test(String(value || "").trim())
+  );
+}
+
+function aiReviewTools(cases) {
+  if (!aiReviewConfig.webGroundingEnabled)
+    return [];
+
+  const result = [
+    { google_search: {} },
+  ];
+
+  if (cases.some((item) => aiCaseContainsUrl(item?.caseData)))
+    result.push({ url_context: {} });
+
+  return result;
+}
+
+function commonAppLooksVerified(caseData) {
+  const app = caseData?.commonApplication;
+  const identity = caseData?.executableIdentity;
+
+  return Boolean(
+    app &&
+    (
+      app.signerMatched === true ||
+      app.officialSourceMatched === true ||
+      identity?.signerMatched === true ||
+      identity?.officialSourceMatched === true
+    )
+  );
+}
+
 async function callAiReviewBatch(cases) {
   const controller =
     new AbortController();
@@ -1009,11 +1071,14 @@ async function callAiReviewBatch(cases) {
   const systemPrompt = [
     "Você é a segunda camada de revisão de um sistema anti-cheat.",
     "A primeira camada gera CANDIDATOS técnicos. Você é a camada final que decide se cada candidato deve permanecer como detecção vermelha ou ser rebaixado para coleta/revisão.",
-    "Analise UM caso por vez. Só use likely_cheat quando as evidências fornecidas forem realmente fortes e específicas. Aplicativo comum, download apagado, arquivo movido, nome estranho, Temp, ausência de assinatura ou USN isolados NÃO bastam.",
+    "Você recebe exatamente UM caso por chamada. Trate o vermelho técnico como hipótese e investigue esse item individualmente antes de decidir.",
+    "Só use likely_cheat quando as evidências fornecidas forem realmente fortes, específicas e coerentes. Para permanecer vermelho, prefira múltiplos sinais independentes ou um sinal técnico excepcionalmente forte. Aplicativo comum, download apagado, arquivo movido, nome estranho, Temp, ausência de assinatura ou USN isolados NÃO bastam.",
     "Classifique cada caso como likely_cheat, likely_false_positive ou needs_review.",
     "Se faltar evidência, use needs_review. needs_review NÃO é detecção vermelha: significa somente coleta/revisão azul.",
     "Não invente fatos, arquivos, assinaturas, origem ou execução que não estejam no JSON.",
-    "Dê peso alto a execução confirmada, origem de download, assinatura/publisher, catálogo conhecido e correlação entre fontes.",
+    "Dê peso alto a execução confirmada, origem de download, assinatura/publisher, hash, metadados do executável, caminho coerente, catálogo conhecido e correlação entre fontes.",
+    "Você tem Pesquisa Google habilitada. Use-a quando precisar confirmar a identidade/reputação pública de um executável, aplicativo, publisher, domínio ou produto. Um nome famoso sozinho não autentica o arquivo.",
+    "Quando houver URL HTTP/HTTPS, URL Context também está disponível. Use-o para consultar a página real quando isso ajudar, além de pageInspection já coletado pelo backend.",
     "Casos protegidos pelo motor técnico NÃO são enviados para você. Não tente inferir ou rebaixar uma execução confirmada em mídia removível, cheat conhecido executado, origem direta de domínio conhecido de cheat ou correlação forte download+execução+exclusão.",
     "Windows/System32/SysWOW64/WinSxS, Program Files, Steam, Discord, Node.js, Visual Studio/Build Tools, CapCut, ExitLag, AnyDesk, navegadores, launchers, runtimes, drivers, Easy Anti-Cheat, BattlEye, Riot Vanguard e outros softwares comuns devem tender a likely_false_positive quando nome, assinatura, publisher, origem oficial ou caminho forem coerentes e não existir sinal independente forte.",
     "Quando commonApplication ou executableIdentity estiver presente, valide nome + signer/publisher + origem oficial + hash/caminho observado. Steam, AnyDesk, CapCut, Node.js, VS Build Tools e software conhecido coerente devem ser likely_false_positive. Nome conhecido sozinho não basta para liberar se assinatura/origem contradizem os metadados.",
@@ -1055,6 +1120,7 @@ async function callAiReviewBatch(cases) {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
+            tools: aiReviewTools(cases),
             systemInstruction: {
               parts: [
                 {
@@ -1454,6 +1520,25 @@ async function reviewFindingsWithAi(analysisId) {
           verdict === "likely_false_positive" &&
           confidence <
             aiReviewConfig.falsePositiveThreshold
+        ) {
+          verdict = "needs_review";
+        }
+
+        // O painel vermelho só recebe decisões de alta convicção.
+        if (
+          verdict === "likely_cheat" &&
+          confidence <
+            aiReviewConfig.cheatConfidenceThreshold
+        ) {
+          verdict = "needs_review";
+        }
+
+        // Aplicativo conhecido com assinatura/publisher ou origem oficial
+        // coerentes exige praticamente certeza antes de continuar vermelho.
+        if (
+          verdict === "likely_cheat" &&
+          commonAppLooksVerified(group.caseData) &&
+          confidence < 0.97
         ) {
           verdict = "needs_review";
         }
