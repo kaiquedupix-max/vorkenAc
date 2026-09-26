@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#061018">
   <title>Vorken Anti-Cheat</title>
   <link rel="icon" type="image/svg+xml" href="/vorken-logo.svg">
-  <link rel="stylesheet" href="/styles.css?v=20260926-performance-v6">
+  <link rel="stylesheet" href="/styles.css?v=20260926-stream-v7">
 </head>
 <body class="vorken-admin">
   <header class="vorken-shell-header">
@@ -314,6 +314,8 @@
                   <span id="infoCountBadge" class="summary-badge info">0</span>
                 </summary>
 
+                <div id="inventoryLoadNotice" class="message hidden"></div>
+
                 <h3>Achados informativos / baixos</h3>
                 <div id="infoFindingsList"></div>
                 <h3>Downloads apagados / não localizados</h3>
@@ -344,6 +346,8 @@
 
               <details class="report-section" data-report-group="inventory">
                 <summary>Dados brutos da análise</summary>
+                <p class="muted">O conteúdo completo permanece no servidor para não travar esta aba.</p>
+                <a id="downloadRawReportBtn" class="button ghost" href="#" download>⇩ Baixar JSON completo</a>
                 <pre id="rawReport" class="raw"></pre>
               </details>
             </section>
@@ -504,7 +508,7 @@
     </form>
   </dialog>
 
-  <script src="/ui-polish.js?v=20260926-performance-v6"></script>
-  <script src="/admin.js?v=20260926-performance-v6"></script>
+  <script src="/ui-polish.js?v=20260926-stream-v7"></script>
+  <script src="/admin.js?v=20260926-stream-v7"></script>
 </body>
 </html>

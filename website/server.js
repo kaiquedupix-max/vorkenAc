@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { gzipSync, gunzipSync } from "node:zlib";
 import pg from "pg";
 import { runDetectionEngineV4 } from "./echoInspiredFilterV3.js";
+import { projectReportPayloadForAdmin } from "./reportPayloadProjection.js";
 import {
   canApplyLearnedArtifactTrust,
   catalogWebTargetMatch,
@@ -9215,7 +9216,7 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
       decodeStoredRawReport(reportResult.rows[0]);
 
     reportResult.rows[0].payload =
-      compactAdminReportPayload(rawAdminReport);
+      projectReportPayloadForAdmin(rawAdminReport);
 
     delete reportResult.rows[0].payload_raw;
     delete reportResult.rows[0].payload_encoding;
@@ -9309,6 +9310,61 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
     relatedAnalyses,
     commonApps: commonAppCatalog,
   });
+});
+
+app.get("/api/admin/analyses/:id/raw-hash", requireAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0)
+    return res.status(400).json({ error: "invalid_id" });
+
+  const result = await pool.query(
+    `SELECT payload, payload_raw, payload_encoding
+     FROM scan_reports
+     WHERE analysis_id = $1
+     ORDER BY id DESC
+     LIMIT 1`,
+    [id]
+  );
+
+  if (!result.rows[0])
+    return res.status(404).json({ error: "report_not_found" });
+
+  const payload = decodeStoredRawReport(result.rows[0]);
+  const raw = JSON.stringify(payload ?? {});
+  const sha256 = crypto
+    .createHash("sha256")
+    .update(raw, "utf8")
+    .digest("hex");
+
+  res.json({ sha256, sizeBytes: Buffer.byteLength(raw, "utf8") });
+});
+
+app.get("/api/admin/analyses/:id/raw", requireAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0)
+    return res.status(400).json({ error: "invalid_id" });
+
+  const result = await pool.query(
+    `SELECT payload, payload_raw, payload_encoding
+     FROM scan_reports
+     WHERE analysis_id = $1
+     ORDER BY id DESC
+     LIMIT 1`,
+    [id]
+  );
+
+  if (!result.rows[0])
+    return res.status(404).json({ error: "report_not_found" });
+
+  const payload = decodeStoredRawReport(result.rows[0]);
+  const raw = JSON.stringify(payload ?? {}, null, 2);
+
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="vorken-analysis-${id}-raw.json"`
+  );
+  res.send(raw);
 });
 
 

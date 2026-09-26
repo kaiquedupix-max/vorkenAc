@@ -17,7 +17,6 @@ let dashboardPollInFlight = false;
 let activeReportController = null;
 let reportLoadSequence = 0;
 let lastReportCache = null;
-let currentReportPayload = null;
 
 function yieldToBrowser() {
   return new Promise((resolve) => {
@@ -791,7 +790,6 @@ document.getElementById("closeReportBtn").addEventListener("click", () => {
   reportCard.removeAttribute("aria-busy");
   document.getElementById("reportEmptyState")?.classList.remove("hidden");
   currentReportId = null;
-  currentReportPayload = null;
   currentClientReportReleased = false;
   currentGuerraFriaLinked = false;
   currentIntegrationDecision = null;
@@ -1185,6 +1183,14 @@ async function openReport(id, options = {}) {
       : safeArray(rows).length;
   };
   currentReportPayload = payload;
+  const collectionCounts =
+    payload.uiCollectionCounts && typeof payload.uiCollectionCounts === "object"
+      ? payload.uiCollectionCounts
+      : {};
+  const collectionCount = (name, rows) => {
+    const total = Number(collectionCounts[name]);
+    return Number.isFinite(total) ? total : rows.length;
+  };
 
   // Abre o cartão antes de montar as seções pesadas. Assim um erro em uma
   // seção específica não faz o botão parecer que "não funciona".
@@ -1418,19 +1424,19 @@ async function openReport(id, options = {}) {
     Number.isFinite(Number(uiSummary.advancedForensicsCount))
       ? Number(uiSummary.advancedForensicsCount)
       : (
-          arrays.peInspections.length +
-          arrays.zoneIdentifiers.length +
-          arrays.alternateDataStreams.length +
+          collectionCount("peInspections", arrays.peInspections) +
+          collectionCount("zoneIdentifiers", arrays.zoneIdentifiers) +
+          collectionCount("alternateDataStreams", arrays.alternateDataStreams) +
           arrays.autorunIntegrity.filter((x) => x.suspicious === true).length +
           arrays.processModuleIntegrity.filter((x) => x.suspicious === true).length +
-          arrays.processMemoryIntegrity.length +
-          arrays.protectedWindows.length +
-          arrays.powerShellArtifacts.length +
-          arrays.crashArtifacts.length +
-          arrays.securityProducts.length +
-          arrays.networkIndicators.length +
-          arrays.usnActivity.length +
-          arrays.systemIntegrityExpansion.length
+          collectionCount("processMemoryIntegrity", arrays.processMemoryIntegrity) +
+          collectionCount("protectedWindows", arrays.protectedWindows) +
+          collectionCount("powerShellArtifacts", arrays.powerShellArtifacts) +
+          collectionCount("crashArtifacts", arrays.crashArtifacts) +
+          collectionCount("securityProducts", arrays.securityProducts) +
+          collectionCount("networkIndicators", arrays.networkIndicators) +
+          collectionCount("usnActivity", arrays.usnActivity) +
+          collectionCount("systemIntegrityExpansion", arrays.systemIntegrityExpansion)
         );
 
   const informationalCount =
@@ -1439,13 +1445,28 @@ async function openReport(id, options = {}) {
       Number.isFinite(Number(uiSummary.informationalInventoryCount))
         ? Number(uiSummary.informationalInventoryCount)
         : (
-            arrays.files.length +
-            arrays.browserDownloads.length +
-            arrays.recycleBin.length +
-            arrays.browserRecoveredArtifacts.length +
-            arrays.deletedUsnRecords.length
+            collectionCount("files", arrays.files) +
+            collectionCount("browserDownloads", arrays.browserDownloads) +
+            collectionCount("recycleBin", arrays.recycleBin) +
+            collectionCount("browserRecoveredArtifacts", arrays.browserRecoveredArtifacts) +
+            collectionCount("deletedUsnRecords", arrays.deletedUsnRecords)
           )
     );
+
+  const inventoryLoadNotice =
+    document.getElementById("inventoryLoadNotice");
+  const projection = payload.uiProjection || {};
+  if (inventoryLoadNotice) {
+    inventoryLoadNotice.classList.toggle("hidden", projection.truncated !== true);
+    inventoryLoadNotice.classList.toggle("warning", projection.truncated === true);
+    inventoryLoadNotice.textContent = projection.truncated === true
+      ? "Visualização otimizada: " +
+        Number(projection.projectedItems || 0).toLocaleString("pt-BR") +
+        " de " +
+        Number(projection.originalItems || 0).toLocaleString("pt-BR") +
+        " registros técnicos foram carregados nesta aba. O JSON completo continua disponível para download."
+      : "";
+  }
 
   const currentStageLabel =
     processingStageLabel(
@@ -3703,9 +3724,16 @@ async function openReport(id, options = {}) {
     : '<div class="message">Nenhum artefato adicional de execução foi coletado.</div>';
 
   const rawReport = document.getElementById("rawReport");
-  rawReport.textContent =
-    "Dados brutos disponíveis. Abra esta seção para preparar a visualização completa.";
-  rawReport.dataset.materialized = "false";
+  rawReport.textContent = projection.truncated === true
+    ? "Visualização leve ativa. Os dados completos não são inseridos no navegador."
+    : "O relatório completo está disponível para download.";
+
+  const downloadRawReportBtn =
+    document.getElementById("downloadRawReportBtn");
+  if (downloadRawReportBtn) {
+    downloadRawReportBtn.href =
+      "/api/admin/analyses/" + encodeURIComponent(id) + "/raw";
+  }
 
 }
 
@@ -3865,30 +3893,17 @@ function setupVorkenAdminUi() {
   });
 
   document.getElementById("hashReportBtn")?.addEventListener("click", async () => {
-    const raw = currentReportPayload
-      ? JSON.stringify(currentReportPayload)
-      : "";
-
-    if (!raw) {
+    if (!currentReportId) {
       alert("Abra um relatório antes de gerar o hash.");
       return;
     }
 
-    if (!window.crypto?.subtle) {
-      alert("O navegador não disponibilizou o gerador SHA-256.");
-      return;
-    }
-
-    const bytes =
-      new TextEncoder().encode(raw);
-
-    const digest =
-      await crypto.subtle.digest("SHA-256", bytes);
-
-    const hash =
-      Array.from(new Uint8Array(digest))
-        .map((value) => value.toString(16).padStart(2, "0"))
-        .join("");
+    const result = await api(
+      "/api/admin/analyses/" +
+      encodeURIComponent(currentReportId) +
+      "/raw-hash"
+    );
+    const hash = String(result.sha256 || "");
 
     try {
       await navigator.clipboard.writeText(hash);
@@ -3896,28 +3911,6 @@ function setupVorkenAdminUi() {
     } catch {
       alert("SHA-256 do relatório:\n" + hash);
     }
-  });
-
-  const rawReport = document.getElementById("rawReport");
-  const rawReportSection = rawReport?.closest("details");
-  rawReportSection?.addEventListener("toggle", async () => {
-    if (
-      !rawReportSection.open ||
-      rawReport?.dataset.materialized === "true" ||
-      !currentReportPayload
-    ) {
-      return;
-    }
-
-    const payloadAtOpen = currentReportPayload;
-    rawReport.textContent = "Preparando dados brutos...";
-    await yieldToBrowser();
-
-    if (payloadAtOpen !== currentReportPayload)
-      return;
-
-    rawReport.textContent = JSON.stringify(payloadAtOpen, null, 2);
-    rawReport.dataset.materialized = "true";
   });
 
   switchAdminTab("sessions");
