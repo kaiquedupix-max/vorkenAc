@@ -490,6 +490,28 @@ function buildExecutionIndex(report) {
     );
   }
 
+  // ShimCache/AppCompat entries explicitly marked as executed are independent
+  // historical execution evidence. Do not treat entries marked "No" as execution.
+  for (const item of safeArray(report?.shimCache)) {
+    const executed =
+      item?.executed === true ||
+      String(item?.executed || "")
+        .toLowerCase() === "yes";
+
+    if (!executed)
+      continue;
+
+    remember(
+      item?.path,
+      "shimcache",
+      {
+        missing:
+          item?.filePresent === false,
+        raw: item
+      }
+    );
+  }
+
   // PCA/MuiCache are corroboration only. PCA can tell us that a file observed
   // by Windows is no longer present, but PCA alone is not treated as execution.
   for (const item of safeArray(report?.pca)) {
@@ -608,6 +630,16 @@ function fileLooksTrusted(
   evidence,
   helpers
 ) {
+  const knownCheat =
+    helpers.knownCheatExecutableMatch?.(
+      value,
+      evidence || {}
+    );
+
+  if (knownCheat?.matched === true) {
+    return false;
+  }
+
   if (
     helpers.isKnownBenignPeNoise?.(value)
   ) {
