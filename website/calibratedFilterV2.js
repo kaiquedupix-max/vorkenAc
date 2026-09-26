@@ -1022,10 +1022,15 @@ export async function runCalibratedFilterV2({
     let title = "";
     let reason = "";
 
-    const unknownLoaderContext =
-      randomLoaderName &&
+    const explicitCheatExecutable =
       executed &&
       !genericInstaller &&
+      highRiskName;
+
+    const behavioralUnknownLoader =
+      executed &&
+      !genericInstaller &&
+      randomLoaderName &&
       (
         usb ||
         deletedOrMissing ||
@@ -1034,12 +1039,18 @@ export async function runCalibratedFilterV2({
         strongInjection
       );
 
-    if (unknownLoaderContext) {
+    if (explicitCheatExecutable) {
+      severity = "critical";
+      title =
+        "PRIORIDADE MÁXIMA: executável com nome explícito de cheat executado";
+      reason =
+        "O executável foi efetivamente executado e o próprio nome contém indicador explícito de cheat/injector/aimbot/wallhack/spoofer/no-recoil. Essa evidência não é rebaixada por estar fora da sessão atual do Rust.";
+    } else if (behavioralUnknownLoader) {
       severity = "critical";
       title =
         "PRIORIDADE MÁXIMA: possível loader desconhecido executado";
       reason =
-        "O executável possui nome fortemente randômico e foi efetivamente executado em contexto típico de loader (Downloads/Temp/Desktop, USB, ausência posterior, packer/alta entropia ou APIs fortes). A detecção é comportamental e não depende de catálogo.";
+        "O executável possui nome fortemente randômico e foi efetivamente executado em contexto típico de loader (Downloads/Temp/Desktop, USB, ausência posterior, packer/alta entropia ou APIs fortes). A detecção é comportamental, não depende de catálogo e não é rebaixada por IN/OUT-OF-SESSION.";
     } else if (
       usb &&
       executed &&
@@ -1248,8 +1259,10 @@ export async function runCalibratedFilterV2({
         suspiciousPath,
         genericInstaller,
         highRiskName,
+        explicitCheatExecutable,
         randomLoaderName,
         randomLoaderScore,
+        behavioralUnknownLoader,
         packedOrHighEntropy,
         priorityMaximum:
           severity === "critical",
