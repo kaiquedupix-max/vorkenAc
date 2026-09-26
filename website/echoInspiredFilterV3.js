@@ -443,6 +443,25 @@ function buildTimeline(report, session) {
   }
 
   for (const item of safeArray(
+    report?.processTerminationEvents
+  )) {
+    push(
+      item?.timeCreatedUtc,
+      "process",
+      "closed",
+      item?.processPath ||
+      item?.processName,
+      "Event 4689",
+      {
+        processId:
+          item?.processId,
+        exitStatus:
+          item?.exitStatus
+      }
+    );
+  }
+
+  for (const item of safeArray(
     report?.usnActivity
   )) {
     const actions = [];
