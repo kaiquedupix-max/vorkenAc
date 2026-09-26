@@ -3980,11 +3980,65 @@ function learnedArtifactSha256(
   return "";
 }
 
+function isCatalogProtectedArtifact(
+  artifactType,
+  artifactValue,
+  evidence = {}
+) {
+  if (
+    evidence?.knownCheatDomain === true ||
+    evidence?.directCatalogMatch === true ||
+    Boolean(evidence?.catalogMatch) ||
+    (
+      Array.isArray(evidence?.catalogMatches) &&
+      evidence.catalogMatches.length > 0
+    )
+  ) {
+    return true;
+  }
+
+  const values = [
+    artifactValue,
+    evidence?.url,
+    evidence?.sourceUrl,
+    evidence?.finalUrl,
+    evidence?.pageUrl,
+    evidence?.siteUrl,
+    evidence?.referrerUrl,
+    evidence?.recoveredUrl,
+    evidence?.fileName,
+    evidence?.recoveredFileName,
+    evidence?.executableName,
+    evidence?.name,
+    evidence?.targetPath,
+    evidence?.currentPath,
+    evidence?.originalPath,
+    evidence?.path,
+    evidence?.fullPath,
+    evidence?.executablePath,
+    evidence?.processPath,
+    evidence?.processName,
+  ].filter(Boolean);
+
+  return findRustCatalogMatches(values).length > 0;
+}
+
 function learnedArtifactSignatures(
   artifactType,
   artifactValue,
   evidence = {}
 ) {
+  // Catálogo de cheats/sites/apps sempre vence o auto-aprendizado.
+  if (
+    isCatalogProtectedArtifact(
+      artifactType,
+      artifactValue,
+      evidence
+    )
+  ) {
+    return [];
+  }
+
   // Discord EXE/ZIP real permanece prioridade máxima e nunca é aprendido.
   if (
     isAllowedDiscordExecutableOrZipDownload(
@@ -4187,6 +4241,53 @@ async function learnReleasedAnalysisArtifacts(
     invalidateLearnedTrustedArtifacts();
 
   return learned;
+}
+
+async function disableLearnedArtifactsNowInCatalog() {
+  const result =
+    await pool.query(
+      `SELECT
+         id,
+         signature,
+         file_name,
+         artifact_value
+       FROM learned_trusted_artifacts
+       WHERE enabled=TRUE`
+    );
+
+  const disableIds = [];
+
+  for (const row of result.rows) {
+    const matches =
+      findRustCatalogMatches(
+        row.file_name,
+        row.artifact_value
+      );
+
+    if (matches.length > 0)
+      disableIds.push(Number(row.id));
+  }
+
+  if (disableIds.length > 0) {
+    await pool.query(
+      `UPDATE learned_trusted_artifacts
+       SET enabled=FALSE,
+           updated_at=NOW()
+       WHERE id = ANY($1::bigint[])`,
+      [disableIds]
+    );
+
+    invalidateLearnedTrustedArtifacts();
+  }
+
+  console.log(
+    "Proteção do catálogo aplicada à base aprendida:",
+    {
+      disabledLearnedArtifacts: disableIds.length,
+    }
+  );
+
+  return disableIds.length;
 }
 
 async function backfillPreviouslyApprovedAnalyses() {
@@ -9008,6 +9109,7 @@ app.get("*", (_req, res) => {
 
 initDb()
   .then(async () => {
+    await disableLearnedArtifactsNowInCatalog();
     await backfillPreviouslyApprovedAnalyses();
 
     app.listen(port, "0.0.0.0", () => {
