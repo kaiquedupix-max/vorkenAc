@@ -97,12 +97,68 @@ internal static class AdvancedCollectors
                 string decoded = Rot13(encodedName);
                 object? raw = countKey.GetValue(encodedName);
 
+                DateTime? lastExecutionUtc = null;
+                int? runCount = null;
+                int dataLength = 0;
+
+                if (raw is byte[] bytes)
+                {
+                    dataLength = bytes.Length;
+
+                    // Windows 7+ UserAssist Count values are normally 72 bytes.
+                    // Run count is stored at offset 4 and the last execution
+                    // FILETIME at offset 60. Parse defensively because older
+                    // Windows builds may use a different layout.
+                    if (bytes.Length >= 8)
+                    {
+                        try
+                        {
+                            int parsedRunCount =
+                                BitConverter.ToInt32(bytes, 4);
+
+                            if (parsedRunCount >= 0)
+                                runCount = parsedRunCount;
+                        }
+                        catch
+                        {
+                        }
+                    }
+
+                    if (bytes.Length >= 68)
+                    {
+                        try
+                        {
+                            long fileTime =
+                                BitConverter.ToInt64(bytes, 60);
+
+                            if (fileTime > 0)
+                            {
+                                DateTime parsed =
+                                    DateTime.FromFileTimeUtc(fileTime);
+
+                                if (
+                                    parsed.Year >= 2000 &&
+                                    parsed <= DateTime.UtcNow.AddDays(2)
+                                )
+                                {
+                                    lastExecutionUtc = parsed;
+                                }
+                            }
+                        }
+                        catch
+                        {
+                        }
+                    }
+                }
+
                 result.Add(new UserAssistRecord
                 {
                     Guid = guid,
                     EncodedName = encodedName,
                     DecodedName = decoded,
-                    DataLength = raw is byte[] bytes ? bytes.Length : 0
+                    DataLength = dataLength,
+                    RunCount = runCount,
+                    LastExecutionUtc = lastExecutionUtc
                 });
             }
         }
@@ -610,6 +666,8 @@ internal sealed class UserAssistRecord
     public string EncodedName { get; set; } = "";
     public string DecodedName { get; set; } = "";
     public int DataLength { get; set; }
+    public int? RunCount { get; set; }
+    public DateTime? LastExecutionUtc { get; set; }
 }
 
 internal sealed class MuiCacheRecord
