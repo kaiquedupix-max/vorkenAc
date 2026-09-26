@@ -2059,6 +2059,35 @@ export async function runCalibratedFilterV2({
       dangerousPayload &&
       downloadCompleted;
 
+    const downloadedName =
+      baseName(value);
+
+    const downloadExecution =
+      downloadedName
+        ? executionIndex.get(downloadedName)
+        : null;
+
+    const downloadExecutionScope =
+      downloadExecution
+        ? classifyExecutionScope(
+            downloadExecution,
+            rustSession
+          )
+        : {
+            scope: "unknown",
+            inSession: false,
+            outOfSession: false,
+            timestamps: []
+          };
+
+    const executionConfirmed =
+      downloadExecution?.executed === true;
+
+    const executionSources =
+      safeArray(downloadExecution?.sources)
+        .map((source) => source?.source)
+        .filter(Boolean);
+
     const discordAttachment =
       [".exe", ".zip", ".rar", ".7z"]
         .includes(extension) &&
@@ -2092,9 +2121,11 @@ export async function runCalibratedFilterV2({
     await addFinding(
       insertFinding,
       analysisId,
-      directCatalogPayload
-        ? "PRIORIDADE MÁXIMA: payload baixado diretamente de fonte do catálogo"
-        : direct
+      directCatalogPayload && executionConfirmed
+        ? "PRIORIDADE MÁXIMA: payload do catálogo baixado e executado"
+        : directCatalogPayload
+          ? "PRIORIDADE MÁXIMA: payload baixado diretamente de fonte do catálogo"
+          : direct
           ? "Arquivo baixado a partir de fonte do catálogo"
           : "Executável/arquivo compactado baixado de anexo real do Discord",
       severity,
@@ -2114,6 +2145,13 @@ export async function runCalibratedFilterV2({
         dangerousPayload,
         downloadCompleted,
         directCatalogPayload,
+        executionConfirmed,
+        executionSources,
+        sessionRelation:
+          downloadExecutionScope.scope,
+        executionTimestampsUtc:
+          downloadExecutionScope.timestamps
+            .map(timestampIso),
         priorityMaximum:
           directCatalogPayload,
         protectedByTechnicalEngine:
@@ -2123,9 +2161,11 @@ export async function runCalibratedFilterV2({
             ? "high"
             : "medium",
         note:
-          directCatalogPayload
-            ? "O navegador registrou download concluído de payload executável/compactado diretamente de domínio presente no catálogo de cheat. Diferente de uma simples visita ao site, a aquisição do payload é tratada como evidência crítica."
-            : "O download é contexto de revisão. Arquivos não executáveis ou downloads sem conclusão permanecem em revisão até existir evidência técnica adicional."
+          directCatalogPayload && executionConfirmed
+            ? "O navegador registrou download concluído de payload executável/compactado diretamente de domínio presente no catálogo de cheat e o mesmo filename possui evidência independente de execução em artefatos do Windows."
+            : directCatalogPayload
+              ? "O navegador registrou download concluído de payload executável/compactado diretamente de domínio presente no catálogo de cheat. Diferente de uma simples visita ao site, a aquisição do payload é tratada como evidência crítica."
+              : "O download é contexto de revisão. Arquivos não executáveis ou downloads sem conclusão permanecem em revisão até existir evidência técnica adicional."
       }
     );
   }
