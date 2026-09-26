@@ -111,3 +111,6 @@ jobs:
         run: |
           node --check public/admin.js
           node --check public/analysis.js
+
+      - name: Test detection policy
+        run: npm test
