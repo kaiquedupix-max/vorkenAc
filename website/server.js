@@ -2581,6 +2581,12 @@ async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_learned_trusted_artifacts_enabled
       ON learned_trusted_artifacts(enabled, signature);
 
+    CREATE TABLE IF NOT EXISTS vorken_migrations (
+      migration_key TEXT PRIMARY KEY,
+      completed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      details JSONB NOT NULL DEFAULT '{}'::jsonb
+    );
+
     ALTER TABLE analyses
       ADD COLUMN IF NOT EXISTS machine_fingerprint TEXT NULL;
 
@@ -4181,6 +4187,99 @@ async function learnReleasedAnalysisArtifacts(
     invalidateLearnedTrustedArtifacts();
 
   return learned;
+}
+
+async function backfillPreviouslyApprovedAnalyses() {
+  const migrationKey =
+    "learned_trust_from_historic_approvals_v1";
+
+  const alreadyDone =
+    await pool.query(
+      `SELECT 1
+       FROM vorken_migrations
+       WHERE migration_key=$1
+       LIMIT 1`,
+      [migrationKey]
+    );
+
+  if (alreadyDone.rows.length > 0)
+    return {
+      skipped: true,
+      analyses: 0,
+      signatures: 0,
+    };
+
+  const approved =
+    await pool.query(
+      `SELECT
+         a.id
+       FROM analyses a
+       WHERE a.external_decision='approve'
+         AND EXISTS (
+           SELECT 1
+           FROM scan_findings sf
+           WHERE sf.analysis_id=a.id
+             AND sf.severity IN ('critical','high','medium')
+         )
+       ORDER BY a.id ASC`
+    );
+
+  let signatures = 0;
+  let analyses = 0;
+
+  for (const row of approved.rows) {
+    try {
+      const learned =
+        await learnReleasedAnalysisArtifacts(
+          Number(row.id),
+          "Backfill automático: análise já liberada anteriormente pela administração."
+        );
+
+      signatures += Number(learned || 0);
+      analyses++;
+    } catch (error) {
+      console.error(
+        "Falha ao importar análise liberada antiga para aprendizado:",
+        {
+          analysisId: row.id,
+          message: error?.message,
+          code: error?.code,
+        }
+      );
+    }
+  }
+
+  await pool.query(
+    `INSERT INTO vorken_migrations(
+       migration_key,
+       details
+     )
+     VALUES ($1,$2::jsonb)
+     ON CONFLICT (migration_key)
+     DO NOTHING`,
+    [
+      migrationKey,
+      JSON.stringify({
+        approvedAnalysesProcessed: analyses,
+        learnedSignatures: signatures,
+        completedAt: new Date().toISOString(),
+      }),
+    ]
+  );
+
+  if (signatures > 0)
+    invalidateLearnedTrustedArtifacts();
+
+  console.log(
+    "Backfill de falsos positivos concluído:",
+    { analyses, signatures }
+  );
+
+  return {
+    skipped: false,
+    analyses,
+    signatures,
+  };
 }
 
 async function rebuildFindings(analysisId, report) {
@@ -8908,7 +9007,9 @@ app.get("*", (_req, res) => {
 });
 
 initDb()
-  .then(() => {
+  .then(async () => {
+    await backfillPreviouslyApprovedAnalyses();
+
     app.listen(port, "0.0.0.0", () => {
       console.log("Vorken web ouvindo na porta " + port);
     });
