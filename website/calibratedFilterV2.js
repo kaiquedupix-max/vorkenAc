@@ -121,6 +121,29 @@ function hasStrongRustIntent(value) {
   return rust && strong;
 }
 
+function hasActionableRustCheatPageIntent(value) {
+  const text = String(value || "").toLowerCase();
+  if (!text) return false;
+
+  const rust =
+    /(^|[^a-z0-9])rust([^a-z0-9]|$)/i.test(text);
+
+  if (!rust)
+    return false;
+
+  const actionable =
+    /(^|[^a-z0-9])(cheat|aimbot|wallhack|flyhack|no[ -]?recoil|recoil[ -]?script|macro|script|loader|spoofer|injector|undetected|free[ -]?download)([^a-z0-9]|$)/i
+      .test(text);
+
+  const moderationOnly =
+    /banindo|banning|banido|banned|pegando hacker|catching hacker|verificando hack|anti[ -]?cheat/i
+      .test(text) &&
+    !/(aimbot|wallhack|no[ -]?recoil|recoil[ -]?script|loader|spoofer|injector|undetected|free[ -]?download)/i
+      .test(text);
+
+  return actionable && !moderationOnly;
+}
+
 function apiList(item) {
   return safeArray(item?.suspiciousApis)
     .map((api) => String(api || "").trim())
@@ -318,6 +341,42 @@ function buildExecutionIndex(report) {
         raw: item
       }
     );
+  }
+
+  // UserAssist is strong evidence that a GUI application was launched by the
+  // interactive user. It does not by itself prove malicious behavior.
+  for (const item of safeArray(report?.userAssist)) {
+    remember(
+      item?.decodedName,
+      "userassist",
+      {
+        missing: false,
+        raw: item
+      }
+    );
+  }
+
+  // PCA/MuiCache are corroboration only. PCA can tell us that a file observed
+  // by Windows is no longer present, but PCA alone is not treated as execution.
+  for (const item of safeArray(report?.pca)) {
+    const name =
+      baseName(item?.path);
+
+    if (!name || !byName.has(name))
+      continue;
+
+    const entry =
+      byName.get(name);
+
+    entry.sources.push({
+      source: "pca_context",
+      path: item?.path,
+      corroborationOnly: true,
+      raw: item
+    });
+
+    if (item?.fileExists === false)
+      entry.missing = true;
   }
 
   return byName;
@@ -647,6 +706,10 @@ export async function runCalibratedFilterV2({
     const genericInstaller =
       isGenericInstaller(representative);
 
+    const highRiskName =
+      /(^|[^a-z0-9])(injector|aimbot|wallhack|spoofer|cheat|no[ -]?recoil)([^a-z0-9]|$)/i
+        .test(name.replace(/\.exe$/i, ""));
+
     const strongInjection =
       injectApis.length >= 2;
 
@@ -675,16 +738,16 @@ export async function runCalibratedFilterV2({
       !genericInstaller &&
       (
         unsigned ||
-        suspiciousPath ||
         strongInjection ||
-        catalogMatches.length > 0
+        catalogMatches.length > 0 ||
+        highRiskName
       )
     ) {
       severity = "critical";
       title =
-        "EXE executado e posteriormente apagado/ausente";
+        "EXE executado e posteriormente apagado/ausente com sinal adicional de risco";
       reason =
-        "O Windows preservou evidência de execução e o executável não está mais disponível no caminho original.";
+        "Há evidência de execução e ausência posterior, acompanhada de assinatura ausente, APIs fortes, catálogo de ameaça ou nome de alto risco.";
     } else if (
       strongInjection &&
       executed
@@ -744,14 +807,17 @@ export async function runCalibratedFilterV2({
         "mouse_event/SendInput foi encontrado em executável com evidência de execução, porém sem contexto adicional suficiente para tratá-lo como recoil de Rust.";
     } else if (
       executed &&
-      deletedOrMissing &&
-      genericInstaller
+      deletedOrMissing
     ) {
       severity = "medium";
       title =
-        "Instalador/updater executado e posteriormente ausente";
+        genericInstaller
+          ? "Instalador/updater executado e posteriormente ausente"
+          : "Executável executado e posteriormente ausente";
       reason =
-        "Há execução e ausência posterior, mas instaladores e atualizadores podem remover a si próprios legitimamente.";
+        genericInstaller
+          ? "Há execução e ausência posterior, mas instaladores e atualizadores podem remover a si próprios legitimamente."
+          : "A execução é comprovada, porém a ausência posterior sem outro sinal técnico forte não é suficiente para classificar como crítico.";
     }
 
     if (!severity)
@@ -788,6 +854,7 @@ export async function runCalibratedFilterV2({
           pe?.signed,
         suspiciousPath,
         genericInstaller,
+        highRiskName,
         priorityMaximum:
           severity === "critical",
         protectedByTechnicalEngine:
@@ -1064,7 +1131,7 @@ export async function runCalibratedFilterV2({
       String(item?.url || "");
 
     if (
-      hasStrongRustIntent(title) &&
+      hasActionableRustCheatPageIntent(title) &&
       !isSearchEngineUrl(item?.url)
     ) {
       const key =
