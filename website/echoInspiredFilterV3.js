@@ -314,16 +314,34 @@ function adjustExecutableSeverity(
   const knownCheatExecutable =
     evidence?.knownCheatExecutable === true;
 
-  if (knownCheatExecutable) {
+  const explicitCheatExecutable =
+    evidence?.executionConfirmed === true &&
+    evidence?.highRiskName === true;
+
+  const behavioralUnknownLoader =
+    evidence?.executionConfirmed === true &&
+    evidence?.randomLoaderName === true &&
+    Number(evidence?.randomLoaderScore || 0) >= 3;
+
+  const protectedExecutedThreat =
+    evidence?.executionConfirmed === true &&
+    (
+      knownCheatExecutable ||
+      explicitCheatExecutable ||
+      behavioralUnknownLoader
+    );
+
+  if (protectedExecutedThreat) {
+    const prefix =
+      knownCheatExecutable
+        ? "CHEAT CONHECIDO · "
+        : explicitCheatExecutable
+          ? "CHEAT/INJECTOR EXECUTADO · "
+          : "LOADER SUSPEITO EXECUTADO · ";
+
     return {
-      severity:
-        evidence?.executionConfirmed === true
-          ? "critical"
-          : nextSeverity,
-      title:
-        evidence?.executionConfirmed === true
-          ? "CHEAT CONHECIDO · " + nextTitle
-          : nextTitle,
+      severity: "critical",
+      title: prefix + nextTitle,
     };
   }
 
@@ -352,8 +370,13 @@ function adjustExecutableSeverity(
       // If we cannot place the execution inside the current Rust session,
       // keep only exceptionally strong technical signals critical.
       const exceptionallyStrong =
-        evidence?.usbExecution === true &&
-        evidence?.injectionCapability === true;
+        (
+          evidence?.usbExecution === true &&
+          evidence?.injectionCapability === true
+        ) ||
+        explicitCheatExecutable ||
+        behavioralUnknownLoader ||
+        knownCheatExecutable;
 
       if (!exceptionallyStrong) {
         nextSeverity = "medium";
