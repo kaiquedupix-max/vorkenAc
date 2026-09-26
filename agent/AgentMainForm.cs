@@ -1190,7 +1190,7 @@ FIM DOS TERMOS
 
     private void AppendColoredActivityLine(string line)
     {
-        int tagStart = line.IndexOf('[', StringComparison.Ordinal);
+        int tagStart = line.IndexOf('[');
         int tagEnd =
             tagStart >= 0
                 ? line.IndexOf(']', tagStart + 1)
