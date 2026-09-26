@@ -1828,6 +1828,30 @@ async function openReport(id) {
             )
           : "";
 
+      const downloadUrl =
+        String(finding.artifact_type || "") === "browser_download"
+          ? (
+              safeExternalUrl(evidence.finalUrl) ||
+              safeExternalUrl(evidence.sourceUrl) ||
+              safeExternalUrl(evidence.pageUrl) ||
+              safeExternalUrl(evidence.referrerUrl) ||
+              safeExternalUrl(evidence.siteUrl)
+            )
+          : "";
+
+      const downloadLinkBlock =
+        downloadUrl
+          ? (
+              '<div class="kv"><span>Link do download</span><span>' +
+                '<a class="analysis-link" href="' +
+                  escapeHtml(downloadUrl) +
+                  '" target="_blank" rel="noopener noreferrer">' +
+                  escapeHtml(downloadUrl) +
+                '</a>' +
+              '</span></div>'
+            )
+          : "";
+
       const selectable =
         currentGuerraFriaLinked &&
         ["critical", "high", "medium"].includes(displaySeverity) &&
@@ -1842,6 +1866,7 @@ async function openReport(id) {
         ${catalogName}
         ${reviewBlock}
         ${browserAccessBlock}
+        ${downloadLinkBlock}
         ${evidence.note ? '<div class="kv"><span>Motivo</span><span>' + escapeHtml(evidence.note) + '</span></div>' : ""}
         ${Object.keys(evidence).length ? '<div class="kv"><span>Evidência</span><span>Resumo técnico carregado. A evidência bruta permanece preservada no relatório original.</span></div>' : ""}
       `;
