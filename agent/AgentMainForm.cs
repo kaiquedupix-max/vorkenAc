@@ -593,29 +593,50 @@ FIM DOS TERMOS
             if (!termsBox.IsHandleCreated)
                 return;
 
-            int lastCharacter = Math.Max(
-                0,
-                termsBox.TextLength - 1);
-            Point lastCharacterPosition =
-                termsBox.GetPositionFromCharIndex(lastCharacter);
+            string visibleText =
+                (termsBox.Text ?? string.Empty).TrimEnd();
+
+            int lastContentCharacter =
+                Math.Max(0, visibleText.Length - 1);
+
             int visibleEndCharacter =
                 termsBox.GetCharIndexFromPosition(
                     new Point(
-                        Math.Max(1, termsBox.ClientSize.Width - 28),
-                        Math.Max(1, termsBox.ClientSize.Height - 8)));
-            int percent = Math.Clamp(
-                (int)Math.Round(
-                    visibleEndCharacter * 100d /
-                    Math.Max(1, termsBox.TextLength)),
-                0,
-                100);
-            bool reachedBottom =
-                lastCharacterPosition.Y >= 0 &&
-                lastCharacterPosition.Y <=
-                    termsBox.ClientSize.Height - termsBox.Font.Height;
+                        Math.Max(1, termsBox.ClientSize.Width - 20),
+                        Math.Max(1, termsBox.ClientSize.Height - 4)));
 
-            if (reachedBottom)
-                percent = 100;
+            int lastContentLine =
+                termsBox.GetLineFromCharIndex(lastContentCharacter);
+
+            int lastVisibleLine =
+                termsBox.GetLineFromCharIndex(
+                    Math.Max(0, visibleEndCharacter));
+
+            Point lastContentPosition =
+                termsBox.GetPositionFromCharIndex(
+                    lastContentCharacter);
+
+            // RichTextBox can leave the final line a few pixels below the old
+            // threshold, especially with DPI scaling. Accept any of the three
+            // equivalent bottom signals instead of depending on one pixel test.
+            bool finalCharacterVisible =
+                lastContentPosition.Y >= -termsBox.Font.Height &&
+                lastContentPosition.Y <=
+                    termsBox.ClientSize.Height + termsBox.Font.Height;
+
+            bool reachedBottom =
+                visibleEndCharacter >= lastContentCharacter ||
+                lastVisibleLine >= lastContentLine ||
+                finalCharacterVisible;
+
+            int percent = reachedBottom
+                ? 100
+                : Math.Clamp(
+                    (int)Math.Round(
+                        Math.Max(0, visibleEndCharacter) * 100d /
+                        Math.Max(1, lastContentCharacter)),
+                    0,
+                    99);
 
             scrollFill.Width = Math.Max(
                 10,
@@ -641,11 +662,17 @@ FIM DOS TERMOS
             }
         }
 
-        termsBox.VScroll += (_, _) => UpdateTermsProgress();
+        // VScroll may fire before the RichTextBox has applied the new viewport.
+        // Evaluate on the next UI turn so dragging the scrollbar to the bottom
+        // reliably unlocks the consent button.
+        termsBox.VScroll += (_, _) =>
+            BeginInvoke(UpdateTermsProgress);
         termsBox.MouseWheel += (_, _) =>
             BeginInvoke(UpdateTermsProgress);
-        termsBox.KeyUp += (_, _) => UpdateTermsProgress();
-        termsBox.Resize += (_, _) => UpdateTermsProgress();
+        termsBox.KeyUp += (_, _) =>
+            BeginInvoke(UpdateTermsProgress);
+        termsBox.Resize += (_, _) =>
+            BeginInvoke(UpdateTermsProgress);
         termsBox.HandleCreated += (_, _) =>
             BeginInvoke(UpdateTermsProgress);
 
