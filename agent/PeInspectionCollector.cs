@@ -23,6 +23,10 @@ internal static class PeInspectionCollector
         "QueueUserAPC",
         "MapViewOfFile",
         "MiniDumpWriteDump",
+        "mouse_event",
+        "SendInput",
+        "SetCursorPos",
+        "GetAsyncKeyState",
         "WinVerifyTrust",
         "IsDebuggerPresent",
         "CheckRemoteDebuggerPresent"
