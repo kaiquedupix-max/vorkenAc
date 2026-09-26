@@ -274,6 +274,41 @@ function loadCommonAppCatalog() {
 
 const commonAppCatalog = loadCommonAppCatalog();
 
+const trustedMouseInputAppsPath = path.join(
+  __dirname,
+  "data",
+  "trusted-mouse-input-apps.json"
+);
+
+function loadTrustedMouseInputApps() {
+  try {
+    const payload = JSON.parse(
+      fs.readFileSync(
+        trustedMouseInputAppsPath,
+        "utf8"
+      )
+    );
+
+    return Array.isArray(payload?.apps)
+      ? payload.apps
+          .map((item) =>
+            String(item || "").trim()
+          )
+          .filter(Boolean)
+      : [];
+  } catch (error) {
+    console.error(
+      "Falha ao carregar catálogo de apps confiáveis de mouse/input:",
+      error.message
+    );
+
+    return [];
+  }
+}
+
+const trustedMouseInputApps =
+  loadTrustedMouseInputApps();
+
 const trustedExecutableCatalogPath = path.join(
   __dirname,
   "data",
@@ -1573,6 +1608,90 @@ function downloadMatchesOfficialSource(appInfo, download) {
   }
 
   return false;
+}
+
+function normalizeInputAppToken(value) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+function matchesTrustedMouseInputApp(
+  value,
+  evidence = {}
+) {
+  const haystack =
+    [
+      value,
+      evidence?.name,
+      evidence?.fileName,
+      evidence?.path,
+      evidence?.fullPath,
+      evidence?.targetPath,
+      evidence?.currentPath,
+      evidence?.originalPath,
+      evidence?.companyName,
+      evidence?.signerSubject,
+    ]
+      .filter(Boolean)
+      .map(normalizeInputAppToken)
+      .join("|");
+
+  if (!haystack)
+    return false;
+
+  return trustedMouseInputApps.some((app) => {
+    const token =
+      normalizeInputAppToken(app);
+
+    return (
+      token.length >= 5 &&
+      haystack.includes(token)
+    );
+  });
+}
+
+function isTrustedMouseInputApp(
+  value,
+  evidence = {}
+) {
+  if (!matchesTrustedMouseInputApp(value, evidence))
+    return false;
+
+  const signed =
+    evidence?.signed === true ||
+    evidence?.signatureValid === true ||
+    Boolean(
+      String(
+        evidence?.signerSubject ||
+        evidence?.publisher ||
+        evidence?.companyName ||
+        ""
+      ).trim()
+    );
+
+  const installedPath =
+    isTrustedInstalledPathForCommonApp(
+      evidence?.path ||
+      evidence?.fullPath ||
+      evidence?.currentPath ||
+      evidence?.targetPath ||
+      value
+    );
+
+  const commonApp =
+    isTrustedCommonAppArtifact(
+      value,
+      evidence
+    );
+
+  return (
+    signed ||
+    installedPath ||
+    commonApp
+  );
 }
 
 function isTrustedCommonAppArtifact(value, evidence = {}) {
@@ -5618,6 +5737,10 @@ async function addBuiltInReviewFindings(analysisId, report) {
         item
       ) ||
       isTrustedCommonAppArtifact(
+        pathValue,
+        item
+      ) ||
+      isTrustedMouseInputApp(
         pathValue,
         item
       ) ||
