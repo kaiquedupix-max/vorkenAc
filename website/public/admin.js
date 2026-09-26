@@ -3458,10 +3458,37 @@ function setupVorkenAdminUi() {
         item.classList.toggle("active", item === button)
       );
       document.querySelectorAll("[data-report-group]").forEach((section) => {
-        const groups = String(section.dataset.reportGroup || "").split(" ").filter(Boolean);
-        const visible = filter === "overview" || groups.includes(filter);
-        section.classList.toggle("report-filter-hidden", !visible);
-        if (visible && section.tagName === "DETAILS") section.open = true;
+        const groups =
+          String(section.dataset.reportGroup || "")
+            .split(" ")
+            .filter(Boolean);
+
+        let visible =
+          filter === "overview" ||
+          groups.includes(filter);
+
+        // Visões de severidade devem ser absolutas:
+        // CRÍTICO mostra somente a lista critical.
+        // REVISAR mostra somente a lista laranja.
+        if (filter === "critical") {
+          visible =
+            section.id === "criticalSection";
+        } else if (filter === "medium") {
+          visible =
+            section.id === "mediumSection";
+        }
+
+        section.classList.toggle(
+          "report-filter-hidden",
+          !visible
+        );
+
+        if (
+          visible &&
+          section.tagName === "DETAILS"
+        ) {
+          section.open = true;
+        }
       });
     });
   });
