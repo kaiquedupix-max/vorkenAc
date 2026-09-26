@@ -4617,6 +4617,150 @@ async function backfillPreviouslyApprovedAnalyses() {
   };
 }
 
+async function applyManualDetectionRules(
+  analysisId,
+  report
+) {
+  const rulesResult =
+    await pool.query(
+      `SELECT id, name, type, pattern, severity, description
+       FROM detection_rules
+       WHERE enabled = TRUE
+       ORDER BY id ASC`
+    );
+
+  const rules =
+    Array.isArray(rulesResult.rows)
+      ? rulesResult.rows
+      : [];
+
+  if (!rules.length)
+    return {
+      matchedArtifacts: 0,
+      appliedRules: 0,
+    };
+
+  const artifacts =
+    flattenArtifacts(report);
+
+  let matchedArtifacts = 0;
+  const appliedRuleIds = new Set();
+
+  for (const rule of rules) {
+    const selectedSeverity =
+      normalizeSeverity(rule.severity);
+
+    for (const artifact of artifacts) {
+      if (!matchesRule(rule, artifact))
+        continue;
+
+      const artifactValue =
+        String(artifact.value || "")
+          .slice(0, 2000);
+
+      if (!artifactValue)
+        continue;
+
+      matchedArtifacts += 1;
+      appliedRuleIds.add(Number(rule.id));
+
+      const manualEvidence = {
+        ...(artifact.evidence || {}),
+        manualRule: true,
+        manualRuleOverride: true,
+        manualRuleId: Number(rule.id),
+        manualRuleName: String(rule.name || ""),
+        manualRuleType: String(rule.type || ""),
+        manualRulePattern: String(rule.pattern || ""),
+        manualRuleSeverity: selectedSeverity,
+        manualRuleDescription:
+          String(rule.description || ""),
+        classificationSource:
+          "manual_admin_rule",
+        confidence:
+          selectedSeverity === "critical"
+            ? "high"
+            : selectedSeverity === "high"
+              ? "high"
+              : selectedSeverity === "medium"
+                ? "medium"
+                : "low",
+        note:
+          rule.description ||
+          "Regra manual configurada pela administração. A severidade selecionada nesta regra prevalece sobre pesos, caps e classificações automáticas para este artefato.",
+      };
+
+      // If the automatic engine already created a card for this exact artifact,
+      // convert that card to the manual rule instead of leaving two severities
+      // competing for the same evidence.
+      const updated =
+        await pool.query(
+          `UPDATE scan_findings
+           SET rule_id=$3,
+               title=$4,
+               severity=$5,
+               evidence=$6::jsonb
+           WHERE analysis_id=$1
+             AND LOWER(TRIM(artifact_value)) =
+                 LOWER(TRIM($2))
+           RETURNING id`,
+          [
+            analysisId,
+            artifactValue,
+            Number(rule.id),
+            String(rule.name || "Regra manual"),
+            selectedSeverity,
+            JSON.stringify(manualEvidence),
+          ]
+        );
+
+      if (updated.rowCount > 0)
+        continue;
+
+      // No automatic finding existed for the matched raw artifact. Insert a
+      // dedicated manual finding directly, bypassing insertReviewFinding so
+      // no automatic severity cap, allowlist or learned trust can alter it.
+      await pool.query(
+        `INSERT INTO scan_findings(
+           analysis_id,
+           rule_id,
+           title,
+           severity,
+           artifact_type,
+           artifact_value,
+           evidence
+         )
+         SELECT
+           $1,$2,$3,$4,$5,$6,$7::jsonb
+         WHERE NOT EXISTS (
+           SELECT 1
+           FROM scan_findings
+           WHERE analysis_id=$1
+             AND rule_id=$2
+             AND artifact_type=$5
+             AND LOWER(TRIM(artifact_value)) =
+                 LOWER(TRIM($6))
+         )`,
+        [
+          analysisId,
+          Number(rule.id),
+          String(rule.name || "Regra manual"),
+          selectedSeverity,
+          String(artifact.type || "manual_rule"),
+          artifactValue,
+          JSON.stringify(manualEvidence),
+        ]
+      );
+    }
+  }
+
+  return {
+    matchedArtifacts,
+    appliedRules:
+      appliedRuleIds.size,
+  };
+}
+
 async function rebuildFindings(analysisId, report) {
   await pool.query(
     `UPDATE analyses
@@ -4628,10 +4772,9 @@ async function rebuildFindings(analysisId, report) {
 
   await pool.query("DELETE FROM scan_findings WHERE analysis_id = $1", [analysisId]);
 
-  // Confidence V4: legacy database rules and the previous built-in filter
-  // remain in the codebase only for rollback. They no longer participate in
-  // classification. The threat-site catalog and trusted-app catalog are
-  // explicitly passed to the calibrated engine.
+  // Automatic engine runs first. Custom rules configured by the administrator
+  // are applied afterwards as an authoritative layer: their selected severity
+  // is used exactly as configured and is not capped/reweighted by automatic logic.
   await runDetectionEngineV4({
     analysisId,
     report,
@@ -4649,15 +4792,18 @@ async function rebuildFindings(analysisId, report) {
 
   await removeVorkenFindings(analysisId);
 
+  await applyManualDetectionRules(
+    analysisId,
+    report
+  );
+
   await pool.query(
     `UPDATE analyses
      SET processing_stage='finalizing',
-         processing_message='Motor de confiança V4 concluído. Preparando o resultado final...'
+         processing_message='Filtros automáticos e regras manuais concluídos. Preparando o resultado final...'
      WHERE id=$1`,
     [analysisId]
   );
-
-  await removeVorkenFindings(analysisId);
 
   return {
     status: "completed",
