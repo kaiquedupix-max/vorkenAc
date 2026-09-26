@@ -4023,6 +4023,16 @@ function learnedArtifactSignatures(
   artifactValue,
   evidence = {}
 ) {
+  // EXE/artefato executado em USB/removível nunca pode ser neutralizado
+  // pelo auto-aprendizado, mesmo após liberação manual.
+  if (
+    evidence?.usbExecution === true ||
+    evidence?.currentRemovable === true ||
+    String(evidence?.driveType || "").toLowerCase() === "removable"
+  ) {
+    return [];
+  }
+
   // Catálogo de cheats/sites/apps sempre vence o auto-aprendizado.
   if (
     isCatalogProtectedArtifact(
@@ -5427,16 +5437,29 @@ async function addBuiltInReviewFindings(analysisId, report) {
     }
 
     if (removable && [".exe", ".com", ".scr", ".dll", ".msi", ".zip", ".rar", ".7z"].includes(extension)) {
+      const removableExe =
+        extension === ".exe";
+
       await insertReviewFinding(
         analysisId,
-        "Arquivo apagado de dispositivo externo",
-        "high",
+        removableExe
+          ? "PRIORIDADE MÁXIMA: EXE localizado em pendrive/removível"
+          : "Arquivo apagado de dispositivo externo",
+        removableExe
+          ? "critical"
+          : "high",
         "usn_delete",
         name || item.volume || "arquivo apagado",
         {
           ...item,
+          priorityMaximum: removableExe,
+          usbExecution: removableExe && executed,
+          protectedByTechnicalEngine: removableExe,
+          executionConfirmed: executed,
           confidence: "high",
-          note: "O USN Journal de unidade removível registrou a exclusão de executável ou arquivo compactado."
+          note: removableExe
+            ? "O USN Journal confirma um arquivo .exe em unidade removível. Executáveis associados a pendrive/USB são tratados como críticos independentemente de allowlist ou auto-aprendizado."
+            : "O USN Journal de unidade removível registrou a exclusão de executável ou arquivo compactado."
         }
       );
     }
@@ -6630,7 +6653,6 @@ async function addBuiltInReviewFindings(analysisId, report) {
 
     const maximumUsbPriority =
       exeLike &&
-      !trustedExecutable &&
       (
         confirmedRemovable ||
         Boolean(disconnectedUsb) ||
@@ -6731,8 +6753,7 @@ async function addBuiltInReviewFindings(analysisId, report) {
 
     const removableExePriority =
       item.driveType === "Removable" &&
-      /\.exe$/i.test(fileName(p || item.processName)) &&
-      !isTrustedExecutableCandidate(p || item.processName);
+      /\.exe$/i.test(fileName(p || item.processName));
 
     const missingSuspicious =
       item.processPresent === false &&
