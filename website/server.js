@@ -5768,6 +5768,62 @@ async function addBuiltInReviewFindings(analysisId, report) {
       continue;
     }
 
+    const injectionApis =
+      (Array.isArray(item.suspiciousApis)
+        ? item.suspiciousApis
+        : [])
+        .filter((api) =>
+          [
+            "VirtualAllocEx",
+            "WriteProcessMemory",
+            "CreateRemoteThread",
+            "NtWriteVirtualMemory",
+            "NtCreateThreadEx",
+            "QueueUserAPC",
+            "SetWindowsHookEx"
+          ].some((needle) =>
+            String(api || "").toLowerCase() ===
+            needle.toLowerCase()
+          )
+        );
+
+    const trustedInjectionApp =
+      isAbsoluteTrustedCatalogArtifact(
+        "pe_inspection",
+        pathValue,
+        item
+      ) ||
+      isTrustedCommonAppArtifact(
+        pathValue,
+        item
+      ) ||
+      isTrustedExecutableCandidate(pathValue);
+
+    if (
+      injectionApis.length >= 2 &&
+      !trustedInjectionApp
+    ) {
+      await insertReviewFinding(
+        analysisId,
+        "PRIORIDADE MÁXIMA: APIs de injeção de processo detectadas",
+        "critical",
+        "pe_inspection",
+        pathValue,
+        {
+          ...item,
+          injectionApis,
+          priorityMaximum: true,
+          protectedByTechnicalEngine: true,
+          injectionCapability: true,
+          confidence: "high",
+          note:
+            "O executável não confiável contém múltiplas APIs clássicas de injeção/manipulação de processo. O Vorken classifica essa combinação como crítica."
+        }
+      );
+
+      continue;
+    }
+
     if (
       looksRandomExecutableName(pathValue) &&
       item.signed !== true
