@@ -5611,7 +5611,19 @@ async function addBuiltInReviewFindings(analysisId, report) {
             )
         );
 
-    if (inputApis.length > 0) {
+    const trustedInputApp =
+      isAbsoluteTrustedCatalogArtifact(
+        "pe_inspection",
+        pathValue,
+        item
+      ) ||
+      isTrustedCommonAppArtifact(
+        pathValue,
+        item
+      ) ||
+      isTrustedExecutableCandidate(pathValue);
+
+    if (inputApis.length > 0 && !trustedInputApp) {
       await insertReviewFinding(
         analysisId,
         "PRIORIDADE MÁXIMA: automação de mouse/input detectada",
@@ -5626,7 +5638,7 @@ async function addBuiltInReviewFindings(analysisId, report) {
           recoilInputApi: true,
           confidence: "high",
           note:
-            "O executável contém referência a API(s) de automação de mouse/input usada(s) por scripts de recoil. Pela política do Vorken, qualquer ocorrência desse tipo é classificada como crítica."
+            "O executável contém referência a API(s) de automação de mouse/input usada(s) por scripts de recoil e não pertence ao catálogo de software confiável."
         }
       );
 
