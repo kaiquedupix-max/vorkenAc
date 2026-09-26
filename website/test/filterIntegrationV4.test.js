@@ -193,7 +193,7 @@ test("Defender malware detections remain review findings", async () => {
   assert.equal(defender.severity, "medium");
 });
 
-test("ordinary USB execution in-session is review, not critical", async () => {
+test("any confirmed EXE execution on USB is critical", async () => {
   const findings = await collect({
     collectedAtUtc: "2026-09-26T12:00:00Z",
     processes: [{
@@ -215,5 +215,6 @@ test("ordinary USB execution in-session is review, not critical", async () => {
   );
 
   assert.ok(executable);
-  assert.equal(executable.severity, "medium");
+  assert.equal(executable.severity, "critical");
+  assert.match(executable.title, /EXECUTADO DENTRO DE PENDRIVE/i);
 });

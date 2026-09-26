@@ -1225,6 +1225,7 @@ async function openReport(id) {
     usbHistory: safeArray(payload.usbHistory),
     usbTimeline: safeArray(payload.usbTimeline),
     usbFiles: safeArray(payload.usbFiles),
+    usbExecutionEvidence: safeArray(payload.usbExecutionEvidence),
     serialDevices: safeArray(payload.serialDevices),
     processes: safeArray(payload.processes),
     prefetch: safeArray(payload.prefetch),
@@ -1811,8 +1812,16 @@ async function openReport(id) {
             ? '<div class="kv"><span>Motor local</span><span>Evidência técnica protegida</span></div>'
             : '<div class="kv"><span>Motor local</span><span>Classificado pelos filtros Vorken</span></div>';
 
+      const browserHistoryTypes = new Set([
+        "browser_history",
+        "browser_catalog_visit_v2",
+        "browser_search_v2",
+        "browser_context_v2",
+        "browser_recovery_v2"
+      ]);
+
       const browserAccessBlock =
-        String(finding.artifact_type || "") === "browser_history"
+        browserHistoryTypes.has(String(finding.artifact_type || ""))
           ? (
               '<div class="kv"><span>Data do acesso</span><span>' +
                 escapeHtml(formatDate(evidence.visitTimeUtc || evidence.recoveredAtUtc)) +
@@ -2349,6 +2358,59 @@ async function openReport(id) {
       .sort((a, b) => b - a);
     return values[0] || null;
   };
+
+  const usbExecutionEvidenceList =
+    document.getElementById("usbExecutionEvidenceList");
+
+  if (usbExecutionEvidenceList) {
+    const rows = [...arrays.usbExecutionEvidence]
+      .sort((a, b) =>
+        Number(b.critical === true) - Number(a.critical === true) ||
+        new Date(b.timeUtc || 0) - new Date(a.timeUtc || 0));
+
+    usbExecutionEvidenceList.innerHTML = rows.length
+      ? rows.map((item) => {
+          const critical = item.critical === true;
+          const tagClass = critical ? "critical" : "info";
+          const tagText = critical
+            ? "CRÍTICO · EXECUTADO NO PENDRIVE"
+            : "EXECUÇÃO EM USB";
+          const times = safeArray(item.executionTimesUtc)
+            .filter(Boolean)
+            .slice(0, 12);
+
+          return `
+            <article class="finding severity-card ${tagClass}">
+              <div class="finding-head">
+                <h4>${escapeHtml(item.name || "Arquivo executado")}</h4>
+                <span class="tag ${tagClass}">${escapeHtml(tagText)}</span>
+              </div>
+              <code>${escapeHtml(item.path || "—")}</code>
+              <div class="kv"><span>Fonte da execução</span><span>${escapeHtml(item.source || "—")}</span></div>
+              <div class="kv"><span>Última execução</span><span>${escapeHtml(formatDate(item.timeUtc))}</span></div>
+              ${Number(item.runCount || 0) > 0
+                ? '<div class="kv"><span>Execuções registradas</span><span>' + escapeHtml(String(item.runCount)) + '</span></div>'
+                : ""}
+              ${times.length
+                ? '<div class="kv"><span>Horários preservados</span><span>' +
+                    times.map((value) => escapeHtml(formatDate(value))).join("<br>") +
+                  '</span></div>'
+                : ""}
+              <div class="kv"><span>Classificação</span><span>${
+                critical
+                  ? "Executado dentro de pendrive · crítico direto"
+                  : item.detachedRemovable === true
+                    ? "Execução em volume removido / não montado"
+                    : "Execução em mídia removível"
+              }</span></div>
+              ${item.detail
+                ? '<div class="kv"><span>Evidência</span><span>' + escapeHtml(item.detail) + '</span></div>'
+                : ""}
+            </article>
+          `;
+        }).join("")
+      : '<div class="message ok">Nenhuma evidência de execução em pendrive/USB foi encontrada nesta análise.</div>';
+  }
 
   const connectedUsbFilesList =
     document.getElementById("connectedUsbFilesList");

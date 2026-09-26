@@ -5297,7 +5297,7 @@ async function addBuiltInReviewFindings(analysisId, report) {
         item.lastDisconnectedUtc ||
         item.lastConnectedUtc;
 
-      return ageDays(disconnectedAt) <= 7;
+      return Boolean(disconnectedAt);
     });
 
   const correlatedDisconnectedUsb = (execution) => {
@@ -7306,16 +7306,12 @@ async function addBuiltInReviewFindings(analysisId, report) {
   // temporal correlation with recently disconnected USB storage.
   for (const execution of report.prefetchExecutions || []) {
     const lastAge = ageDays(execution.lastRunUtc);
-    if (lastAge > 30) continue;
 
     const executionPath =
       execution.resolvedExecutablePath ||
       execution.nativeExecutablePath ||
       execution.executableName ||
       "";
-
-    if (isTrustedInstalledPath(executionPath))
-      continue;
 
     const executionName = fileName(
       execution.executableName || executionPath
@@ -7375,9 +7371,7 @@ async function addBuiltInReviewFindings(analysisId, report) {
     await insertReviewFinding(
       analysisId,
       maximumUsbPriority
-        ? confirmedRemovable
-          ? "PRIORIDADE MÁXIMA: EXE executado em pendrive/removível conectado"
-          : "PRIORIDADE MÁXIMA: EXE executado em pendrive/removível desconectado"
+        ? "EXECUTADO DENTRO DE PENDRIVE: EXE executado em mídia removível"
         : confirmedRemovable
           ? "Execução recente em mídia removível"
           : "Execução recente em volume removido/não montado",
@@ -7404,11 +7398,7 @@ async function addBuiltInReviewFindings(analysisId, report) {
             ? "high"
             : "medium",
         note: maximumUsbPriority
-          ? confirmedRemovable
-            ? "O Prefetch confirma execução de EXE não confiável em unidade atualmente removível. Deve aparecer no topo da prioridade."
-            : disconnectedUsb
-              ? "O Prefetch confirma execução de EXE não confiável em volume não montado e o horário é compatível com pendrive desconectado recentemente. Deve aparecer no topo da prioridade."
-              : "O Prefetch confirma execução recente de EXE não confiável em volume removido/não montado, não sistêmico e compatível com mídia removível. Deve aparecer no topo da prioridade."
+          ? "A execução de um arquivo .exe em pendrive/USB foi confirmada por artefato técnico. Pela política Vorken, qualquer EXE executado em mídia removível é classificado como crítico, independentemente do nome, reputação ou allowlist."
           : confirmedRemovable
             ? "O Prefetch registrou execução em uma unidade atualmente identificada como removível."
             : "O Prefetch registrou um executável recente em volume não montado, sem arquivo presente, em caminho compatível com execução portátil. Volume não resolvido sozinho não gera alerta.",
@@ -8603,6 +8593,194 @@ function compactAdminFindingEvidence(evidence) {
   return out;
 }
 
+function compactUsbExecutionEvidence(payload) {
+  const rows = [];
+  const seen = new Set();
+
+  const removableDrives = new Set(
+    (Array.isArray(payload?.usbFiles) ? payload.usbFiles : [])
+      .map((item) => String(item?.drive || "").trim().replace(/[\\/]+$/, "").toLowerCase())
+      .filter(Boolean)
+  );
+
+  const pathOnCurrentRemovableDrive = (value) => {
+    const normalized = String(value || "")
+      .trim()
+      .replaceAll("/", "\\")
+      .toLowerCase();
+
+    if (!normalized)
+      return false;
+
+    for (const drive of removableDrives) {
+      const prefix = drive.endsWith(":") ? drive + "\\" : drive + "\\";
+      if (normalized === drive || normalized.startsWith(prefix))
+        return true;
+    }
+
+    return false;
+  };
+
+  const isExePath = (...values) =>
+    values.some((value) => /\.exe(?:$|[?#])/i.test(String(value || "").trim()));
+
+  const add = (row) => {
+    const path = String(row.path || row.name || "").trim();
+    if (!path)
+      return;
+
+    const key = [
+      String(row.source || "").toLowerCase(),
+      path.toLowerCase(),
+      String(row.timeUtc || "")
+    ].join("|");
+
+    if (seen.has(key))
+      return;
+
+    seen.add(key);
+    rows.push({
+      source: String(row.source || "Evidência"),
+      name: String(row.name || path.split(/[\\/]/).pop() || "Arquivo"),
+      path,
+      timeUtc: row.timeUtc || null,
+      executionTimesUtc: Array.isArray(row.executionTimesUtc)
+        ? row.executionTimesUtc.slice(0, 12)
+        : [],
+      runCount: Number(row.runCount || 0),
+      removableConfirmed: row.removableConfirmed === true,
+      detachedRemovable: row.detachedRemovable === true,
+      isExe: row.isExe === true,
+      critical: row.isExe === true && row.removableConfirmed === true,
+      detail: String(row.detail || "")
+    });
+  };
+
+  for (const item of Array.isArray(payload?.prefetchExecutions) ? payload.prefetchExecutions : []) {
+    const path =
+      item?.resolvedExecutablePath ||
+      item?.nativeExecutablePath ||
+      item?.executableName ||
+      item?.prefetchFile ||
+      "";
+
+    const removableConfirmed =
+      item?.currentRemovable === true ||
+      pathOnCurrentRemovableDrive(path);
+
+    const detachedRemovable =
+      item?.likelyDetachedOrRemovable === true ||
+      (
+        item?.volumeNotMounted === true &&
+        item?.nonSystemVolume === true
+      );
+
+    if (!removableConfirmed && !detachedRemovable)
+      continue;
+
+    add({
+      source: "Prefetch",
+      name: item?.executableName || item?.prefetchFile || "",
+      path,
+      timeUtc: item?.lastRunUtc || null,
+      executionTimesUtc: item?.lastRunTimesUtc,
+      runCount: item?.runCount,
+      removableConfirmed:
+        removableConfirmed ||
+        (
+          detachedRemovable &&
+          item?.likelyDetachedOrRemovable === true
+        ),
+      detachedRemovable,
+      isExe: isExePath(item?.executableName, path, item?.prefetchFile),
+      detail: removableConfirmed
+        ? "Execução registrada em unidade removível."
+        : "Execução registrada em volume removido/não montado compatível com mídia removível."
+    });
+  }
+
+  for (const item of Array.isArray(payload?.processCreationEvents) ? payload.processCreationEvents : []) {
+    const path = item?.processPath || item?.processName || "";
+    const removable =
+      String(item?.driveType || "").toLowerCase() === "removable" ||
+      pathOnCurrentRemovableDrive(path);
+
+    if (!removable)
+      continue;
+
+    add({
+      source: "Windows Security 4688",
+      name: item?.processName || "",
+      path,
+      timeUtc: item?.timeCreatedUtc || null,
+      removableConfirmed: true,
+      isExe: isExePath(item?.processName, path),
+      detail: "Evento 4688 confirma criação/execução do processo em unidade removível."
+    });
+  }
+
+  for (const item of Array.isArray(payload?.bam) ? payload.bam : []) {
+    const path = item?.path || "";
+    if (!pathOnCurrentRemovableDrive(path))
+      continue;
+
+    add({
+      source: "BAM",
+      name: path.split(/[\\/]/).pop() || path,
+      path,
+      timeUtc: item?.lastExecutionUtc || null,
+      removableConfirmed: true,
+      isExe: isExePath(path),
+      detail: "BAM registra execução no caminho de um pendrive atualmente identificado como removível."
+    });
+  }
+
+  for (const item of Array.isArray(payload?.shimCache) ? payload.shimCache : []) {
+    const path = item?.path || "";
+    const executed =
+      String(item?.executed || "").toLowerCase() === "true";
+
+    const removable =
+      String(item?.driveType || "").toLowerCase() === "removable" ||
+      pathOnCurrentRemovableDrive(path);
+
+    if (!executed || !removable)
+      continue;
+
+    add({
+      source: "ShimCache",
+      name: path.split(/[\\/]/).pop() || path,
+      path,
+      timeUtc: item?.lastModifiedUtc || null,
+      removableConfirmed: true,
+      isExe: isExePath(path),
+      detail: "ShimCache marca o arquivo como executado em unidade removível."
+    });
+  }
+
+  for (const item of Array.isArray(payload?.processes) ? payload.processes : []) {
+    const path = item?.path || item?.name || "";
+    if (!pathOnCurrentRemovableDrive(path))
+      continue;
+
+    add({
+      source: "Processo em execução",
+      name: item?.name || "",
+      path,
+      timeUtc: item?.startTimeUtc || null,
+      removableConfirmed: true,
+      isExe: isExePath(item?.name, path),
+      detail: "O processo estava ativo durante a coleta e seu executável está em pendrive/removível."
+    });
+  }
+
+  return rows
+    .sort((a, b) =>
+      Number(b.critical) - Number(a.critical) ||
+      new Date(b.timeUtc || 0) - new Date(a.timeUtc || 0))
+    .slice(0, 1200);
+}
+
 function compactAdminReportPayload(report) {
   const payload =
     report && typeof report === "object"
@@ -8726,6 +8904,10 @@ function compactAdminReportPayload(report) {
     usbHistory: compactAdminUiList(payload.usbHistory, 400),
     usbTimeline: compactAdminUiList(payload.usbTimeline, 400),
     usbFiles: compactAdminUiList(payload.usbFiles, 300),
+    usbExecutionEvidence: compactAdminUiList(
+      compactUsbExecutionEvidence(payload),
+      1200
+    ),
     serialDevices: compactAdminUiList(payload.serialDevices, 250),
     browserHistorySignals: compactAdminUiList(payload.browserHistorySignals, 500),
     browserDownloads: compactAdminUiList(payload.browserDownloads, 300),

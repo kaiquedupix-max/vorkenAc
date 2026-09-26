@@ -1149,30 +1149,13 @@ export async function runCalibratedFilterV2({
         "O nome é suspeito e há execução confirmada, mas não existe correspondência inequívoca com catálogo nem correlação técnica suficiente com a sessão do Rust. Mantido para revisão, sem veredito automático.";
     } else if (
       usb &&
-      executed &&
-      executionScope.inSession &&
-      (
-        deletedOrMissing ||
-        strongInjection ||
-        catalogMatches.length > 0 ||
-        highRiskName ||
-        packedOrHighEntropy
-      )
+      executed
     ) {
       severity = "critical";
       title =
-        "IN-SESSION: EXE não confiável executado em pendrive/USB";
+        "EXECUTADO DENTRO DE PENDRIVE: EXE executado em mídia removível";
       reason =
-        "A execução em mídia removível ocorreu durante a instância atual do Rust.";
-    } else if (
-      usb &&
-      executed
-    ) {
-      severity = "medium";
-      title =
-        "OUT-OF-SESSION: EXE executado em pendrive/USB";
-      reason =
-        "Há execução confirmada em mídia removível, mas ela não foi temporalmente associada à instância atual do Rust.";
+        "A execução em pendrive/USB foi confirmada por artefato técnico. Pela política Vorken, qualquer EXE executado em mídia removível é crítico, independentemente do nome do arquivo, allowlist ou relação temporal com a sessão do Rust.";
     } else if (
       executed &&
       deletedOrMissing &&
