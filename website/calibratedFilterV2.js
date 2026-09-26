@@ -2015,7 +2015,9 @@ export async function runCalibratedFilterV2({
     );
   }
 
-  // 4. Download context. A download alone is never critical in V2.
+  // 4. Download context. Visiting a catalog site is review context, but
+  // successfully downloading an executable/archive payload directly from a
+  // known cheat catalog source is itself a strong acquisition signal.
   const downloadSeen = new Set();
 
   for (const item of safeArray(report?.browserDownloads)) {
@@ -2034,6 +2036,28 @@ export async function runCalibratedFilterV2({
         item,
         helpers
       );
+
+    const payloadExtensions =
+      new Set([
+        ".exe", ".dll", ".sys", ".com", ".scr",
+        ".msi", ".zip", ".rar", ".7z"
+      ]);
+
+    const dangerousPayload =
+      payloadExtensions.has(extension);
+
+    const downloadCompleted =
+      String(item?.state || "")
+        .toLowerCase() === "complete" ||
+      item?.fileExists === true ||
+      Number(item?.receivedBytes || 0) > 0 &&
+        Number(item?.receivedBytes || 0) >=
+        Number(item?.totalBytes || 0);
+
+    const directCatalogPayload =
+      Boolean(direct) &&
+      dangerousPayload &&
+      downloadCompleted;
 
     const discordAttachment =
       [".exe", ".zip", ".rar", ".7z"]
@@ -2060,14 +2084,21 @@ export async function runCalibratedFilterV2({
 
     downloadSeen.add(key);
 
+    const severity =
+      directCatalogPayload
+        ? "critical"
+        : "medium";
+
     await addFinding(
       insertFinding,
       analysisId,
-      direct
-        ? "Arquivo baixado a partir de fonte do catálogo"
-        : "Executável/arquivo compactado baixado de anexo real do Discord",
-      "medium",
-      "browser_download_v2",
+      directCatalogPayload
+        ? "PRIORIDADE MÁXIMA: payload baixado diretamente de fonte do catálogo"
+        : direct
+          ? "Arquivo baixado a partir de fonte do catálogo"
+          : "Executável/arquivo compactado baixado de anexo real do Discord",
+      severity,
+      "browser_download_v3",
       value,
       {
         ...item,
@@ -2080,9 +2111,21 @@ export async function runCalibratedFilterV2({
         knownCheatDomain:
           Boolean(direct),
         discordAttachment,
-        confidence: "medium",
+        dangerousPayload,
+        downloadCompleted,
+        directCatalogPayload,
+        priorityMaximum:
+          directCatalogPayload,
+        protectedByTechnicalEngine:
+          directCatalogPayload,
+        confidence:
+          directCatalogPayload
+            ? "high"
+            : "medium",
         note:
-          "O download é contexto de revisão. Somente execução ou outra evidência técnica forte pode elevá-lo a crítico."
+          directCatalogPayload
+            ? "O navegador registrou download concluído de payload executável/compactado diretamente de domínio presente no catálogo de cheat. Diferente de uma simples visita ao site, a aquisição do payload é tratada como evidência crítica."
+            : "O download é contexto de revisão. Arquivos não executáveis ou downloads sem conclusão permanecem em revisão até existir evidência técnica adicional."
       }
     );
   }
