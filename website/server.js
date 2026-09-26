@@ -10030,7 +10030,7 @@ app.get("/api/agent/:token/result", async (req, res) => {
           : critical > 0
             ? "Possível trapaceiro detectado. Aguarde a análise administrativa."
             : review > 0
-              ? "Itens suspeitos encontrados. Aguarde a verificação administrativa."
+              ? "Atividades incomuns localizadas. Revisão administrativa necessária."
               : analysis.external_decision === "approve"
                 ? "Verificação aprovada automaticamente. Nenhum item suspeito foi encontrado."
                 : "Nenhum item suspeito foi encontrado.",

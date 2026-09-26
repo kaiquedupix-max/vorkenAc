@@ -1437,7 +1437,7 @@ FIM DOS TERMOS
                     : hasCritical
                         ? "Possível trapaceiro detectado."
                         : hasReview
-                            ? "Itens suspeitos encontrados."
+                            ? "Atividades incomuns localizadas."
                             : autoApproved
                                 ? "Verificação aprovada."
                                 : "Análise limpa.";
@@ -1450,7 +1450,7 @@ FIM DOS TERMOS
                     : hasCritical
                         ? "Aguarde a análise administrativa."
                         : hasReview
-                            ? "Aguarde a verificação administrativa."
+                            ? "Revisão necessária."
                             : autoApproved
                                 ? "Liberação automática concluída."
                                 : "Nenhum item suspeito encontrado.";
@@ -1498,7 +1498,7 @@ FIM DOS TERMOS
                         : hasCritical
                             ? "Foi encontrada evidência crítica em vermelho.\nPossível trapaceiro detectado; aguarde a análise administrativa."
                             : hasReview
-                                ? "Foram encontrados itens suspeitos em laranja.\nAguarde a verificação administrativa."
+                                ? "Foram localizadas atividades incomuns em laranja.\nÉ necessária revisão administrativa antes da conclusão."
                                 : autoApproved
                                     ? "Nenhum item vermelho ou laranja foi encontrado.\nSua verificação foi aprovada automaticamente."
                                     : "Nenhum item vermelho ou laranja foi encontrado."
@@ -1558,7 +1558,7 @@ FIM DOS TERMOS
                     : hasCritical
                         ? "POSSÍVEL\nTRAPACEIRO\nDETECTADO"
                         : hasReview
-                            ? "ITENS\nSUSPEITOS\nREVISAR"
+                            ? "ATIVIDADES\nINCOMUNS\nLOCALIZADAS"
                             : autoApproved
                                 ? "STATUS:\nVERIFICADO\nAUTOMÁTICO"
                                 : "STATUS:\nANÁLISE\nLIMPA",
@@ -1574,7 +1574,7 @@ FIM DOS TERMOS
                     : hasCritical
                         ? "Aguarde análise\nadministrativa."
                         : hasReview
-                            ? "Aguarde verificação\nadministrativa."
+                            ? "Revisão administrativa\nnecessária."
                             : autoApproved
                                 ? "Jogador liberado\nautomaticamente."
                                 : detailsReleased
@@ -1624,7 +1624,7 @@ FIM DOS TERMOS
                     : hasCritical
                         ? "Possível trapaceiro detectado"
                         : hasReview
-                            ? "Itens suspeitos encontrados"
+                            ? "Atividades incomuns localizadas"
                             : autoApproved
                                 ? "Verificação aprovada automaticamente"
                                 : "Nenhum item suspeito",
@@ -1640,8 +1640,8 @@ FIM DOS TERMOS
                         ? $"Foi registrado {criticalCount} item crítico em vermelho. " +
                           "Aguarde a análise administrativa antes da conclusão da verificação."
                         : hasReview
-                            ? $"Foram registrados {reviewCount} item(ns) suspeito(s) em laranja. " +
-                              "Aguarde a verificação administrativa."
+                            ? $"Foram localizadas {reviewCount} atividade(s) incomum(ns) em laranja. " +
+                              "É necessária revisão administrativa."
                             : autoApproved
                                 ? "Nenhum item vermelho ou laranja foi encontrado. A liberação automática foi confirmada."
                                 : "Nenhum item vermelho ou laranja foi encontrado nesta análise.",
@@ -1676,11 +1676,26 @@ FIM DOS TERMOS
         }
         else
         {
+            int restrictedResultCount =
+                hasCritical
+                    ? criticalCount
+                    : hasReview
+                        ? reviewCount
+                        : 0;
+
             summaryCard.Controls.Add(MakeSummaryMetric(
-                detectionCount > 0 ? "!" : "✓",
-                detectionCount.ToString(),
-                "Detecções registradas",
-                "Detalhes restritos",
+                restrictedResultCount > 0 ? "!" : "✓",
+                restrictedResultCount.ToString(),
+                hasCritical
+                    ? (criticalCount == 1 ? "Detecção crítica" : "Detecções críticas")
+                    : hasReview
+                        ? "Atividades para revisão"
+                        : "Detecções registradas",
+                hasCritical
+                    ? "Somente itens vermelhos"
+                    : hasReview
+                        ? "Laranja · revisão necessária"
+                        : "Detalhes restritos",
                 hasCritical ? Danger : hasReview ? Warning : Accent,
                 18));
         }
@@ -1723,8 +1738,8 @@ FIM DOS TERMOS
                         ? "Possível trapaceiro detectado.\n\n" +
                           "A administração recebeu a evidência crítica. Aguarde a análise administrativa."
                         : hasReview
-                            ? "Itens suspeitos foram encontrados.\n\n" +
-                              "A administração recebeu os achados em laranja. Aguarde a verificação administrativa."
+                            ? "Atividades incomuns foram localizadas.\n\n" +
+                              "A administração recebeu os achados em laranja. Revisão necessária."
                             : autoApproved
                                 ? "Verificação aprovada automaticamente.\n\n" +
                                   "Nenhum item vermelho ou laranja foi encontrado."
