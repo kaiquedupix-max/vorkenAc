@@ -5600,6 +5600,39 @@ async function addBuiltInReviewFindings(analysisId, report) {
     if (isKnownBenignPeNoise(pathValue))
       continue;
 
+    const inputApis =
+      (Array.isArray(item.suspiciousApis)
+        ? item.suspiciousApis
+        : [])
+        .filter((api) =>
+          ["mouse_event", "SendInput", "SetCursorPos", "GetAsyncKeyState"]
+            .some((needle) =>
+              String(api || "").toLowerCase() === needle.toLowerCase()
+            )
+        );
+
+    if (inputApis.length > 0) {
+      await insertReviewFinding(
+        analysisId,
+        "PRIORIDADE MÁXIMA: automação de mouse/input detectada",
+        "critical",
+        "pe_inspection",
+        pathValue,
+        {
+          ...item,
+          inputApis,
+          priorityMaximum: true,
+          protectedByTechnicalEngine: true,
+          recoilInputApi: true,
+          confidence: "high",
+          note:
+            "O executável contém referência a API(s) de automação de mouse/input usada(s) por scripts de recoil. Pela política do Vorken, qualquer ocorrência desse tipo é classificada como crítica."
+        }
+      );
+
+      continue;
+    }
+
     if (
       looksRandomExecutableName(pathValue) &&
       item.signed !== true
@@ -5806,13 +5839,18 @@ async function addBuiltInReviewFindings(analysisId, report) {
       gameProcess
         ? "DLL externa não assinada carregada no Rust"
         : "Módulo não assinado em processo de alto valor",
-      gameProcess ? "high" : "medium",
+      gameProcess ? "critical" : "medium",
       "module_integrity",
       item.modulePath || item.moduleName,
       {
         ...item,
+        priorityMaximum: gameProcess,
+        protectedByTechnicalEngine: gameProcess,
+        injectionIntoRust: gameProcess,
         confidence: gameProcess ? "high" : "medium",
-        note: "Módulo vindo do perfil do usuário/Temp foi carregado em processo relevante e não possui assinatura Authenticode confiável."
+        note: gameProcess
+          ? "Módulo externo não assinado foi carregado dentro do processo do Rust. O Vorken trata isso como evidência crítica de possível injeção."
+          : "Módulo vindo do perfil do usuário/Temp foi carregado em processo relevante e não possui assinatura Authenticode confiável."
       }
     );
   }
@@ -7265,13 +7303,16 @@ async function addBuiltInReviewFindings(analysisId, report) {
     await insertReviewFinding(
       analysisId,
       "Módulo externo não assinado carregado no Rust",
-      item.underTemp ? "high" : "medium",
+      "critical",
       "rust_module",
       item.path || item.moduleName || "DLL",
       {
         ...item,
-        confidence: item.underTemp ? "high" : "medium",
-        note: "Módulos conhecidos de Steam/Discord/GPU/overlays são filtrados. Este módulo é externo, não assinado e veio de local de usuário/temporário.",
+        priorityMaximum: true,
+        protectedByTechnicalEngine: true,
+        injectionIntoRust: true,
+        confidence: "high",
+        note: "Módulos conhecidos de Steam/Discord/GPU/overlays são filtrados. Este módulo externo não assinado foi carregado dentro do Rust e é tratado como crítico.",
       }
     );
   }
