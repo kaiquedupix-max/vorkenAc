@@ -257,6 +257,11 @@ internal static class Program
                 DeepForensicCollector.CollectProcessCreationEvents,
                 errors);
 
+            List<ProcessTerminationRecord> processTerminationEvents = SafeCollect(
+                "Event Log 4689",
+                DeepForensicCollector.CollectProcessTerminationEvents,
+                errors);
+
             List<DefenderDetectionRecord> defenderDetections = SafeCollect(
                 "Histórico do Microsoft Defender",
                 DeepForensicCollector.CollectDefenderDetections,
@@ -447,6 +452,7 @@ internal static class Program
                 HiddenVolumes = hiddenVolumes,
                 LogClearSignals = logClearSignals,
                 ProcessCreationEvents = processCreationEvents,
+                ProcessTerminationEvents = processTerminationEvents,
                 DefenderDetections = defenderDetections,
                 RecentShortcuts = recentShortcuts,
                 CrashArtifacts = crashArtifacts,
@@ -2078,6 +2084,7 @@ internal sealed class ScanReport
     public List<VolumeRecord> HiddenVolumes { get; set; } = new();
     public List<EventLogSignalRecord> LogClearSignals { get; set; } = new();
     public List<ProcessCreationRecord> ProcessCreationEvents { get; set; } = new();
+    public List<ProcessTerminationRecord> ProcessTerminationEvents { get; set; } = new();
     public List<DefenderDetectionRecord> DefenderDetections { get; set; } = new();
     public List<RecentShortcutRecord> RecentShortcuts { get; set; } = new();
     public List<CrashArtifactRecord> CrashArtifacts { get; set; } = new();
