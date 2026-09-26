@@ -58,7 +58,7 @@ FIM DOS TERMOS
     private readonly Panel _header = new();
     private readonly Panel _nav = new();
     private readonly Label _headerStatus = new();
-    private readonly TextBox _activityBox = new();
+    private readonly RichTextBox _activityBox = new();
     private readonly Panel _progressTrack = new();
     private readonly Panel _progressFill = new();
     private readonly Label _progressPercentLabel = new();
@@ -90,21 +90,22 @@ FIM DOS TERMOS
     private int _artifactCount;
     private int _devicesSeen;
 
-    private static readonly Color Background = Color.FromArgb(4, 10, 15);
-    private static readonly Color Header = Color.FromArgb(5, 15, 22);
-    private static readonly Color Surface = Color.FromArgb(6, 18, 25);
-    private static readonly Color SurfaceAlt = Color.FromArgb(8, 26, 34);
-    private static readonly Color Border = Color.FromArgb(21, 61, 76);
-    private static readonly Color BorderBright = Color.FromArgb(24, 117, 141);
-    private static readonly Color Accent = Color.FromArgb(43, 239, 201);
-    private static readonly Color AccentSoft = Color.FromArgb(20, 181, 157);
-    private static readonly Color Blue = Color.FromArgb(55, 166, 255);
-    private static readonly Color TextPrimary = Color.FromArgb(244, 249, 249);
-    private static readonly Color TextSecondary = Color.FromArgb(178, 194, 202);
-    private static readonly Color TextDim = Color.FromArgb(105, 129, 140);
-    private static readonly Color Warning = Color.FromArgb(255, 190, 55);
-    private static readonly Color Danger = Color.FromArgb(255, 72, 88);
-    private static readonly Color Success = Color.FromArgb(43, 239, 201);
+    // Same core palette used by website/public/styles.css.
+    private static readonly Color Background = Color.FromArgb(7, 10, 13);       // #070a0d
+    private static readonly Color Header = Color.FromArgb(7, 10, 13);           // #070a0d
+    private static readonly Color Surface = Color.FromArgb(13, 18, 23);         // #0d1217
+    private static readonly Color SurfaceAlt = Color.FromArgb(17, 24, 32);      // #111820
+    private static readonly Color Border = Color.FromArgb(32, 43, 53);          // #202b35
+    private static readonly Color BorderBright = Color.FromArgb(38, 184, 142);  // #26b88e
+    private static readonly Color Accent = Color.FromArgb(83, 240, 189);        // #53f0bd
+    private static readonly Color AccentSoft = Color.FromArgb(38, 184, 142);    // #26b88e
+    private static readonly Color Blue = Color.FromArgb(99, 169, 255);          // #63a9ff
+    private static readonly Color TextPrimary = Color.FromArgb(238, 244, 247);  // #eef4f7
+    private static readonly Color TextSecondary = Color.FromArgb(130, 146, 159);// #82929f
+    private static readonly Color TextDim = Color.FromArgb(101, 121, 133);      // #657985
+    private static readonly Color Warning = Color.FromArgb(255, 200, 87);       // #ffc857
+    private static readonly Color Danger = Color.FromArgb(255, 102, 117);       // #ff6675
+    private static readonly Color Success = Color.FromArgb(83, 240, 189);       // #53f0bd
 
 
     private static readonly ManualToolDefinition[] ManualTools =
@@ -1010,9 +1011,12 @@ FIM DOS TERMOS
         _activityBox.Bounds = new Rectangle(14, 48, 350, 296);
         _activityBox.Multiline = true;
         _activityBox.ReadOnly = true;
-        _activityBox.ScrollBars = ScrollBars.Vertical;
-        _activityBox.BackColor = Color.FromArgb(3, 12, 18);
-        _activityBox.ForeColor = Color.FromArgb(159, 183, 189);
+        _activityBox.ScrollBars = RichTextBoxScrollBars.Vertical;
+        _activityBox.WordWrap = false;
+        _activityBox.DetectUrls = false;
+        _activityBox.HideSelection = false;
+        _activityBox.BackColor = Color.FromArgb(5, 9, 12);
+        _activityBox.ForeColor = TextSecondary;
         _activityBox.BorderStyle = BorderStyle.None;
         _activityBox.Font = new Font("Consolas", 8.1F);
         AttachRoundedRegion(_activityBox, 8);
@@ -1175,13 +1179,74 @@ FIM DOS TERMOS
 
         if (_activityBox.IsHandleCreated)
         {
-            _activityBox.AppendText(line + Environment.NewLine);
+            AppendColoredActivityLine(line);
             _activityBox.SelectionStart = _activityBox.TextLength;
             _activityBox.ScrollToCaret();
         }
 
         ParseArtifactCount(clean);
         AdvanceScanForMessage(clean);
+    }
+
+    private void AppendColoredActivityLine(string line)
+    {
+        int tagStart = line.IndexOf('[', StringComparison.Ordinal);
+        int tagEnd =
+            tagStart >= 0
+                ? line.IndexOf(']', tagStart + 1)
+                : -1;
+
+        int timestampEnd = Math.Min(11, line.Length);
+
+        _activityBox.SelectionColor = TextDim;
+        _activityBox.AppendText(line[..timestampEnd]);
+
+        if (tagStart >= timestampEnd && tagEnd > tagStart)
+        {
+            if (tagStart > timestampEnd)
+            {
+                _activityBox.SelectionColor = TextSecondary;
+                _activityBox.AppendText(line[timestampEnd..tagStart]);
+            }
+
+            string tag = line[tagStart..(tagEnd + 1)];
+            _activityBox.SelectionColor = ActivityTagColor(tag);
+            _activityBox.AppendText(tag);
+
+            if (tagEnd + 1 < line.Length)
+            {
+                _activityBox.SelectionColor = TextSecondary;
+                _activityBox.AppendText(line[(tagEnd + 1)..]);
+            }
+        }
+        else if (timestampEnd < line.Length)
+        {
+            _activityBox.SelectionColor = TextSecondary;
+            _activityBox.AppendText(line[timestampEnd..]);
+        }
+
+        _activityBox.SelectionColor = TextSecondary;
+        _activityBox.AppendText(Environment.NewLine);
+    }
+
+    private static Color ActivityTagColor(string tag)
+    {
+        string normalized = tag.Trim().ToUpperInvariant();
+
+        if (normalized.Contains("ERR"))
+            return Danger;
+
+        if (normalized.Contains("WARN"))
+            return Warning;
+
+        if (normalized.Contains("OK"))
+            return Success;
+
+        if (normalized.Contains("INIT") ||
+            normalized.Contains("INFO"))
+            return Blue;
+
+        return TextSecondary;
     }
 
     private void ParseArtifactCount(string message)
@@ -2734,7 +2799,7 @@ FIM DOS TERMOS
         button.MouseEnter += (_, _) =>
         {
             if (button.Enabled)
-                button.BackColor = Color.FromArgb(81, 250, 215);
+                button.BackColor = Color.FromArgb(108, 247, 202);
         };
 
         button.MouseLeave += (_, _) =>
@@ -2781,6 +2846,11 @@ FIM DOS TERMOS
             return;
 
         button.Cursor = Cursors.Hand;
+        button.MouseEnter += (_, _) =>
+        {
+            if (button.Enabled)
+                PlayUiHover();
+        };
         button.Click += (_, _) => PlayUiClick();
         button.GotFocus += (_, _) =>
         {
@@ -2792,6 +2862,23 @@ FIM DOS TERMOS
             if (button.Enabled && button.BackColor != Accent)
                 button.FlatAppearance.BorderColor = BorderBright;
         };
+    }
+
+    private void PlayUiHover()
+    {
+        if (!_soundEnabled)
+            return;
+
+        try
+        {
+            PlaySound(
+                "MenuPopup",
+                IntPtr.Zero,
+                SndAlias | SndAsync | SndNodefault);
+        }
+        catch
+        {
+        }
     }
 
     private void PlayUiClick()
