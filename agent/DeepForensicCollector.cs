@@ -57,6 +57,62 @@ internal static class DeepForensicCollector
             .ToList();
     }
 
+    public static List<ProcessTerminationRecord> CollectProcessTerminationEvents()
+    {
+        var result = new List<ProcessTerminationRecord>();
+
+        foreach (string xml in QueryEvents(
+                     "Security",
+                     "*[System[(EventID=4689)]]",
+                     700,
+                     15000))
+        {
+            try
+            {
+                XDocument doc = XDocument.Parse(xml);
+                XNamespace ns = "http://schemas.microsoft.com/win/2004/08/events/event";
+                DateTime timeUtc = EventTime(doc, ns);
+                var data = EventData(doc, ns);
+
+                string processPath =
+                    FirstNonEmpty(
+                        GetData(data, "ProcessName"),
+                        GetData(data, "Process Name"));
+
+                string processId =
+                    FirstNonEmpty(
+                        GetData(data, "ProcessId"),
+                        GetData(data, "Process ID"));
+
+                string exitStatus =
+                    FirstNonEmpty(
+                        GetData(data, "Status"),
+                        GetData(data, "ExitStatus"),
+                        GetData(data, "Exit Status"));
+
+                if (string.IsNullOrWhiteSpace(processPath))
+                    continue;
+
+                result.Add(new ProcessTerminationRecord
+                {
+                    TimeCreatedUtc = timeUtc,
+                    ProcessPath = processPath,
+                    ProcessName = Path.GetFileName(processPath),
+                    ProcessId = processId,
+                    ExitStatus = exitStatus
+                });
+            }
+            catch
+            {
+            }
+        }
+
+        return result
+            .OrderByDescending(x => x.TimeCreatedUtc)
+            .Take(700)
+            .ToList();
+    }
+
     public static List<DefenderDetectionRecord> CollectDefenderDetections()
     {
         var result = new List<DefenderDetectionRecord>();
@@ -899,6 +955,15 @@ internal sealed class ProcessCreationRecord
     public string ParentProcessPath { get; set; } = "";
     public bool ProcessPresent { get; set; }
     public string DriveType { get; set; } = "";
+}
+
+internal sealed class ProcessTerminationRecord
+{
+    public DateTime TimeCreatedUtc { get; set; }
+    public string ProcessName { get; set; } = "";
+    public string ProcessPath { get; set; } = "";
+    public string ProcessId { get; set; } = "";
+    public string ExitStatus { get; set; } = "";
 }
 
 internal sealed class DefenderDetectionRecord
