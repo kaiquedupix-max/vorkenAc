@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync, gunzipSync } from "node:zlib";
 import pg from "pg";
-import { runCalibratedFilterV2 } from "./calibratedFilterV2.js";
+import { runEchoInspiredFilterV3 } from "./echoInspiredFilterV3.js";
 
 const { Pool } = pg;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -4532,7 +4532,7 @@ async function rebuildFindings(analysisId, report) {
   // remain in the codebase only for rollback. They no longer participate in
   // classification. The threat-site catalog and trusted-app catalog are
   // explicitly passed to the calibrated engine.
-  await runCalibratedFilterV2({
+  await runEchoInspiredFilterV3({
     analysisId,
     report,
     insertFinding: insertReviewFinding,
@@ -4551,7 +4551,7 @@ async function rebuildFindings(analysisId, report) {
   await pool.query(
     `UPDATE analyses
      SET processing_stage='finalizing',
-         processing_message='Baseline V2 concluída. Preparando o resultado final...'
+         processing_message='Baseline V3 Echo-inspired concluída. Preparando o resultado final...'
      WHERE id=$1`,
     [analysisId]
   );
@@ -4636,6 +4636,7 @@ async function insertReviewFinding(
 
   if (
     evidence?.baselineV2 !== true &&
+    evidence?.baselineV3 !== true &&
     !protectedFinding &&
     !strongUnsignedInjection &&
     await isLearnedTrustedArtifact(
