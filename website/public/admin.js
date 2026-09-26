@@ -822,7 +822,16 @@ async function queueGuerraFriaDecision(action) {
     alert(
       isBan
         ? "Banimento confirmado pelo Guerra Fria."
-        : "Liberação confirmada pelo Guerra Fria."
+        : (
+            "Liberação confirmada pelo Guerra Fria." +
+            (
+              Number(data?.learnedArtifacts || 0) > 0
+                ? "\n\nVorken aprendeu " +
+                  String(data.learnedArtifacts) +
+                  " assinatura(s) de arquivo como falso positivo confiável."
+                : ""
+            )
+          )
     );
 
     await openReport(currentReportId);
