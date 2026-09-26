@@ -49,7 +49,7 @@ async function collect(report, helperOverrides = {}) {
   return findings;
 }
 
-test("every structured direct catalog visit is preserved as critical", async () => {
+test("every structured direct catalog visit is preserved for review", async () => {
   const findings = await collect({
     collectedAtUtc: "2026-09-26T12:00:00Z",
     browserHistorySignals: [
@@ -73,7 +73,7 @@ test("every structured direct catalog visit is preserved as critical", async () 
   );
 
   assert.equal(visits.length, 2);
-  assert.ok(visits.every((item) => item.severity === "critical"));
+  assert.ok(visits.every((item) => item.severity === "medium"));
   assert.ok(visits.every((item) =>
     item.evidence.historyClassification === "catalog_direct_visit"
   ));
@@ -133,4 +133,87 @@ test("executed exact cheat executable catalog match is critical historically", a
   assert.ok(executable);
   assert.equal(executable.severity, "critical");
   assert.equal(executable.evidence.knownCheatExecutable, true);
+});
+
+test("missing executable without an independent risk signal is inventory only", async () => {
+  const findings = await collect({
+    collectedAtUtc: "2026-09-26T12:00:00Z",
+    prefetchExecutions: [{
+      resolvedExecutablePath: "C:\\Program Files\\Example\\helper.exe",
+      executablePresent: false,
+      lastRunUtc: "2026-09-25T11:00:00Z"
+    }]
+  });
+
+  const executable = findings.find((item) =>
+    item.artifactType === "correlated_executable_v2"
+  );
+
+  assert.ok(executable);
+  assert.equal(executable.severity, "info");
+});
+
+test("injection APIs without execution are inventory only", async () => {
+  const findings = await collect({
+    collectedAtUtc: "2026-09-26T12:00:00Z",
+    peInspections: [{
+      path: "C:\\Users\\Player\\AppData\\Roaming\\bakkesmod\\64bitbminjector.exe",
+      signed: false,
+      suspiciousApis: [
+        "VirtualAllocEx",
+        "WriteProcessMemory",
+        "CreateRemoteThread"
+      ]
+    }]
+  });
+
+  const executable = findings.find((item) =>
+    item.artifactType === "correlated_executable_v2"
+  );
+
+  assert.ok(executable);
+  assert.equal(executable.severity, "info");
+});
+
+test("Defender malware detections remain review findings", async () => {
+  const findings = await collect({
+    collectedAtUtc: "2026-09-26T12:00:00Z",
+    defenderDetections: [{
+      path: "file:_C:\\Games\\Example\\OnlineFix64.dll",
+      threatName: "Trojan:Win32/Example!rfn",
+      eventId: 1117
+    }]
+  });
+
+  const defender = findings.find((item) =>
+    item.artifactType === "defender_detection_v2"
+  );
+
+  assert.ok(defender);
+  assert.equal(defender.severity, "medium");
+});
+
+test("ordinary USB execution in-session is review, not critical", async () => {
+  const findings = await collect({
+    collectedAtUtc: "2026-09-26T12:00:00Z",
+    processes: [{
+      name: "RustClient.exe",
+      path: "C:\\Games\\Rust\\RustClient.exe",
+      startTimeUtc: "2026-09-26T10:00:00Z"
+    }],
+    prefetchExecutions: [{
+      executableName: "portable-tool.exe",
+      resolvedExecutablePath: "E:\\Tools\\portable-tool.exe",
+      executablePresent: true,
+      currentRemovable: true,
+      lastRunUtc: "2026-09-26T11:00:00Z"
+    }]
+  });
+
+  const executable = findings.find((item) =>
+    item.artifactType === "correlated_executable_v2"
+  );
+
+  assert.ok(executable);
+  assert.equal(executable.severity, "medium");
 });

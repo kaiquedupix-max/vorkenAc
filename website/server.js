@@ -8,7 +8,9 @@ import { gzipSync, gunzipSync } from "node:zlib";
 import pg from "pg";
 import { runDetectionEngineV4 } from "./echoInspiredFilterV3.js";
 import {
+  canApplyLearnedArtifactTrust,
   catalogWebTargetMatch,
+  isArtifactProtectedFromLearning,
 } from "./detectionPolicyV4.js";
 
 const { Pool } = pg;
@@ -4248,16 +4250,14 @@ function learnedArtifactSignatures(
   artifactValue,
   evidence = {}
 ) {
-  // EXE/artefato executado em USB/removível nunca pode ser neutralizado
-  // pelo auto-aprendizado, mesmo após liberação manual.
+  // Evidência correlacionada/realmente executada e histórico do Defender
+  // nunca podem ser neutralizados pelo auto-aprendizado. A mera presença de
+  // APIs de injeção, sem execução, pode ser aprendida como falso positivo.
   if (
-    evidence?.usbExecution === true ||
-    evidence?.deletedExecutedExecutable === true ||
-    evidence?.injectionCapability === true ||
-    evidence?.recoilInputApi === true ||
-    evidence?.correlatedEvidence === true ||
-    evidence?.currentRemovable === true ||
-    String(evidence?.driveType || "").toLowerCase() === "removable"
+    isArtifactProtectedFromLearning(
+      artifactType,
+      evidence
+    )
   ) {
     return [];
   }
@@ -4702,6 +4702,7 @@ async function insertReviewFinding(
     );
 
   const strongUnsignedInjection =
+    evidence?.executionConfirmed === true &&
     evidence?.injectionCapability === true &&
     evidence?.signed !== true &&
     (
@@ -4736,10 +4737,14 @@ async function insertReviewFinding(
   }
 
   if (
-    evidence?.baselineV2 !== true &&
-    evidence?.baselineV3 !== true &&
-    !protectedFinding &&
-    !strongUnsignedInjection &&
+    canApplyLearnedArtifactTrust(
+      artifactType,
+      evidence || {},
+      {
+        protectedFinding,
+        strongUnsignedInjection,
+      }
+    ) &&
     await isLearnedTrustedArtifact(
       artifactType,
       normalizedValue,

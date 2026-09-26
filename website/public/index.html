@@ -7,7 +7,7 @@
   <title>Vorken Anti-Cheat</title>
   <meta name="description" content="Vorken Anti-Cheat — scanner técnico sob demanda com evidências claras para revisão humana.">
   <link rel="icon" type="image/svg+xml" href="/vorken-logo.svg">
-  <link rel="stylesheet" href="/styles.css?v=20260924-brand">
+  <link rel="stylesheet" href="/styles.css?v=20260926-v5">
 </head>
 <body class="landing-page">
   <div class="landing-grid" aria-hidden="true"></div>
@@ -186,6 +186,42 @@
       </div>
     </section>
 
+    <section class="landing-section confidence-section">
+      <div class="shell">
+        <div class="section-heading reveal">
+          <div class="eyebrow">CONFIANÇA DA EVIDÊNCIA</div>
+          <h2>Cada sinal no lugar certo.</h2>
+          <p>
+            O relatório diferencia prova técnica, contexto para revisão e inventário. Assim, um arquivo
+            comum não recebe o mesmo peso de uma execução correlacionada a múltiplas evidências.
+          </p>
+        </div>
+
+        <div class="confidence-grid">
+          <article class="confidence-card critical reveal">
+            <span class="confidence-signal">●</span>
+            <div><small>CRÍTICO</small><h3>Evidência forte</h3></div>
+            <p>Execução confirmada combinada com assinatura, catálogo ou comportamento técnico de alto risco.</p>
+          </article>
+          <article class="confidence-card review reveal delay-1">
+            <span class="confidence-signal">◉</span>
+            <div><small>REVISAR</small><h3>Contexto importante</h3></div>
+            <p>Banimento Steam, alerta do Defender e sinais que merecem decisão humana, sem condenação automática.</p>
+          </article>
+          <article class="confidence-card warning reveal delay-2">
+            <span class="confidence-signal">◇</span>
+            <div><small>AVISO</small><h3>Integridade incompleta</h3></div>
+            <p>Vestígios apagados, incompletos ou fora do padrão ficam visíveis, mas precisam de correlação.</p>
+          </article>
+          <article class="confidence-card inventory reveal delay-3">
+            <span class="confidence-signal">⌁</span>
+            <div><small>INVENTÁRIO</small><h3>Informação técnica</h3></div>
+            <p>Arquivos presentes, instaladores e APIs isoladas são documentados sem criar falso positivo.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
     <section id="fluxo" class="landing-section landing-flow-section">
       <div class="shell">
         <div class="section-heading reveal">
@@ -259,6 +295,7 @@
     </div>
   </footer>
 
+  <script src="/ui-polish.js?v=20260926-v5"></script>
   <script>
     const revealObserver = new IntersectionObserver((entries) => {
       for (const entry of entries) {

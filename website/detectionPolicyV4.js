@@ -226,3 +226,44 @@ export function classifyExplicitCheatNameEvidence(evidence = {}) {
     )
   };
 }
+
+export function isArtifactProtectedFromLearning(
+  artifactType,
+  evidence = {}
+) {
+  // Antivirus detections must remain visible even when an administrator
+  // releases the player. The release teaches away false-positive artifacts,
+  // not the independent Defender history itself.
+  if (String(artifactType || "") === "defender_detection_v2")
+    return true;
+
+  const executed = evidence.executionConfirmed === true;
+
+  return Boolean(
+    evidence.usbExecution === true ||
+    evidence.deletedExecutedExecutable === true ||
+    evidence.correlatedEvidence === true ||
+    evidence.currentRemovable === true ||
+    String(evidence.driveType || "").toLowerCase() === "removable" ||
+    (executed && evidence.injectionCapability === true) ||
+    (executed && evidence.recoilInputApi === true)
+  );
+}
+
+export function canApplyLearnedArtifactTrust(
+  artifactType,
+  evidence = {},
+  {
+    protectedFinding = false,
+    strongUnsignedInjection = false,
+  } = {}
+) {
+  return Boolean(
+    protectedFinding !== true &&
+    strongUnsignedInjection !== true &&
+    !isArtifactProtectedFromLearning(
+      artifactType,
+      evidence
+    )
+  );
+}

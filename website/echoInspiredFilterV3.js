@@ -1,6 +1,6 @@
 import { runCalibratedFilterV2 } from "./calibratedFilterV2.js";
 
-const V4_VERSION = "forensic-confidence-v4";
+const CLASSIFIER_VERSION = "forensic-confidence-v5";
 
 function safeArray(value) {
   return Array.isArray(value) ? value : [];
@@ -412,7 +412,8 @@ async function addFinding(
       baselineV2: true,
       baselineV3: true,
       baselineV4: true,
-      classifierVersion: V4_VERSION,
+      baselineV5: true,
+      classifierVersion: CLASSIFIER_VERSION,
       ...evidence
     }
   );
@@ -1152,8 +1153,9 @@ export async function runDetectionEngineV4({
           baselineV2: true,
           baselineV3: true,
           baselineV4: true,
+          baselineV5: true,
           classifierVersion:
-            V4_VERSION,
+            CLASSIFIER_VERSION,
           sessionRelation,
           rustSession: {
             resolved:

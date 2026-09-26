@@ -11,6 +11,47 @@ internal sealed class AgentMainForm : Form
 {
     private const string PrivacyUrl = "https://vorkenac.guerrafriarust.com.br/privacy";
     private const string TermsUrl = "https://vorkenac.guerrafriarust.com.br/terms";
+    private const uint SndAsync = 0x0001;
+    private const uint SndNodefault = 0x0002;
+    private const uint SndAlias = 0x00010000;
+
+    private const string TermsContent = """
+TERMOS DE USO E CONSENTIMENTO — VORKEN ANTI-CHEAT
+
+Última atualização: setembro de 2026
+
+1. FINALIDADE DA ANÁLISE
+O Vorken realiza uma verificação técnica sob demanda para apoiar a revisão de integridade em ambientes de jogos competitivos. O aplicativo coleta e correlaciona evidências técnicas; ele não substitui a decisão humana da administração.
+
+2. DADOS TÉCNICOS ANALISADOS
+Durante a sessão, o Vorken pode examinar processos e módulos em execução, serviços e drivers, histórico de execução do Windows (incluindo Prefetch, BAM, Amcache, ShimCache e UserAssist), eventos do sistema, integridade de boot, dispositivos USB e seriais, arquivos executáveis e compactados relevantes, histórico técnico de downloads, sinais do Microsoft Defender e artefatos necessários para construir uma linha do tempo da análise.
+
+3. DADOS QUE NÃO FAZEM PARTE DA COLETA
+O Vorken não foi projetado para coletar senhas, cookies de autenticação, conteúdo de mensagens, fotografias, vídeos, documentos pessoais ou o conteúdo privado de contas. A análise deve permanecer limitada aos indicadores técnicos descritos nestes termos.
+
+4. PROCESSAMENTO E ENVIO
+Os resultados técnicos podem ser enviados ao servidor Vorken associado à verificação para classificação automática e revisão administrativa. O relatório pode conter nomes e caminhos de arquivos, hashes, horários, metadados de execução, dispositivos detectados e evidências correlacionadas.
+
+5. CLASSIFICAÇÃO E REVISÃO HUMANA
+As cores e níveis apresentados pelo Vorken indicam prioridade de revisão. Um alerta, isoladamente, não representa decisão definitiva. Evidências críticas devem possuir correlação técnica forte; sinais contextuais são mantidos para revisão ou inventário.
+
+6. CONSENTIMENTO
+Ao aceitar, você declara que leu este texto, compreendeu o escopo da análise e autoriza a execução desta verificação técnica no computador atual. A análise somente começará quando você pressionar o botão de início na tela seguinte.
+
+7. TRANSPARÊNCIA DURANTE A SESSÃO
+O aplicativo exibirá o andamento da coleta e permanecerá aberto até a conclusão. Não feche a janela durante o processo, pois isso pode interromper a análise e gerar um resultado incompleto.
+
+8. RESPONSABILIDADE E CONTESTAÇÃO
+A decisão administrativa deve considerar o conjunto das evidências e o contexto da sessão. Caso você discorde do resultado, solicite à administração a revisão do relatório e das evidências utilizadas.
+
+9. PRIVACIDADE
+Mais informações estão disponíveis na Política de Privacidade oficial. Os links para os documentos oficiais permanecem acessíveis nesta tela e nas configurações do aplicativo.
+
+10. ACEITE
+Role até o final deste documento. O botão de aceite será liberado somente após a leitura integral ter sido disponibilizada na tela.
+
+FIM DOS TERMOS
+""";
 
     private readonly string[] _args;
     private readonly AnimatedSurface _surface = new();
@@ -25,7 +66,6 @@ internal sealed class AgentMainForm : Form
     private readonly Label _elapsedLabel = new();
     private readonly Label _artifactCountLabel = new();
     private readonly Label _deviceCountLabel = new();
-    private readonly CheckBox _consentCheck = new();
     private readonly Button _startButton = new();
     private readonly Button _closeButton = new();
     private readonly System.Windows.Forms.Timer _motionTimer = new();
@@ -36,12 +76,15 @@ internal sealed class AgentMainForm : Form
     private readonly List<Label> _stepStateLabels = new();
     private readonly List<string> _activityLines = new();
     private readonly List<AgentFindingSnapshot> _visibleFindings = new();
+    private readonly HashSet<Button> _enhancedButtons = new();
 
     private Panel? _evidenceDetailPanel;
     private DateTime _scanStartedAt;
     private AgentRunResult? _lastRun;
     private bool _running;
     private bool _finished;
+    private bool _termsAccepted;
+    private bool _soundEnabled = true;
     private float _motion;
     private int _progressPercent;
     private int _artifactCount;
@@ -180,9 +223,9 @@ internal sealed class AgentMainForm : Form
         Opacity = 0d;
 
         BuildShell();
-        ShowConsentView();
+        ShowTermsGate();
 
-        _motionTimer.Interval = 36;
+        _motionTimer.Interval = 24;
         _motionTimer.Tick += MotionTimer_Tick;
         _motionTimer.Start();
 
@@ -339,7 +382,8 @@ internal sealed class AgentMainForm : Form
         };
         button.FlatAppearance.BorderSize = 0;
         button.FlatAppearance.MouseOverBackColor = Color.FromArgb(20, 45, 55);
-        AttachRoundedRegion(button, 7);
+        AttachRoundedRegion(button, 10);
+        EnhanceButton(button);
         return button;
     }
 
@@ -359,7 +403,8 @@ internal sealed class AgentMainForm : Form
         };
         button.FlatAppearance.BorderSize = 0;
         button.FlatAppearance.MouseOverBackColor = Color.FromArgb(8, 35, 42);
-        AttachRoundedRegion(button, 8);
+        AttachRoundedRegion(button, 12);
+        EnhanceButton(button);
         button.Click += (_, _) =>
         {
             SetActiveNav(index);
@@ -383,6 +428,232 @@ internal sealed class AgentMainForm : Form
             // Mantemos uma cor opaca mesmo quando a borda está com tamanho zero.
             button.FlatAppearance.BorderColor = active ? AccentSoft : Border;
         }
+    }
+
+    private void ShowTermsGate()
+    {
+        _surface.Controls.Clear();
+        _surface.Mode = AnimatedSurfaceMode.Idle;
+        _nav.Visible = false;
+        _finished = false;
+
+        var badge = MakeBadge("ETAPA OBRIGATÓRIA   ·   CONSENTIMENTO");
+        badge.Location = new Point(44, 28);
+
+        _surface.Controls.Add(badge);
+        _surface.Controls.Add(MakeLabel(
+            "Antes de começar, leia os termos.",
+            new Rectangle(44, 72, 850, 52),
+            29F,
+            TextPrimary,
+            FontStyle.Bold));
+        _surface.Controls.Add(MakeLabel(
+            "Role o documento até o final. O aceite libera o aplicativo e nenhuma análise começa automaticamente.",
+            new Rectangle(47, 126, 960, 30),
+            10.2F,
+            TextSecondary));
+
+        var termsCard = MakeCard(new Rectangle(44, 174, 820, 608));
+        termsCard.CornerRadius = 18;
+        termsCard.Controls.Add(MakeSectionTitle("▤   TERMOS DE USO E CONSENTIMENTO", 22, 18));
+
+        var termsBox = new RichTextBox
+        {
+            Bounds = new Rectangle(20, 55, 780, 465),
+            ReadOnly = true,
+            DetectUrls = false,
+            WordWrap = true,
+            ScrollBars = RichTextBoxScrollBars.Vertical,
+            BorderStyle = BorderStyle.None,
+            BackColor = Color.FromArgb(3, 13, 19),
+            ForeColor = Color.FromArgb(194, 210, 214),
+            Font = new Font("Segoe UI", 9.8F),
+            Text = TermsContent,
+            TabStop = true
+        };
+        AttachRoundedRegion(termsBox, 14);
+        termsCard.Controls.Add(termsBox);
+
+        var scrollTrack = new Panel
+        {
+            Bounds = new Rectangle(22, 538, 510, 8),
+            BackColor = Color.FromArgb(10, 41, 48)
+        };
+        AttachRoundedRegion(scrollTrack, 4);
+
+        var scrollFill = new Panel
+        {
+            Bounds = new Rectangle(0, 0, 10, 8),
+            BackColor = Accent
+        };
+        AttachRoundedRegion(scrollFill, 4);
+        scrollTrack.Controls.Add(scrollFill);
+        termsCard.Controls.Add(scrollTrack);
+
+        var scrollHint = MakeLabel(
+            "↓  Role para continuar   ·   0%",
+            new Rectangle(548, 528, 250, 26),
+            8F,
+            Warning,
+            FontStyle.Bold,
+            "Consolas");
+        scrollHint.TextAlign = ContentAlignment.MiddleRight;
+        termsCard.Controls.Add(scrollHint);
+
+        var officialTerms = new Button
+        {
+            Text = "Termos oficiais ↗",
+            Bounds = new Rectangle(22, 562, 170, 34)
+        };
+        StyleGhostButton(officialTerms);
+        officialTerms.Click += (_, _) => OpenUrl(TermsUrl);
+        termsCard.Controls.Add(officialTerms);
+
+        var privacy = new Button
+        {
+            Text = "Privacidade ↗",
+            Bounds = new Rectangle(204, 562, 154, 34)
+        };
+        StyleGhostButton(privacy);
+        privacy.Click += (_, _) => OpenUrl(PrivacyUrl);
+        termsCard.Controls.Add(privacy);
+
+        var actionCard = MakeCard(new Rectangle(890, 174, 334, 608));
+        actionCard.CornerRadius = 18;
+        actionCard.Controls.Add(MakeLabel(
+            "CONSENTIMENTO",
+            new Rectangle(24, 28, 240, 20),
+            8.2F,
+            Accent,
+            FontStyle.Bold,
+            "Consolas"));
+        actionCard.Controls.Add(MakeLabel(
+            "Leitura clara.\nAceite consciente.",
+            new Rectangle(24, 66, 280, 76),
+            19F,
+            TextPrimary,
+            FontStyle.Bold));
+        actionCard.Controls.Add(MakeLabel(
+            "O Vorken só será liberado após você chegar ao fim dos termos.",
+            new Rectangle(25, 158, 280, 58),
+            9.5F,
+            TextSecondary));
+
+        string[] protections =
+        {
+            "✓  Nenhuma análise inicia sozinha",
+            "✓  Escopo técnico apresentado antes",
+            "✓  Revisão humana dos alertas",
+            "✓  Privacidade acessível a qualquer momento"
+        };
+
+        for (int i = 0; i < protections.Length; i++)
+        {
+            var row = new BorderedPanel
+            {
+                Bounds = new Rectangle(24, 240 + (i * 54), 286, 42),
+                BackColor = Color.FromArgb(5, 21, 27),
+                BorderColor = Color.FromArgb(18, 66, 76),
+                CornerRadius = 12
+            };
+            row.Controls.Add(MakeLabel(
+                protections[i],
+                new Rectangle(14, 11, 258, 20),
+                8.1F,
+                i == 0 ? Accent : TextSecondary,
+                FontStyle.Bold));
+            actionCard.Controls.Add(row);
+        }
+
+        var acceptButton = new Button
+        {
+            Text = "Role até o final para liberar",
+            Bounds = new Rectangle(24, 488, 286, 62),
+            Enabled = false
+        };
+        StylePrimaryButton(acceptButton);
+        acceptButton.BackColor = Color.FromArgb(31, 73, 72);
+        acceptButton.Click += (_, _) =>
+        {
+            if (!acceptButton.Enabled)
+                return;
+
+            _termsAccepted = true;
+            ShowConsentView();
+        };
+        actionCard.Controls.Add(acceptButton);
+        actionCard.Controls.Add(MakeLabel(
+            "O aceite vale para esta execução do aplicativo.",
+            new Rectangle(32, 562, 270, 20),
+            7.1F,
+            TextDim));
+
+        void UpdateTermsProgress()
+        {
+            if (!termsBox.IsHandleCreated)
+                return;
+
+            int lastCharacter = Math.Max(
+                0,
+                termsBox.TextLength - 1);
+            Point lastCharacterPosition =
+                termsBox.GetPositionFromCharIndex(lastCharacter);
+            int visibleEndCharacter =
+                termsBox.GetCharIndexFromPosition(
+                    new Point(
+                        Math.Max(1, termsBox.ClientSize.Width - 28),
+                        Math.Max(1, termsBox.ClientSize.Height - 8)));
+            int percent = Math.Clamp(
+                (int)Math.Round(
+                    visibleEndCharacter * 100d /
+                    Math.Max(1, termsBox.TextLength)),
+                0,
+                100);
+            bool reachedBottom =
+                lastCharacterPosition.Y >= 0 &&
+                lastCharacterPosition.Y <=
+                    termsBox.ClientSize.Height - termsBox.Font.Height;
+
+            if (reachedBottom)
+                percent = 100;
+
+            scrollFill.Width = Math.Max(
+                10,
+                scrollTrack.Width * percent / 100);
+            scrollHint.Text = reachedBottom
+                ? "✓  Leitura concluída   ·   100%"
+                : $"↓  Role para continuar   ·   {percent}%";
+            scrollHint.ForeColor = reachedBottom
+                ? Accent
+                : Warning;
+
+            acceptButton.Enabled = reachedBottom;
+
+            if (reachedBottom)
+            {
+                acceptButton.Text = "✓  Li e aceito os termos   →";
+                acceptButton.BackColor = Accent;
+            }
+            else
+            {
+                acceptButton.Text = "Role até o final para liberar";
+                acceptButton.BackColor = Color.FromArgb(31, 73, 72);
+            }
+        }
+
+        termsBox.VScroll += (_, _) => UpdateTermsProgress();
+        termsBox.MouseWheel += (_, _) =>
+            BeginInvoke(UpdateTermsProgress);
+        termsBox.KeyUp += (_, _) => UpdateTermsProgress();
+        termsBox.Resize += (_, _) => UpdateTermsProgress();
+        termsBox.HandleCreated += (_, _) =>
+            BeginInvoke(UpdateTermsProgress);
+
+        _surface.Controls.Add(termsCard);
+        _surface.Controls.Add(actionCard);
+
+        SetHeaderState("TERMOS", Warning);
+        termsBox.Focus();
     }
 
     private void ShowConsentView()
@@ -471,31 +742,28 @@ internal sealed class AgentMainForm : Form
             8.8F,
             TextSecondary));
 
-        var consentPanel = new Panel
+        var consentPanel = new BorderedPanel
         {
             Bounds = new Rectangle(44, 754, 710, 54),
-            BackColor = Color.Transparent
+            BackColor = Color.FromArgb(5, 29, 31),
+            BorderColor = Color.FromArgb(25, 112, 102),
+            CornerRadius = 14
         };
-
-        _consentCheck.Text = "Li e concordo com a análise técnica descrita acima.";
-        _consentCheck.AutoSize = true;
-        _consentCheck.Location = new Point(0, 3);
-        _consentCheck.ForeColor = TextPrimary;
-        _consentCheck.BackColor = Color.Transparent;
-        _consentCheck.Font = new Font("Segoe UI", 9.4F);
-        _consentCheck.Checked = false;
-        _consentCheck.CheckedChanged -= ConsentCheck_Changed;
-        _consentCheck.CheckedChanged += ConsentCheck_Changed;
-
-        consentPanel.Controls.Add(_consentCheck);
         consentPanel.Controls.Add(MakeLabel(
-            "Entendo que o Vorken irá analisar apenas os dados listados, de forma segura e sob demanda.",
-            new Rectangle(28, 29, 500, 18),
-            7.3F,
-            TextDim));
+            "✓  TERMOS ACEITOS",
+            new Rectangle(18, 9, 210, 18),
+            8.1F,
+            Accent,
+            FontStyle.Bold,
+            "Consolas"));
+        consentPanel.Controls.Add(MakeLabel(
+            "A análise continua sob demanda e só começa quando você clicar em iniciar.",
+            new Rectangle(18, 29, 470, 18),
+            7.5F,
+            TextSecondary));
 
-        var privacyLink = MakeLink("Política de Privacidade ↗", 530, 0, () => OpenUrl(PrivacyUrl));
-        var termsLink = MakeLink("Termos de Uso ↗", 530, 26, () => OpenUrl(TermsUrl));
+        var privacyLink = MakeLink("Privacidade ↗", 518, 8, () => OpenUrl(PrivacyUrl));
+        var termsLink = MakeLink("Rever termos ↗", 518, 29, ShowTermsGate);
         consentPanel.Controls.Add(privacyLink);
         consentPanel.Controls.Add(termsLink);
 
@@ -540,7 +808,10 @@ internal sealed class AgentMainForm : Form
         _startButton.Text = "▶  Iniciar análise   →";
         _startButton.Bounds = new Rectangle(26, 590, 388, 64);
         StylePrimaryButton(_startButton);
-        _startButton.Enabled = false;
+        _startButton.Enabled = _termsAccepted;
+        _startButton.BackColor = _termsAccepted
+            ? Accent
+            : Color.FromArgb(33, 78, 75);
         _startButton.Click -= AcceptButton_Click;
         _startButton.Click += AcceptButton_Click;
         scannerCard.Controls.Add(_startButton);
@@ -565,17 +836,9 @@ internal sealed class AgentMainForm : Form
         SetHeaderState("READY", Accent);
     }
 
-    private void ConsentCheck_Changed(object? sender, EventArgs e)
-    {
-        _startButton.Enabled = _consentCheck.Checked;
-        _startButton.BackColor = _consentCheck.Checked
-            ? Accent
-            : Color.FromArgb(33, 78, 75);
-    }
-
     private async void AcceptButton_Click(object? sender, EventArgs e)
     {
-        if (_running || !_consentCheck.Checked)
+        if (_running || !_termsAccepted)
             return;
 
         _running = true;
@@ -2070,7 +2333,7 @@ internal sealed class AgentMainForm : Form
             TextPrimary,
             FontStyle.Bold));
 
-        var card = MakeCard(new Rectangle(44, 180, 780, 330));
+        var card = MakeCard(new Rectangle(44, 180, 780, 405));
         card.Controls.Add(MakeSectionTitle("SESSÃO E PRIVACIDADE", 20, 20));
         card.Controls.Add(MakeLabel(
             "Modo de análise\nON DEMAND · USER MODE\n\n" +
@@ -2091,12 +2354,38 @@ internal sealed class AgentMainForm : Form
 
         var terms = new Button
         {
-            Text = "Termos de Uso ↗",
-            Bounds = new Rectangle(260, 252, 180, 44)
+            Text = "Rever termos no app",
+            Bounds = new Rectangle(260, 252, 190, 44)
         };
         StyleGhostButton(terms);
-        terms.Click += (_, _) => OpenUrl(TermsUrl);
+        terms.Click += (_, _) => ShowTermsGate();
         card.Controls.Add(terms);
+
+        var sound = new Button
+        {
+            Text = _soundEnabled
+                ? "🔊  Sons da interface: ligados"
+                : "🔇  Sons da interface: desligados",
+            Bounds = new Rectangle(24, 316, 260, 46)
+        };
+        StyleGhostButton(sound);
+        sound.Click += (_, _) =>
+        {
+            _soundEnabled = !_soundEnabled;
+            sound.Text = _soundEnabled
+                ? "🔊  Sons da interface: ligados"
+                : "🔇  Sons da interface: desligados";
+
+            if (_soundEnabled)
+                PlayUiClick();
+        };
+        card.Controls.Add(sound);
+
+        card.Controls.Add(MakeLabel(
+            "Os sons são discretos e podem ser desativados a qualquer momento.",
+            new Rectangle(302, 328, 430, 24),
+            8F,
+            TextDim));
 
         _surface.Controls.Add(card);
         SetHeaderState("READY", Accent);
@@ -2397,16 +2686,19 @@ internal sealed class AgentMainForm : Form
         _headerStatus.BackColor = Color.FromArgb(6, 31, 36);
     }
 
-    private static void StylePrimaryButton(Button button)
+    private void StylePrimaryButton(Button button)
     {
         button.FlatStyle = FlatStyle.Flat;
-        button.FlatAppearance.BorderSize = 0;
+        button.FlatAppearance.BorderSize = 1;
+        button.FlatAppearance.BorderColor = Color.FromArgb(98, 255, 224);
+        button.FlatAppearance.MouseDownBackColor = Color.FromArgb(29, 205, 174);
         button.BackColor = Accent;
         button.ForeColor = Color.FromArgb(1, 26, 29);
         button.Font = new Font("Segoe UI", 12F, FontStyle.Bold);
         button.Cursor = Cursors.Hand;
         button.TabStop = true;
-        AttachRoundedRegion(button, 10);
+        AttachRoundedRegion(button, 14);
+        EnhanceButton(button);
 
         button.MouseEnter += (_, _) =>
         {
@@ -2421,7 +2713,7 @@ internal sealed class AgentMainForm : Form
         };
     }
 
-    private static void StyleGhostButton(Button button)
+    private void StyleGhostButton(Button button)
     {
         button.FlatStyle = FlatStyle.Flat;
         button.FlatAppearance.BorderColor = BorderBright;
@@ -2430,7 +2722,9 @@ internal sealed class AgentMainForm : Form
         button.ForeColor = TextPrimary;
         button.Font = new Font("Segoe UI", 8.2F, FontStyle.Bold);
         button.Cursor = Cursors.Hand;
-        AttachRoundedRegion(button, 9);
+        button.FlatAppearance.MouseDownBackColor = Color.FromArgb(10, 53, 60);
+        AttachRoundedRegion(button, 13);
+        EnhanceButton(button);
 
         Color normalBack = button.BackColor;
         Color normalFore = button.ForeColor;
@@ -2448,6 +2742,42 @@ internal sealed class AgentMainForm : Form
             button.ForeColor = normalFore;
             button.FlatAppearance.BorderColor = BorderBright;
         };
+    }
+
+    private void EnhanceButton(Button button)
+    {
+        if (!_enhancedButtons.Add(button))
+            return;
+
+        button.Cursor = Cursors.Hand;
+        button.Click += (_, _) => PlayUiClick();
+        button.GotFocus += (_, _) =>
+        {
+            if (button.Enabled)
+                button.FlatAppearance.BorderColor = Accent;
+        };
+        button.LostFocus += (_, _) =>
+        {
+            if (button.Enabled && button.BackColor != Accent)
+                button.FlatAppearance.BorderColor = BorderBright;
+        };
+    }
+
+    private void PlayUiClick()
+    {
+        if (!_soundEnabled)
+            return;
+
+        try
+        {
+            PlaySound(
+                "MenuCommand",
+                IntPtr.Zero,
+                SndAlias | SndAsync | SndNodefault);
+        }
+        catch
+        {
+        }
     }
 
     private static string BuildFindingRowText(AgentFindingSnapshot finding)
@@ -2532,6 +2862,12 @@ internal sealed class AgentMainForm : Form
 
     [DllImport("user32.dll")]
     private static extern IntPtr SendMessage(IntPtr hWnd, int msg, int wParam, int lParam);
+
+    [DllImport("winmm.dll", CharSet = CharSet.Unicode)]
+    private static extern bool PlaySound(
+        string? pszSound,
+        IntPtr hmod,
+        uint fdwSound);
 }
 
 internal sealed record ManualToolDefinition(
@@ -2632,7 +2968,7 @@ internal sealed class BorderFrame : Panel
 internal class BorderedPanel : Panel
 {
     internal Color BorderColor { get; set; } = Color.FromArgb(21, 61, 76);
-    internal int CornerRadius { get; set; } = 10;
+    internal int CornerRadius { get; set; } = 14;
 
     internal BorderedPanel()
     {
@@ -2684,7 +3020,22 @@ internal sealed class VorkenCard : BorderedPanel
 {
     internal VorkenCard()
     {
-        CornerRadius = 11;
+        CornerRadius = 16;
+        Cursor = Cursors.Default;
+    }
+
+    protected override void OnMouseEnter(EventArgs e)
+    {
+        base.OnMouseEnter(e);
+        BorderColor = Color.FromArgb(31, 103, 119);
+        Invalidate();
+    }
+
+    protected override void OnMouseLeave(EventArgs e)
+    {
+        base.OnMouseLeave(e);
+        BorderColor = Color.FromArgb(21, 61, 76);
+        Invalidate();
     }
 }
 

@@ -1150,7 +1150,14 @@ export async function runCalibratedFilterV2({
     } else if (
       usb &&
       executed &&
-      executionScope.inSession
+      executionScope.inSession &&
+      (
+        deletedOrMissing ||
+        strongInjection ||
+        catalogMatches.length > 0 ||
+        highRiskName ||
+        packedOrHighEntropy
+      )
     ) {
       severity = "critical";
       title =
@@ -1171,10 +1178,10 @@ export async function runCalibratedFilterV2({
       deletedOrMissing &&
       !genericInstaller &&
       (
-        unsigned ||
         strongInjection ||
         catalogMatches.length > 0 ||
-        highRiskName
+        highRiskName ||
+        packedOrHighEntropy
       ) &&
       executionScope.inSession
     ) {
@@ -1188,10 +1195,10 @@ export async function runCalibratedFilterV2({
       deletedOrMissing &&
       !genericInstaller &&
       (
-        unsigned ||
         strongInjection ||
         catalogMatches.length > 0 ||
-        highRiskName
+        highRiskName ||
+        packedOrHighEntropy
       )
     ) {
       severity = "medium";
@@ -1242,8 +1249,7 @@ export async function runCalibratedFilterV2({
       executed &&
       (
         rustInputContext ||
-        usb ||
-        deletedOrMissing
+        (usb && deletedOrMissing)
       ) &&
       executionScope.inSession
     ) {
@@ -1269,11 +1275,11 @@ export async function runCalibratedFilterV2({
     } else if (
       strongInjection
     ) {
-      severity = "medium";
+      severity = "info";
       title =
-        "Executável com APIs fortes de injeção";
+        "Capacidade de injeção sem execução comprovada (inventário)";
       reason =
-        "Foram encontradas múltiplas APIs de injeção, porém esta análise não comprovou execução do executável.";
+        "Foram encontradas múltiplas APIs de injeção, mas sem execução comprovada isso permanece apenas como inventário técnico.";
     } else if (
       catalogMatches.length > 0
     ) {
@@ -1305,15 +1311,15 @@ export async function runCalibratedFilterV2({
       executed &&
       deletedOrMissing
     ) {
-      severity = "medium";
+      severity = "info";
       title =
         genericInstaller
-          ? "Instalador/updater executado e posteriormente ausente"
-          : "Executável executado e posteriormente ausente";
+          ? "Instalador/updater ausente após execução (inventário)"
+          : "Executável ausente após execução (inventário)";
       reason =
         genericInstaller
-          ? "Há execução e ausência posterior, mas instaladores e atualizadores podem remover a si próprios legitimamente."
-          : "A execução é comprovada, porém a ausência posterior sem outro sinal técnico forte não é suficiente para classificar como crítico.";
+          ? "Instaladores e atualizadores podem remover a si próprios legitimamente; sem outro sinal técnico, o registro não exige revisão."
+          : "Execução seguida de ausência, isoladamente e sem outro sinal técnico forte, não exige revisão administrativa.";
     }
 
     if (!severity)
@@ -2132,8 +2138,8 @@ export async function runCalibratedFilterV2({
         await addFinding(
           insertFinding,
           analysisId,
-          "PRIORIDADE MÁXIMA: site do catálogo de cheat acessado diretamente",
-          "critical",
+          "Site do catálogo de cheat acessado diretamente",
+          "medium",
           "browser_catalog_visit_v2",
           url || key,
           {
@@ -2148,14 +2154,14 @@ export async function runCalibratedFilterV2({
             historyClassification:
               "catalog_direct_visit",
             historyClassificationVersion:
-              "forensic-confidence-v4",
+              "forensic-confidence-v5",
             evidenceIntegrity:
               "structured_browser_history",
-            priorityMaximum: true,
-            protectedByTechnicalEngine: true,
-            confidence: "high",
+            priorityMaximum: false,
+            protectedByTechnicalEngine: false,
+            confidence: "medium",
             note:
-              "O histórico registra navegação direta para um domínio presente no catálogo de cheat. Pesquisas em mecanismos de busca não entram nesta regra. A classificação crítica confirma o acesso ao domínio catalogado, não a execução de cheat/loader."
+              "O histórico registra navegação direta para um domínio presente no catálogo de cheat. O acesso exige revisão, mas sem download ou execução correlacionada não constitui prova crítica isoladamente."
           }
         );
       }
@@ -2292,7 +2298,7 @@ export async function runCalibratedFilterV2({
         historyClassification:
           "catalog_recovered_fragment",
         historyClassificationVersion:
-          "forensic-confidence-v4",
+          "forensic-confidence-v5",
         evidenceIntegrity:
           "recovered_sqlite_fragment",
         confidence: "context",

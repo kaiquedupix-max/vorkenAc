@@ -1607,3 +1607,234 @@ pre.raw{max-height:420px;overflow:auto;background:#05080a;border:1px solid #1620
   justify-content:flex-end;
   gap:10px;
 }
+
+
+/* 2026-09-26 · Vorken V5 — evidence-first interface polish */
+.ui-ripple {
+  position: absolute;
+  z-index: 8;
+  width: 10px;
+  height: 10px;
+  pointer-events: none;
+  border-radius: 999px;
+  background: rgba(91, 244, 202, .3);
+  transform: translate(-50%, -50%) scale(0);
+  animation: vorken-ripple .52s ease-out forwards;
+}
+@keyframes vorken-ripple {
+  to { opacity: 0; transform: translate(-50%, -50%) scale(16); }
+}
+:is(button, .button, .feature-card, .confidence-card, .report-category-card) {
+  position: relative;
+  overflow: hidden;
+}
+
+.confidence-section {
+  position: relative;
+  border-block: 1px solid rgba(92, 240, 192, .08);
+  background:
+    linear-gradient(180deg, rgba(5, 12, 16, .4), rgba(5, 14, 18, .92)),
+    radial-gradient(circle at 50% 0, rgba(43, 240, 201, .08), transparent 46%);
+}
+.confidence-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 38px;
+}
+.confidence-card {
+  --signal: #43aaff;
+  min-height: 235px;
+  padding: 24px;
+  border: 1px solid rgba(91, 132, 142, .22);
+  border-radius: 22px;
+  background: linear-gradient(155deg, rgba(11, 25, 31, .96), rgba(5, 13, 17, .9));
+  box-shadow: inset 0 1px rgba(255,255,255,.025), 0 18px 50px rgba(0,0,0,.18);
+  transition: transform .24s ease, border-color .24s ease, box-shadow .24s ease;
+}
+.confidence-card:hover {
+  transform: translateY(-5px);
+  border-color: color-mix(in srgb, var(--signal) 62%, transparent);
+  box-shadow: 0 22px 55px color-mix(in srgb, var(--signal) 10%, transparent);
+}
+.confidence-card.critical { --signal: #ff596d; }
+.confidence-card.review { --signal: #f6bd39; }
+.confidence-card.warning { --signal: #9b7bff; }
+.confidence-card.inventory { --signal: #43aaff; }
+.confidence-signal {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  margin-bottom: 32px;
+  border: 1px solid color-mix(in srgb, var(--signal) 50%, transparent);
+  border-radius: 13px;
+  color: var(--signal);
+  background: color-mix(in srgb, var(--signal) 9%, transparent);
+  box-shadow: 0 0 24px color-mix(in srgb, var(--signal) 12%, transparent);
+}
+.confidence-card small {
+  color: var(--signal);
+  font: 800 8px "Consolas", monospace;
+  letter-spacing: .14em;
+}
+.confidence-card h3 { margin: 5px 0 14px; font-size: 18px; }
+.confidence-card p { margin: 0; color: #7f9599; font-size: 10px; line-height: 1.7; }
+
+.vorken-admin {
+  background:
+    radial-gradient(circle at 82% -8%, rgba(43, 240, 201, .09), transparent 30%),
+    radial-gradient(circle at 4% 55%, rgba(44, 126, 173, .07), transparent 30%),
+    #040b0f;
+}
+.vorken-admin::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: .18;
+  background-image:
+    linear-gradient(rgba(92, 240, 192, .035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(92, 240, 192, .035) 1px, transparent 1px);
+  background-size: 42px 42px;
+  mask-image: linear-gradient(to bottom, #000, transparent 76%);
+}
+.vorken-shell-header {
+  border-bottom-color: rgba(71, 144, 145, .24);
+  background: rgba(4, 13, 18, .82);
+  backdrop-filter: blur(20px) saturate(130%);
+  box-shadow: 0 10px 36px rgba(0, 0, 0, .22);
+}
+.vorken-brand-mark { border-radius: 12px !important; }
+.vorken-main-nav {
+  padding: 5px;
+  border: 1px solid rgba(46, 107, 113, .3);
+  border-radius: 16px;
+  background: rgba(7, 22, 29, .76);
+  box-shadow: inset 0 1px rgba(255,255,255,.025);
+}
+.vorken-nav-button {
+  border-radius: 11px;
+  transition: color .2s ease, background .2s ease, box-shadow .2s ease, transform .2s ease;
+}
+.vorken-nav-button:hover { transform: translateY(-1px); background: rgba(43, 240, 201, .055); }
+.vorken-nav-button.active {
+  background: linear-gradient(180deg, rgba(43, 240, 201, .14), rgba(43, 240, 201, .06));
+  box-shadow: inset 0 0 0 1px rgba(43, 240, 201, .16), 0 8px 22px rgba(0,0,0,.18);
+}
+.vorken-icon-button,
+.vorken-ready-pill {
+  border-radius: 12px;
+  transition: transform .18s ease, border-color .18s ease, color .18s ease, background .18s ease;
+}
+.vorken-icon-button:hover { transform: translateY(-2px); background: rgba(43, 240, 201, .08); }
+.sound-toggle.is-muted { color: #607780; border-color: #263f48; }
+
+.vorken-login-card {
+  width: min(460px, calc(100vw - 34px));
+  padding: 38px;
+  border-color: rgba(48, 126, 126, .36);
+  border-radius: 26px;
+  background:
+    linear-gradient(155deg, rgba(10, 28, 36, .97), rgba(5, 16, 22, .94));
+  box-shadow: 0 32px 90px rgba(0,0,0,.46), inset 0 1px rgba(255,255,255,.035);
+}
+.vorken-login-card::before {
+  content: "";
+  display: block;
+  width: 54px;
+  height: 3px;
+  margin-bottom: 25px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #2bf0c9, #38a9e9);
+  box-shadow: 0 0 25px rgba(43,240,201,.34);
+}
+.vorken-login-card input { min-height: 48px; margin-top: 8px; }
+.vorken-login-card .button { width: 100%; min-height: 48px; margin-top: 8px; }
+
+#sessionsPanel,
+.vorken-admin .card,
+.session-list-pane,
+.session-detail-pane {
+  border-color: rgba(38, 91, 99, .34);
+}
+#sessionsPanel {
+  overflow: hidden;
+  border: 1px solid rgba(35, 89, 96, .34);
+  border-radius: 22px;
+  background: rgba(5, 17, 23, .8);
+  box-shadow: 0 26px 80px rgba(0,0,0,.24), inset 0 1px rgba(255,255,255,.02);
+}
+.session-list-pane { background: linear-gradient(180deg, rgba(7,24,31,.98), rgba(5,17,23,.96)); }
+.session-detail-pane { background: rgba(4, 14, 19, .68); }
+.session-search-box,
+.session-filter-button,
+.vorken-admin input,
+.vorken-admin select,
+.vorken-admin textarea {
+  border-radius: 13px;
+  transition: border-color .18s ease, box-shadow .18s ease, background .18s ease;
+}
+.session-search-box:focus-within,
+.vorken-admin input:focus,
+.vorken-admin select:focus,
+.vorken-admin textarea:focus {
+  outline: none;
+  border-color: rgba(43, 240, 201, .72);
+  box-shadow: 0 0 0 3px rgba(43, 240, 201, .08), 0 10px 30px rgba(0,0,0,.16);
+  background-color: rgba(8, 29, 37, .96);
+}
+.session-filter-tabs { padding: 5px; border-radius: 13px; background: rgba(4,15,20,.72); }
+.session-filter { border-radius: 9px; transition: background .18s ease, color .18s ease, transform .18s ease; }
+.session-filter:hover { transform: translateY(-1px); }
+.session-table tbody tr { transition: background .16s ease, box-shadow .16s ease; }
+.session-table tbody tr:hover { background: rgba(43, 240, 201, .045); box-shadow: inset 3px 0 #2bf0c9; }
+
+.report-category-grid { gap: 11px; }
+.report-category-card {
+  min-height: 82px;
+  padding: 14px;
+  border-radius: 16px;
+  background: linear-gradient(150deg, rgba(8,29,37,.97), rgba(4,17,23,.94));
+  box-shadow: inset 0 1px rgba(255,255,255,.025);
+  transition: transform .2s ease, border-color .2s ease, background .2s ease, box-shadow .2s ease;
+}
+.report-category-card:hover { transform: translateY(-3px); box-shadow: 0 14px 34px rgba(0,0,0,.22); }
+.report-category-card.active { box-shadow: inset 0 0 0 1px rgba(43,240,201,.12), 0 12px 32px rgba(0,0,0,.18); }
+.report-side-column > div,
+.vorken-admin .metric,
+.vorken-admin .report-section,
+.vorken-admin .finding,
+.vorken-admin .card {
+  border-radius: 16px;
+  box-shadow: inset 0 1px rgba(255,255,255,.02);
+}
+.report-side-column > div,
+.vorken-admin .metric {
+  transition: transform .2s ease, border-color .2s ease, background .2s ease;
+}
+.report-side-column > div:hover,
+.vorken-admin .metric:hover { transform: translateY(-2px); border-color: rgba(43,240,201,.34); }
+.vorken-admin .finding { padding: 16px; background: rgba(7, 21, 27, .88); }
+.vorken-admin .finding.severity-card.critical,
+.vorken-admin .finding.severity-card.high { background: linear-gradient(90deg, rgba(255,75,96,.07), rgba(7,21,27,.88) 32%); }
+.vorken-admin .finding.severity-card.medium { background: linear-gradient(90deg, rgba(246,189,57,.065), rgba(7,21,27,.88) 32%); }
+.vorken-admin .button { border-radius: 12px; transition: transform .18s ease, border-color .18s ease, filter .18s ease, box-shadow .18s ease; }
+.vorken-admin .button:not(:disabled):hover { transform: translateY(-2px); filter: brightness(1.08); }
+.vorken-admin .button.primary { box-shadow: 0 10px 28px rgba(43,240,201,.12); }
+.ban-evidence-select,
+.usb-file-row,
+.gf-decision-badge { border-radius: 13px; }
+
+@media (max-width: 1050px) {
+  .confidence-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .confidence-grid { grid-template-columns: 1fr; }
+  .confidence-card { min-height: auto; }
+  .vorken-login-card { padding: 28px 22px; border-radius: 20px; }
+  #sessionsPanel { border-radius: 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
+}

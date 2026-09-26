@@ -2,9 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  canApplyLearnedArtifactTrust,
   catalogWebTargetMatch,
   classifyExplicitCheatNameEvidence,
   classifyUnknownExecutableEvidence,
+  isArtifactProtectedFromLearning,
 } from "../detectionPolicyV4.js";
 
 test("direct catalog domain is a direct match", () => {
@@ -104,4 +106,67 @@ test("suspicious name becomes critical only in-session with technical support", 
   });
 
   assert.equal(result.critical, true);
+});
+
+test("unexecuted injection capability can be learned as a false positive", () => {
+  assert.equal(
+    isArtifactProtectedFromLearning(
+      "correlated_executable_v2",
+      {
+        injectionCapability: true,
+        executionConfirmed: false,
+      }
+    ),
+    false
+  );
+});
+
+test("executed injection capability remains protected from learning", () => {
+  assert.equal(
+    isArtifactProtectedFromLearning(
+      "correlated_executable_v2",
+      {
+        injectionCapability: true,
+        executionConfirmed: true,
+      }
+    ),
+    true
+  );
+});
+
+test("Defender detections remain protected from learning", () => {
+  assert.equal(
+    isArtifactProtectedFromLearning(
+      "defender_detection_v2",
+      {}
+    ),
+    true
+  );
+});
+
+test("current classifier findings can use learned trust", () => {
+  assert.equal(
+    canApplyLearnedArtifactTrust(
+      "correlated_executable_v2",
+      {
+        baselineV2: true,
+        baselineV3: true,
+        baselineV4: true,
+        baselineV5: true,
+        executionConfirmed: false,
+      }
+    ),
+    true
+  );
+});
+
+test("learned trust cannot hide protected technical evidence", () => {
+  assert.equal(
+    canApplyLearnedArtifactTrust(
+      "correlated_executable_v2",
+      { executionConfirmed: true },
+      { protectedFinding: true }
+    ),
+    false
+  );
 });
