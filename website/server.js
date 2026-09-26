@@ -1317,9 +1317,7 @@ async function addSteamAccountBanFindings(
         : consensus?.rustSpecific === true
           ? "Conta Steam com ban relacionado ao Rust"
           : "Conta Steam com histórico de ban",
-      account?.providerChecks?.steam?.rustSpecific === true
-        ? "high"
-        : "medium",
+      "critical",
       "steam_account_ban",
       String(account?.steamId64 || "Steam"),
       {
@@ -1341,16 +1339,13 @@ async function addSteamAccountBanFindings(
           account?.providerChecks || {},
         banConsensus:
           consensus,
-        confidence:
-          account?.providerChecks?.steam?.rustSpecific === true
-            ? "high"
-            : "medium",
+        confidence: "high",
         note:
           Number(account?.providerChecks?.serverArmour?.serverBanCount || 0) > 0
             ? "O Server Armour retornou ban(s) aplicado(s) por servidor(es). O motivo pode ser cheat, violação de regra ou outra infração; revise servidor, motivo e data antes de qualquer decisão."
             : consensus?.rustSpecific === true
               ? "A Steam trouxe evidência específica relacionada ao AppID do Rust. Revise os detalhes antes de qualquer decisão."
-              : "Há histórico de ban na Steam. Ban genérico/VAC/game ban não deve ser tratado automaticamente como ban de Rust.",
+              : "Há histórico de ban registrado para esta conta Steam detectada no computador. O Vorken trata a presença de conta banida na máquina como evidência crítica; o tipo exato do ban continua disponível para revisão.",
       }
     );
   }
