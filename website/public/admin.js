@@ -12,6 +12,18 @@ let currentIntegrationDecision = null;
 let selectedBanEvidenceIds = new Set();
 let dashboardPollTimer = null;
 let lastOpenReportProcessing = null;
+let lastAnalysesRefreshAt = 0;
+let dashboardPollInFlight = false;
+let activeReportController = null;
+let reportLoadSequence = 0;
+let lastReportCache = null;
+let currentReportPayload = null;
+
+function yieldToBrowser() {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => setTimeout(resolve, 0));
+  });
+}
 
 function requestGuerraFriaBanReason() {
   return new Promise((resolve) => {
@@ -469,7 +481,10 @@ async function openReportSafe(id, options = {}) {
       showTechnicalResult = false;
 
     reportCard.classList.remove("hidden");
+    reportCard.classList.add("report-is-loading");
+    reportCard.setAttribute("aria-busy", "true");
     document.getElementById("reportEmptyState")?.classList.add("hidden");
+    reportCard.scrollIntoView({ behavior: "auto", block: "start" });
 
     const banner = document.getElementById("analysisProcessingBanner");
     if (banner) {
@@ -477,8 +492,11 @@ async function openReportSafe(id, options = {}) {
       banner.className = "message";
     }
 
-    await openReport(id);
+    await openReport(id, options);
   } catch (error) {
+    if (error?.name === "AbortError")
+      return;
+
     console.error("Falha ao abrir relatório", error);
 
     reportCard.classList.remove("hidden");
@@ -490,6 +508,11 @@ async function openReportSafe(id, options = {}) {
         "Não foi possível abrir o relatório: " +
         (error?.message || "erro desconhecido");
       banner.className = "message error";
+    }
+  } finally {
+    if (String(currentReportId || "") === String(id || "")) {
+      reportCard.classList.remove("report-is-loading");
+      reportCard.removeAttribute("aria-busy");
     }
   }
 }
@@ -574,14 +597,20 @@ function updateAnalysisProcessingBanner(status) {
 }
 
 async function pollAdminProgress() {
-  if (dashboardView.classList.contains("hidden"))
+  if (
+    dashboardView.classList.contains("hidden") ||
+    dashboardPollInFlight
+  )
     return;
 
-  try {
-    await loadAnalyses();
+  dashboardPollInFlight = true;
 
-    if (!currentReportId)
+  try {
+    if (!currentReportId) {
+      if (Date.now() - lastAnalysesRefreshAt >= 15000)
+        await loadAnalyses();
       return;
+    }
 
     const status = await api(
       "/api/admin/analyses/" +
@@ -595,12 +624,25 @@ async function pollAdminProgress() {
       lastOpenReportProcessing === true &&
       status.processing === false
     ) {
-      await openReport(currentReportId);
+      await loadAnalyses();
+      await openReportSafe(currentReportId, {
+        force: true,
+        resetAiView: false,
+      });
+    } else if (
+      status.processing === true &&
+      Date.now() - lastAnalysesRefreshAt >= 12000
+    ) {
+      await loadAnalyses();
+    } else if (Date.now() - lastAnalysesRefreshAt >= 30000) {
+      await loadAnalyses();
     }
 
     lastOpenReportProcessing = status.processing === true;
   } catch (error) {
     console.debug("Polling do painel temporariamente indisponível", error);
+  } finally {
+    dashboardPollInFlight = false;
   }
 }
 
@@ -742,9 +784,14 @@ document.getElementById("ruleForm").addEventListener("submit", async (event) => 
 
 document.getElementById("refreshBtn").addEventListener("click", refreshAll);
 document.getElementById("closeReportBtn").addEventListener("click", () => {
+  activeReportController?.abort();
+  reportLoadSequence++;
   reportCard.classList.add("hidden");
+  reportCard.classList.remove("report-is-loading");
+  reportCard.removeAttribute("aria-busy");
   document.getElementById("reportEmptyState")?.classList.remove("hidden");
   currentReportId = null;
+  currentReportPayload = null;
   currentClientReportReleased = false;
   currentGuerraFriaLinked = false;
   currentIntegrationDecision = null;
@@ -834,7 +881,8 @@ async function queueGuerraFriaDecision(action) {
           )
     );
 
-    await openReport(currentReportId);
+    lastReportCache = null;
+    await openReportSafe(currentReportId, { force: true });
   } catch (error) {
     alert(
       "Não foi possível enviar a decisão: " +
@@ -914,7 +962,8 @@ document.getElementById("rebuildFindingsBtn").addEventListener("click", async ()
 
       if (!status.processing) {
         await loadAnalyses();
-        await openReport(analysisId);
+        lastReportCache = null;
+        await openReportSafe(analysisId, { force: true });
 
         if (status.reviewStatus === "error") {
           alert(
@@ -942,6 +991,7 @@ document.getElementById("rebuildFindingsBtn").addEventListener("click", async ()
 
 async function loadAnalyses() {
   const data = await api("/api/admin/analyses");
+  lastAnalysesRefreshAt = Date.now();
   analysesBody.innerHTML = "";
 
   if (!data.analyses.length) {
@@ -949,6 +999,8 @@ async function loadAnalyses() {
       '<tr><td colspan="6" class="muted">Nenhuma análise criada.</td></tr>';
     return;
   }
+
+  const rowsFragment = document.createDocumentFragment();
 
   for (const item of data.analyses) {
     const row = document.createElement("tr");
@@ -1011,6 +1063,10 @@ async function loadAnalyses() {
 
     row.dataset.sessionKind = sessionKind;
     row.dataset.analysisId = String(item.id);
+    row.classList.toggle(
+      "active-session",
+      String(currentReportId || "") === String(item.id)
+    );
     row.dataset.searchText = [
       item.id,
       item.label,
@@ -1041,8 +1097,10 @@ async function loadAnalyses() {
       <td><button class="button ghost open-report" data-id="${item.id}" type="button">Abrir</button></td>
     `;
 
-    analysesBody.appendChild(row);
+    rowsFragment.appendChild(row);
   }
+
+  analysesBody.appendChild(rowsFragment);
 
   document.querySelectorAll("#analysesBody tr[data-analysis-id]").forEach((row) => {
     const openRow = async () => {
@@ -1067,14 +1125,40 @@ async function loadAnalyses() {
   applySessionFilters();
 }
 
-async function openReport(id) {
+async function openReport(id, options = {}) {
   if (String(currentReportId || "") !== String(id || ""))
     selectedBanEvidenceIds.clear();
 
   currentReportId = id;
   document.querySelector('[data-report-filter="overview"]')?.click();
 
-  const data = await api("/api/admin/analyses/" + encodeURIComponent(id));
+  activeReportController?.abort();
+  activeReportController = new AbortController();
+  const loadSequence = ++reportLoadSequence;
+  const cacheFresh =
+    options.force !== true &&
+    lastReportCache &&
+    String(lastReportCache.id) === String(id) &&
+    Date.now() - lastReportCache.loadedAt < 60000;
+
+  const data = cacheFresh
+    ? lastReportCache.data
+    : await api(
+        "/api/admin/analyses/" + encodeURIComponent(id),
+        { signal: activeReportController.signal }
+      );
+
+  if (loadSequence !== reportLoadSequence)
+    return;
+
+  if (!cacheFresh) {
+    lastReportCache = {
+      id: String(id),
+      data,
+      loadedAt: Date.now(),
+    };
+  }
+
   const analysis = data.analysis || {};
   const report = data.report || null;
   const commonApps = safeArray(data.commonApps);
@@ -1100,6 +1184,7 @@ async function openReport(id) {
       ? projected
       : safeArray(rows).length;
   };
+  currentReportPayload = payload;
 
   // Abre o cartão antes de montar as seções pesadas. Assim um erro em uma
   // seção específica não faz o botão parecer que "não funciona".
@@ -1970,6 +2055,13 @@ async function openReport(id) {
     "Nenhum arquivo apagado passou pelos filtros de relevância do USN."
   );
 
+  // A parte decisiva do relatório já está pronta. Entrega esse primeiro
+  // quadro ao navegador antes de montar inventários extensos e colapsados.
+  reportCard.classList.remove("report-is-loading");
+  reportCard.removeAttribute("aria-busy");
+  await yieldToBrowser();
+  if (loadSequence !== reportLoadSequence) return;
+
   document.getElementById("advancedForensicsCountBadge").textContent =
     advancedForensicsCount;
 
@@ -2246,6 +2338,9 @@ async function openReport(id) {
 
   document.getElementById("advancedForensicsList").innerHTML =
     advancedHtml.join("");
+
+  await yieldToBrowser();
+  if (loadSequence !== reportLoadSequence) return;
 
   document.getElementById("artifactSummary").innerHTML = `
     <div class="kv"><span>Contas Steam detectadas</span><span>${arrays.steamAccounts.length}</span></div>
@@ -2918,6 +3013,9 @@ async function openReport(id) {
   const summaryPriorityCount = document.getElementById("summaryPriorityCount");
   if (summaryPriorityCount) summaryPriorityCount.textContent = priorityUnique.length;
 
+  await yieldToBrowser();
+  if (loadSequence !== reportLoadSequence) return;
+
   document.getElementById("priorityFilesList").innerHTML = priorityUnique.length
     ? priorityUnique.map((item) => {
         const sourceUrl = safeExternalUrl(item.url);
@@ -3202,6 +3300,9 @@ async function openReport(id) {
 
   timeline.sort((a, b) => new Date(b.time) - new Date(a.time));
 
+  await yieldToBrowser();
+  if (loadSequence !== reportLoadSequence) return;
+
   document.getElementById("forensicTimelineList").innerHTML = timeline.length
     ? timeline.slice(0, 300).map((item) => `
         <div class="finding">
@@ -3301,6 +3402,9 @@ async function openReport(id) {
       return new Date(b.lastWriteUtc || 0) - new Date(a.lastWriteUtc || 0);
     })
     .slice(0, 250);
+
+  await yieldToBrowser();
+  if (loadSequence !== reportLoadSequence) return;
 
   document.getElementById("candidateFilesList").innerHTML = reviewFiles.length
     ? reviewFiles.map((item) => `
@@ -3464,6 +3568,9 @@ async function openReport(id) {
     });
   }
 
+  await yieldToBrowser();
+  if (loadSequence !== reportLoadSequence) return;
+
   document.getElementById("integritySignalsList").innerHTML = integritySignals.length
     ? integritySignals.slice(0, 250).map((item) => `
         <div class="finding">
@@ -3578,6 +3685,9 @@ async function openReport(id) {
     });
   }
 
+  await yieldToBrowser();
+  if (loadSequence !== reportLoadSequence) return;
+
   document.getElementById("executionArtifactsList").innerHTML = execArtifacts.length
     ? execArtifacts.slice(0, 500).map((item) => `
         <div class="finding">
@@ -3592,10 +3702,11 @@ async function openReport(id) {
       `).join("")
     : '<div class="message">Nenhum artefato adicional de execução foi coletado.</div>';
 
-  document.getElementById("rawReport").textContent =
-    JSON.stringify(payload, null, 2);
+  const rawReport = document.getElementById("rawReport");
+  rawReport.textContent =
+    "Dados brutos disponíveis. Abra esta seção para preparar a visualização completa.";
+  rawReport.dataset.materialized = "false";
 
-  reportCard.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 async function loadRules() {
@@ -3721,7 +3832,6 @@ function setupVorkenAdminUi() {
             .filter(Boolean);
 
         let visible =
-          filter === "overview" ||
           groups.includes(filter);
 
         // Visões de severidade devem ser absolutas:
@@ -3755,8 +3865,9 @@ function setupVorkenAdminUi() {
   });
 
   document.getElementById("hashReportBtn")?.addEventListener("click", async () => {
-    const raw =
-      document.getElementById("rawReport")?.textContent || "";
+    const raw = currentReportPayload
+      ? JSON.stringify(currentReportPayload)
+      : "";
 
     if (!raw) {
       alert("Abra um relatório antes de gerar o hash.");
@@ -3785,6 +3896,28 @@ function setupVorkenAdminUi() {
     } catch {
       alert("SHA-256 do relatório:\n" + hash);
     }
+  });
+
+  const rawReport = document.getElementById("rawReport");
+  const rawReportSection = rawReport?.closest("details");
+  rawReportSection?.addEventListener("toggle", async () => {
+    if (
+      !rawReportSection.open ||
+      rawReport?.dataset.materialized === "true" ||
+      !currentReportPayload
+    ) {
+      return;
+    }
+
+    const payloadAtOpen = currentReportPayload;
+    rawReport.textContent = "Preparando dados brutos...";
+    await yieldToBrowser();
+
+    if (payloadAtOpen !== currentReportPayload)
+      return;
+
+    rawReport.textContent = JSON.stringify(payloadAtOpen, null, 2);
+    rawReport.dataset.materialized = "true";
   });
 
   switchAdminTab("sessions");

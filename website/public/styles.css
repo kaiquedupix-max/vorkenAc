@@ -1838,3 +1838,32 @@ pre.raw{max-height:420px;overflow:auto;background:#05080a;border:1px solid #1620
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
 }
+
+/* Reports can contain thousands of forensic records. Keep collapsed sections
+   out of layout/paint work and make the loading transition explicit. */
+.report-workspace.report-is-loading .report-category-grid,
+.report-workspace.report-is-loading .report-overview-grid,
+.report-workspace.report-is-loading .report-deep-sections {
+  opacity: .22;
+  pointer-events: none;
+  transition: opacity .15s ease;
+}
+.report-workspace.report-is-loading #analysisProcessingBanner {
+  display: block !important;
+  position: relative;
+  overflow: hidden;
+}
+.report-workspace.report-is-loading #analysisProcessingBanner::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(92,240,192,.09), transparent);
+  transform: translateX(-100%);
+  animation: report-loading-sweep 1.1s infinite;
+}
+@keyframes report-loading-sweep { to { transform: translateX(100%); } }
+.report-deep-sections .report-section:not([open]) {
+  content-visibility: auto;
+  contain: layout paint style;
+  contain-intrinsic-size: auto 54px;
+}

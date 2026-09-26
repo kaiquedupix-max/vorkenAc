@@ -1,4 +1,5 @@
 import express from "express";
+import compression from "compression";
 import cookieParser from "cookie-parser";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -585,6 +586,7 @@ const absoluteTrustedExecutableCatalog =
 const activeRebuilds = new Set();
 
 app.disable("x-powered-by");
+app.use(compression({ threshold: 1024 }));
 app.use(express.json({ limit: "64mb" }));
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
@@ -8686,6 +8688,12 @@ app.get("/api/admin/analyses", requireAdmin, async (_req, res) => {
               AND LOWER(COALESCE(sf.evidence::text,'')) NOT LIKE '%vorken%'
           ) AS high_findings
       FROM scan_findings sf
+      WHERE sf.analysis_id IN (
+        SELECT id
+        FROM analyses
+        ORDER BY id DESC
+        LIMIT 500
+      )
       GROUP BY sf.analysis_id
     ) f ON f.analysis_id = a.id
     ORDER BY a.id DESC
@@ -9187,7 +9195,18 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
   if (!analysis) return res.status(404).json({ error: "analysis_not_found" });
 
   const reportResult = await pool.query(
-    "SELECT payload, payload_raw, payload_encoding, created_at FROM scan_reports WHERE analysis_id = $1 ORDER BY id DESC LIMIT 1",
+    `SELECT
+       payload,
+       CASE
+         WHEN payload->>'storageFallback' = 'true' THEN payload_raw
+         ELSE NULL
+       END AS payload_raw,
+       payload_encoding,
+       created_at
+     FROM scan_reports
+     WHERE analysis_id = $1
+     ORDER BY id DESC
+     LIMIT 1`,
     [id]
   );
 
