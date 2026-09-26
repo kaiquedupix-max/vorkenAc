@@ -182,8 +182,8 @@ function knownCheatExecutableMatch(
   for (const candidate of candidates) {
     const normalized =
       String(candidate || "")
-        .replaceAll("/", "\")
-        .split("\")
+        .replaceAll("/", "\\")
+        .split("\\")
         .filter(Boolean)
         .at(-1)
         ?.replace(/[?#].*$/, "")
