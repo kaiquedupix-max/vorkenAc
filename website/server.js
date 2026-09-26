@@ -5012,7 +5012,7 @@ async function addBuiltInReviewFindings(analysisId, report) {
         ["file", "browser_download", "usn_delete", "recycle_bin"]
           .includes(artifactType);
 
-      const unexecutedExe =
+      const catalogExePriority =
         fileLikeArtifact &&
         isExeCandidate(
           artifactValue,
@@ -5023,7 +5023,10 @@ async function addBuiltInReviewFindings(analysisId, report) {
           evidence?.targetPath,
           evidence?.currentPath,
           evidence?.originalPath
-        ) &&
+        );
+
+      const unexecutedExe =
+        catalogExePriority &&
         !hasExecutionEvidence(
           artifactValue,
           values,
@@ -5035,7 +5038,11 @@ async function addBuiltInReviewFindings(analysisId, report) {
           evidence?.originalPath
         );
 
-      if (unexecutedExe && !directCatalogPriority) {
+      // Executável .exe que corresponde diretamente ao catálogo de cheat/app
+      // conhecido é sempre crítico, mesmo sem execução confirmada.
+      if (catalogExePriority) {
+        catalogSeverity = "critical";
+      } else if (unexecutedExe && !directCatalogPriority) {
         catalogSeverity = "info";
       }
 
@@ -5048,9 +5055,12 @@ async function addBuiltInReviewFindings(analysisId, report) {
         {
           ...evidence,
           catalogMatch: match,
-          priorityMaximum: directCatalogPriority,
+          priorityMaximum:
+            directCatalogPriority ||
+            catalogExePriority,
           protectedByTechnicalEngine:
             directCatalogPriority ||
+            catalogExePriority ||
             ["prefetch_execution", "process_history", "bam"].includes(artifactType),
           executionConfirmed:
             ["prefetch_execution", "process_history", "bam"].includes(artifactType),
@@ -5062,9 +5072,11 @@ async function addBuiltInReviewFindings(analysisId, report) {
                 ? "medium"
                 : "high",
           note:
-            unexecutedExe
-              ? "O arquivo corresponde ao catálogo, mas não há evidência de execução no PC. Mantido apenas como catálogo/inventário azul."
-              : artifactType === "browser_history" && (
+            catalogExePriority
+              ? "O arquivo .exe corresponde diretamente ao catálogo de cheat/app conhecido. Executáveis catalogados são classificados como críticos mesmo sem execução confirmada."
+              : unexecutedExe
+                ? "O arquivo corresponde ao catálogo, mas não há evidência de execução no PC. Mantido apenas como catálogo/inventário azul."
+                : artifactType === "browser_history" && (
               Boolean(String(evidence?.searchQuery || "").trim()) ||
               isSearchEngineUrl(evidence?.url)
             )
