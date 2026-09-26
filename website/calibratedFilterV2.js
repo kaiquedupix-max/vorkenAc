@@ -2001,7 +2001,8 @@ export async function runCalibratedFilterV2({
     }
   );
 
-  // 3. Web evidence. Browsing is context, not proof of cheat execution.
+  // 3. Web evidence. Direct navigation to a domain present in the cheat
+  // catalog is critical by policy. Search-engine queries remain review context.
   const directHosts = new Set();
   const searches = new Set();
   const contextualPages = new Set();
@@ -2013,11 +2014,18 @@ export async function runCalibratedFilterV2({
         helpers
       );
 
-    if (direct) {
+    const navigationUrl =
+      item?.url ||
+      item?.pageUrl ||
+      item?.siteUrl ||
+      "";
+
+    const searchEngineNavigation =
+      isSearchEngineUrl(navigationUrl);
+
+    if (direct && !searchEngineNavigation) {
       const url =
-        item?.url ||
-        item?.pageUrl ||
-        item?.siteUrl ||
+        navigationUrl ||
         item?.host ||
         "";
 
@@ -2042,8 +2050,8 @@ export async function runCalibratedFilterV2({
         await addFinding(
           insertFinding,
           analysisId,
-          "Site do catálogo de cheat acessado",
-          "medium",
+          "PRIORIDADE MÁXIMA: site do catálogo de cheat acessado diretamente",
+          "critical",
           "browser_catalog_visit_v2",
           url || key,
           {
@@ -2054,9 +2062,12 @@ export async function runCalibratedFilterV2({
               direct.matches,
             directCatalogMatch: true,
             knownCheatDomain: true,
-            confidence: "medium",
+            searchEngineNavigation: false,
+            priorityMaximum: true,
+            protectedByTechnicalEngine: true,
+            confidence: "high",
             note:
-              "Acesso direto a domínio do catálogo é contexto relevante, mas não prova execução de cheat/loader."
+              "O histórico registra navegação direta para um domínio presente no catálogo de cheat. Pesquisas em mecanismos de busca não entram nesta regra. A classificação crítica confirma o acesso ao domínio catalogado, não a execução de cheat/loader."
           }
         );
       }
