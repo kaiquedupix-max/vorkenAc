@@ -68,6 +68,140 @@ function validDateMs(value) {
   return Number.isFinite(ms) ? ms : 0;
 }
 
+function rustSessionWindow(report) {
+  const rustStarts = [];
+
+  for (const item of safeArray(report?.processes)) {
+    const name =
+      String(item?.name || item?.path || "")
+        .toLowerCase();
+
+    if (
+      name.includes("rustclient") ||
+      /(^|\\)rust(?:client)?(?:\.exe)?$/i
+        .test(name)
+    ) {
+      const ms =
+        validDateMs(item?.startTimeUtc);
+
+      if (ms)
+        rustStarts.push(ms);
+    }
+  }
+
+  for (const item of safeArray(report?.processCreationEvents)) {
+    const value =
+      String(
+        item?.processPath ||
+        item?.processName ||
+        ""
+      ).toLowerCase();
+
+    if (
+      value.includes("rustclient") ||
+      /(^|\\)rust(?:client)?\.exe$/i
+        .test(value)
+    ) {
+      const ms =
+        validDateMs(
+          item?.timestampUtc ||
+          item?.timeCreatedUtc ||
+          item?.createdAtUtc
+        );
+
+      if (ms)
+        rustStarts.push(ms);
+    }
+  }
+
+  if (rustStarts.length === 0) {
+    return {
+      known: false,
+      startMs: 0,
+      endMs:
+        validDateMs(report?.collectedAtUtc) ||
+        Date.now()
+    };
+  }
+
+  const startMs =
+    Math.max(...rustStarts);
+
+  const endMs =
+    validDateMs(report?.collectedAtUtc) ||
+    Date.now();
+
+  return {
+    known: true,
+    startMs,
+    endMs:
+      Math.max(endMs, startMs)
+  };
+}
+
+function executionTimestamp(source) {
+  const raw =
+    source?.raw || {};
+
+  return (
+    validDateMs(raw?.lastExecutionUtc) ||
+    validDateMs(raw?.lastRunUtc) ||
+    validDateMs(raw?.startTimeUtc) ||
+    validDateMs(raw?.timestampUtc) ||
+    validDateMs(raw?.timeCreatedUtc) ||
+    validDateMs(raw?.createdAtUtc)
+  );
+}
+
+function classifyExecutionScope(
+  execution,
+  session
+) {
+  const timestamps =
+    safeArray(execution?.sources)
+      .map(executionTimestamp)
+      .filter((ms) => ms > 0);
+
+  if (
+    !session?.known ||
+    timestamps.length === 0
+  ) {
+    return {
+      scope: "unknown",
+      inSession: false,
+      outOfSession: false,
+      timestamps
+    };
+  }
+
+  const toleranceBefore =
+    2 * 60 * 1000;
+
+  const inSession =
+    timestamps.some((ms) =>
+      ms >= session.startMs - toleranceBefore &&
+      ms <= session.endMs + 5 * 60 * 1000
+    );
+
+  return {
+    scope:
+      inSession
+        ? "in_session"
+        : "out_of_session",
+    inSession,
+    outOfSession: !inSession,
+    timestamps
+  };
+}
+
+function timestampIso(ms) {
+  try {
+    return new Date(ms).toISOString();
+  } catch {
+    return "";
+  }
+}
+
 function suspiciousUserPath(value) {
   const p = normalizePath(value);
   return (
@@ -603,6 +737,9 @@ export async function runCalibratedFilterV2({
   insertFinding,
   helpers
 }) {
+  const rustSession =
+    rustSessionWindow(report);
+
   const executionIndex =
     buildExecutionIndex(report);
 
@@ -681,6 +818,12 @@ export async function runCalibratedFilterV2({
     const executed =
       execution.executed === true;
 
+    const executionScope =
+      classifyExecutionScope(
+        execution,
+        rustSession
+      );
+
     const deletedOrMissing =
       deleted.length > 0 ||
       execution.missing === true;
@@ -726,12 +869,42 @@ export async function runCalibratedFilterV2({
     let title = "";
     let reason = "";
 
-    if (usb && executed) {
+    if (
+      usb &&
+      executed &&
+      executionScope.inSession
+    ) {
       severity = "critical";
       title =
-        "EXE não confiável executado em pendrive/USB";
+        "IN-SESSION: EXE não confiável executado em pendrive/USB";
       reason =
-        "Há evidência de execução em mídia removível correlacionada ao dispositivo USB.";
+        "A execução em mídia removível ocorreu durante a instância atual do Rust.";
+    } else if (
+      usb &&
+      executed
+    ) {
+      severity = "medium";
+      title =
+        "OUT-OF-SESSION: EXE executado em pendrive/USB";
+      reason =
+        "Há execução confirmada em mídia removível, mas ela não foi temporalmente associada à instância atual do Rust.";
+    } else if (
+      executed &&
+      deletedOrMissing &&
+      !genericInstaller &&
+      (
+        unsigned ||
+        strongInjection ||
+        catalogMatches.length > 0 ||
+        highRiskName
+      ) &&
+      executionScope.inSession
+    ) {
+      severity = "critical";
+      title =
+        "IN-SESSION: EXE executado e posteriormente apagado/ausente";
+      reason =
+        "A execução ocorreu durante a instância atual do Rust e o executável desapareceu depois, com sinal adicional de risco.";
     } else if (
       executed &&
       deletedOrMissing &&
@@ -743,29 +916,64 @@ export async function runCalibratedFilterV2({
         highRiskName
       )
     ) {
+      severity = "medium";
+      title =
+        "OUT-OF-SESSION: EXE executado e posteriormente apagado/ausente";
+      reason =
+        "Há execução e ausência posterior com sinal adicional de risco, porém fora da instância atual do Rust ou sem timestamp suficiente.";
+    } else if (
+      strongInjection &&
+      executed &&
+      executionScope.inSession
+    ) {
       severity = "critical";
       title =
-        "EXE executado e posteriormente apagado/ausente com sinal adicional de risco";
+        "IN-SESSION: executável com forte capacidade de injeção";
       reason =
-        "Há evidência de execução e ausência posterior, acompanhada de assinatura ausente, APIs fortes, catálogo de ameaça ou nome de alto risco.";
+        "O executável foi executado durante a instância atual do Rust e contém múltiplas APIs clássicas de injeção/manipulação de processo.";
     } else if (
       strongInjection &&
       executed
     ) {
+      severity = "medium";
+      title =
+        "OUT-OF-SESSION: executável com forte capacidade de injeção";
+      reason =
+        "O executável foi executado e contém múltiplas APIs clássicas de injeção, mas a execução não foi associada à instância atual do Rust.";
+    } else if (
+      catalogMatches.length > 0 &&
+      executed &&
+      executionScope.inSession
+    ) {
       severity = "critical";
       title =
-        "Executável executado com forte capacidade de injeção";
+        "IN-SESSION: executável do catálogo com execução confirmada";
       reason =
-        "O executável foi executado e contém múltiplas APIs clássicas de injeção/manipulação de processo.";
+        "O executável corresponde ao catálogo de ameaça e foi executado durante a instância atual do Rust.";
     } else if (
       catalogMatches.length > 0 &&
       executed
     ) {
+      severity = "medium";
+      title =
+        "OUT-OF-SESSION: executável do catálogo com execução confirmada";
+      reason =
+        "O executável corresponde ao catálogo e possui evidência de execução, mas não durante a instância atual do Rust.";
+    } else if (
+      inputSignal &&
+      executed &&
+      (
+        rustInputContext ||
+        usb ||
+        deletedOrMissing
+      ) &&
+      executionScope.inSession
+    ) {
       severity = "critical";
       title =
-        "Executável do catálogo com execução confirmada";
+        "IN-SESSION: automação de mouse/input em contexto de alto risco";
       reason =
-        "O executável corresponde ao catálogo de ameaça e possui evidência independente de execução.";
+        "mouse_event/SendInput foi executado durante a instância atual do Rust com contexto adicional de script/recoil, USB ou exclusão.";
     } else if (
       inputSignal &&
       executed &&
@@ -775,11 +983,11 @@ export async function runCalibratedFilterV2({
         deletedOrMissing
       )
     ) {
-      severity = "critical";
+      severity = "medium";
       title =
-        "Automação de mouse/input executada em contexto de alto risco";
+        "OUT-OF-SESSION: automação de mouse/input em contexto de risco";
       reason =
-        "O executável foi executado, usa mouse_event/SendInput e possui contexto adicional associado a script/recoil/Rust, USB ou exclusão posterior.";
+        "mouse_event/SendInput foi observado em executável executado, mas fora da instância atual do Rust ou sem timestamp suficiente.";
     } else if (
       strongInjection
     ) {
@@ -835,6 +1043,20 @@ export async function runCalibratedFilterV2({
         executionConfirmed: executed,
         executionSources:
           execution.sources,
+        executionScope:
+          executionScope.scope,
+        inRustSession:
+          executionScope.inSession,
+        outOfRustSession:
+          executionScope.outOfSession,
+        executionTimestampsUtc:
+          executionScope.timestamps.map(timestampIso),
+        rustSessionStartUtc:
+          rustSession.known
+            ? timestampIso(rustSession.startMs)
+            : "",
+        rustSessionEndUtc:
+          timestampIso(rustSession.endMs),
         deletedEvidence:
           deleted,
         deletedOrMissing,
@@ -1368,6 +1590,234 @@ export async function runCalibratedFilterV2({
           critical
             ? "A fonte consultada indica ban relacionado ao Rust ou ban aplicado por servidor. Revise motivo e data."
             : "Existe histórico genérico de ban na conta Steam. Mantido como contexto porque o PC pode ser compartilhado e o ban pode ser de outro jogo."
+      }
+    );
+  }
+
+  // 6. Echo-inspired environmental warnings / anti-forensics context.
+  const warningKeys = new Set();
+
+  const addWarning = async (
+    key,
+    title,
+    value,
+    evidence
+  ) => {
+    if (warningKeys.has(key))
+      return;
+    warningKeys.add(key);
+
+    await addFinding(
+      insertFinding,
+      analysisId,
+      title,
+      "medium",
+      "environment_warning_v3",
+      value,
+      {
+        ...evidence,
+        warningOnly: true,
+        confidence: "context"
+      }
+    );
+  };
+
+  for (const item of safeArray(report?.systemIntegrityExpansion)) {
+    const kind =
+      String(item?.kind || "")
+        .toLowerCase();
+    const name =
+      String(item?.name || "");
+    const detail =
+      String(item?.detail || "");
+    const combined =
+      (name + " " + detail)
+        .toLowerCase();
+
+    if (
+      kind === "service_state" &&
+      /pcasvc|diagtrack|eventlog|dps/.test(combined) &&
+      /start=4/.test(combined)
+    ) {
+      await addWarning(
+        "service_disabled:" + name.toLowerCase(),
+        "Warning: serviço forense/importante desativado",
+        name || detail,
+        {
+          ...item,
+          note:
+            "Serviço importante para rastreabilidade do Windows está desativado. Isso é incomum e exige contexto, mas não prova cheat."
+        }
+      );
+      continue;
+    }
+
+    if (
+      kind === "service_start_type_change" &&
+      /pcasvc|diagtrack|eventlog|dps/.test(combined)
+    ) {
+      await addWarning(
+        "service_change:" + combined.slice(0,120),
+        "Warning: tipo de inicialização de serviço importante foi alterado",
+        name || detail,
+        {
+          ...item,
+          note:
+            "O Service Control Manager registrou alteração recente em serviço relevante para telemetria/compatibilidade."
+        }
+      );
+      continue;
+    }
+
+    if (
+      kind === "prefetch_state" &&
+      /arquivos pf atuais:\s*0|não localizado/.test(combined)
+    ) {
+      await addWarning(
+        "prefetch_missing",
+        "Warning: Prefetch vazio ou indisponível",
+        detail || "Windows Prefetch",
+        {
+          ...item,
+          note:
+            "Prefetch vazio/desabilitado pode reduzir rastreabilidade. Mantido como warning, nunca como prova isolada."
+        }
+      );
+      continue;
+    }
+
+    if (
+      kind === "srum_state" &&
+      /não localizado/.test(combined)
+    ) {
+      await addWarning(
+        "srum_missing",
+        "Warning: SRUM não localizado",
+        detail || "SRUDB.dat",
+        {
+          ...item,
+          note:
+            "SRUDB.dat ausente é incomum e pode reduzir contexto forense; exige revisão apenas contextual."
+        }
+      );
+    }
+  }
+
+  for (const item of safeArray(report?.logClearSignals)) {
+    await addWarning(
+      "log_clear:" +
+        String(item?.channel || "") +
+        ":" +
+        String(item?.signal || ""),
+      "Warning: log do Windows limpo recentemente",
+      item?.signal ||
+      item?.channel ||
+      "Event Log",
+      {
+        ...item,
+        note:
+          "O Windows registrou limpeza recente de log. Isso pode ter motivo legítimo; é warning de anti-forensics, não prova de cheat."
+      }
+    );
+  }
+
+  if (
+    report?.systemArtifacts?.PrefetchDirectoryExists === false ||
+    report?.systemArtifacts?.EnablePrefetcher === 0
+  ) {
+    await addWarning(
+      "system_prefetch_disabled",
+      "Warning: Prefetch desabilitado/indisponível",
+      "Windows Prefetch",
+      {
+        ...report.systemArtifacts,
+        note:
+          "O mecanismo Prefetch está desabilitado ou indisponível, reduzindo a visibilidade histórica de execução."
+      }
+    );
+  }
+
+  if (
+    report?.systemArtifacts?.BamStart === 4
+  ) {
+    await addWarning(
+      "bam_disabled",
+      "Warning: BAM desabilitado",
+      "Background Activity Moderator",
+      {
+        ...report.systemArtifacts,
+        note:
+          "O BAM está configurado como desabilitado. Mantido como warning de integridade forense."
+      }
+    );
+  }
+
+  const explorer =
+    safeArray(report?.processes)
+      .filter((item) =>
+        String(item?.name || "")
+          .toLowerCase() === "explorer" ||
+        /(^|\\)explorer\.exe$/i
+          .test(String(item?.path || ""))
+      )
+      .map((item) => ({
+        item,
+        ms: validDateMs(item?.startTimeUtc)
+      }))
+      .filter((entry) => entry.ms > 0)
+      .sort((a,b) => b.ms-a.ms)[0];
+
+  if (
+    explorer &&
+    rustSession.known &&
+    explorer.ms > rustSession.startMs + 2 * 60 * 1000
+  ) {
+    await addWarning(
+      "explorer_restart_in_session",
+      "Warning: Explorer reiniciado durante a instância do Rust",
+      explorer.item?.path ||
+      "explorer.exe",
+      {
+        ...explorer.item,
+        inRustSession: true,
+        explorerStartUtc:
+          timestampIso(explorer.ms),
+        rustSessionStartUtc:
+          timestampIso(rustSession.startMs),
+        note:
+          "explorer.exe iniciou depois do Rust. Reinício recente do Explorer é contexto incomum porque pode alterar artefatos de execução; exige revisão."
+      }
+    );
+  }
+
+  const veraCryptPresent =
+    safeArray(report?.processes)
+      .some((item) =>
+        /veracrypt/i.test(
+          String(item?.name || "") +
+          " " +
+          String(item?.path || "")
+        )
+      ) ||
+    safeArray(report?.services)
+      .some((item) =>
+        /veracrypt/i.test(
+          String(item?.name || "") +
+          " " +
+          String(item?.displayName || "") +
+          " " +
+          String(item?.pathName || "")
+        )
+      );
+
+  if (veraCryptPresent) {
+    await addWarning(
+      "veracrypt_present",
+      "Warning: VeraCrypt detectado",
+      "VeraCrypt",
+      {
+        note:
+          "Volume criptografado/contêiner pode ocultar arquivos históricos. A presença do VeraCrypt é contexto apenas e não implica cheat."
       }
     );
   }
