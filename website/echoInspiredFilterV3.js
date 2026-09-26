@@ -39,30 +39,127 @@ function scanEndMs(report) {
 
 function detectRustSession(report) {
   const endMs = scanEndMs(report);
-  const currentStarts = [];
+  const currentRust =
+    safeArray(report?.processes)
+      .filter((process) =>
+        isRustProcess(
+          process?.path ||
+          process?.name
+        )
+      );
 
-  for (const process of safeArray(report?.processes)) {
-    if (
-      !isRustProcess(
-        process?.path ||
-        process?.name
+  const currentStarts =
+    currentRust
+      .map((process) =>
+        validMs(process?.startTimeUtc)
       )
-    ) {
-      continue;
-    }
-
-    const ms =
-      validMs(process?.startTimeUtc);
-
-    if (ms)
-      currentStarts.push(ms);
-  }
+      .filter(Boolean);
 
   if (currentStarts.length > 0) {
     return {
       active: true,
       source: "process_snapshot",
       startMs: Math.min(...currentStarts),
+      endMs
+    };
+  }
+
+  // Some protected game processes deny StartTime/MainModule access.
+  // If RustClient is visibly active, recover the session start from
+  // independent execution artifacts instead of declaring the session unknown.
+  if (currentRust.length > 0) {
+    const fallbackTimes = [];
+
+    for (const item of safeArray(
+      report?.processCreationEvents
+    )) {
+      if (
+        isRustProcess(
+          item?.processPath ||
+          item?.processName
+        )
+      ) {
+        const ms =
+          validMs(item?.timeCreatedUtc);
+
+        if (ms)
+          fallbackTimes.push({
+            ms,
+            source: "event_4688"
+          });
+      }
+    }
+
+    for (const item of safeArray(
+      report?.prefetchExecutions
+    )) {
+      if (
+        isRustProcess(
+          item?.resolvedExecutablePath ||
+          item?.nativeExecutablePath ||
+          item?.executableName
+        )
+      ) {
+        const times =
+          safeArray(item?.lastRunTimesUtc)
+            .length > 0
+            ? item.lastRunTimesUtc
+            : [item?.lastRunUtc];
+
+        for (const value of times) {
+          const ms = validMs(value);
+
+          if (ms && ms <= endMs) {
+            fallbackTimes.push({
+              ms,
+              source: "prefetch"
+            });
+          }
+        }
+      }
+    }
+
+    for (const item of safeArray(
+      report?.bam
+    )) {
+      if (
+        isRustProcess(item?.path)
+      ) {
+        const ms =
+          validMs(item?.lastExecutionUtc);
+
+        if (ms && ms <= endMs) {
+          fallbackTimes.push({
+            ms,
+            source: "bam"
+          });
+        }
+      }
+    }
+
+    if (fallbackTimes.length > 0) {
+      // For an active process, the newest coherent Rust launch evidence is the
+      // best approximation of the current game instance start.
+      fallbackTimes.sort(
+        (a, b) => b.ms - a.ms
+      );
+
+      return {
+        active: true,
+        source:
+          "active_process+" +
+          fallbackTimes[0].source,
+        startMs:
+          fallbackTimes[0].ms,
+        endMs
+      };
+    }
+
+    return {
+      active: true,
+      source:
+        "process_snapshot_no_start_time",
+      startMs: 0,
       endMs
     };
   }
@@ -213,6 +310,22 @@ function adjustExecutableSeverity(
   const technicalInsideRust =
     evidence?.injectionIntoRust === true ||
     evidence?.manualMapInRust === true;
+
+  const knownCheatExecutable =
+    evidence?.knownCheatExecutable === true;
+
+  if (knownCheatExecutable) {
+    return {
+      severity:
+        evidence?.executionConfirmed === true
+          ? "critical"
+          : nextSeverity,
+      title:
+        evidence?.executionConfirmed === true
+          ? "CHEAT CONHECIDO · " + nextTitle
+          : nextTitle,
+    };
+  }
 
   if (technicalInsideRust) {
     return {
@@ -952,15 +1065,48 @@ export async function runEchoInspiredFilterV3({
           "in_instance";
       }
 
+      let nextEvidence = {
+        ...evidence
+      };
+
       if (
         String(type || "") ===
           "correlated_executable_v2"
       ) {
+        const knownMatch =
+          helpers.knownCheatExecutableMatch?.(
+            value,
+            evidence
+          ) || {
+            matched: false
+          };
+
+        if (knownMatch.matched === true) {
+          nextEvidence = {
+            ...nextEvidence,
+            knownCheatExecutable: true,
+            knownCheatExecutableMatch: {
+              matchedBy:
+                knownMatch.matchedBy,
+              name:
+                knownMatch.entry?.name || "",
+              label:
+                knownMatch.entry?.label || "",
+              confidence:
+                knownMatch.entry?.confidence || "confirmed"
+            },
+            priorityMaximum:
+              evidence?.executionConfirmed === true,
+            protectedByTechnicalEngine:
+              evidence?.executionConfirmed === true
+          };
+        }
+
         const adjusted =
           adjustExecutableSeverity(
             title,
             severity,
-            evidence,
+            nextEvidence,
             sessionRelation
           );
 
@@ -978,7 +1124,7 @@ export async function runEchoInspiredFilterV3({
         type,
         value,
         {
-          ...evidence,
+          ...nextEvidence,
           baselineV2: true,
           baselineV3: true,
           classifierVersion:
