@@ -2562,6 +2562,25 @@ async function initDb() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS learned_trusted_artifacts (
+      id BIGSERIAL PRIMARY KEY,
+      signature TEXT NOT NULL UNIQUE,
+      signature_type TEXT NOT NULL,
+      file_name TEXT NOT NULL DEFAULT '',
+      sha256 TEXT NOT NULL DEFAULT '',
+      artifact_type TEXT NOT NULL DEFAULT '',
+      artifact_value TEXT NOT NULL DEFAULT '',
+      source_analysis_id BIGINT NULL REFERENCES analyses(id) ON DELETE SET NULL,
+      source_reason TEXT NOT NULL DEFAULT '',
+      learned_count INTEGER NOT NULL DEFAULT 1,
+      enabled BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_learned_trusted_artifacts_enabled
+      ON learned_trusted_artifacts(enabled, signature);
+
     ALTER TABLE analyses
       ADD COLUMN IF NOT EXISTS machine_fingerprint TEXT NULL;
 
@@ -3861,6 +3880,309 @@ async function removeVorkenFindings(analysisId) {
   );
 }
 
+
+const LEARNED_FILE_EXTENSIONS =
+  /\.(exe|zip|dll|sys|msi|com|scr|bat|cmd|ps1|rar|7z)$/i;
+
+let learnedTrustedArtifactCache = {
+  expiresAt: 0,
+  signatures: new Set(),
+};
+
+function learnedArtifactFileName(
+  artifactValue,
+  evidence = {}
+) {
+  const candidates = [
+    evidence?.fileName,
+    evidence?.recoveredFileName,
+    evidence?.executableName,
+    evidence?.name,
+    evidence?.targetPath,
+    evidence?.currentPath,
+    evidence?.originalPath,
+    evidence?.path,
+    evidence?.fullPath,
+    evidence?.executablePath,
+    evidence?.processPath,
+    artifactValue,
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    const raw =
+      String(candidate || "")
+        .trim();
+
+    if (!raw)
+      continue;
+
+    let decoded = raw;
+
+    try {
+      const parsed =
+        new URL(raw);
+
+      decoded =
+        decodeURIComponent(
+          parsed.pathname
+        );
+    } catch {
+    }
+
+    const clean =
+      decoded
+        .replaceAll("/", "\\")
+        .replace(/^["']+|["']+$/g, "")
+        .split("\\")
+        .filter(Boolean)
+        .at(-1) || "";
+
+    const match =
+      clean.match(
+        /([^\\/:*?"<>|]+\.(?:exe|zip|dll|sys|msi|com|scr|bat|cmd|ps1|rar|7z))\b/i
+      );
+
+    if (match?.[1])
+      return String(match[1]).toLowerCase();
+  }
+
+  return "";
+}
+
+function learnedArtifactSha256(
+  evidence = {}
+) {
+  const direct = [
+    evidence?.sha256,
+    evidence?.sha256Hash,
+    evidence?.fileSha256,
+    evidence?.hash,
+    evidence?.hashes?.sha256,
+    evidence?.fileHashes?.sha256,
+  ];
+
+  for (const value of direct) {
+    const normalized =
+      String(value || "")
+        .trim()
+        .toLowerCase();
+
+    if (/^[a-f0-9]{64}$/.test(normalized))
+      return normalized;
+  }
+
+  return "";
+}
+
+function learnedArtifactSignatures(
+  artifactType,
+  artifactValue,
+  evidence = {}
+) {
+  // Discord EXE/ZIP real permanece prioridade máxima e nunca é aprendido.
+  if (
+    isAllowedDiscordExecutableOrZipDownload(
+      evidence,
+      artifactValue
+    )
+  ) {
+    return [];
+  }
+
+  const fileName =
+    learnedArtifactFileName(
+      artifactValue,
+      evidence
+    );
+
+  if (
+    !fileName ||
+    !LEARNED_FILE_EXTENSIONS.test(fileName)
+  ) {
+    return [];
+  }
+
+  const sha256 =
+    learnedArtifactSha256(evidence);
+
+  const signatures = [];
+
+  if (sha256)
+    signatures.push("sha256:" + sha256);
+
+  signatures.push("name:" + fileName);
+
+  return [
+    ...new Set(signatures),
+  ];
+}
+
+async function getLearnedTrustedSignatures(
+  force = false
+) {
+  if (
+    !force &&
+    learnedTrustedArtifactCache.expiresAt >
+      Date.now()
+  ) {
+    return learnedTrustedArtifactCache.signatures;
+  }
+
+  const result =
+    await pool.query(
+      \`SELECT signature
+       FROM learned_trusted_artifacts
+       WHERE enabled=TRUE\`
+    );
+
+  const signatures =
+    new Set(
+      result.rows
+        .map((row) =>
+          String(row.signature || "")
+        )
+        .filter(Boolean)
+    );
+
+  learnedTrustedArtifactCache = {
+    expiresAt:
+      Date.now() + 30000,
+    signatures,
+  };
+
+  return signatures;
+}
+
+function invalidateLearnedTrustedArtifacts() {
+  learnedTrustedArtifactCache = {
+    expiresAt: 0,
+    signatures: new Set(),
+  };
+}
+
+async function isLearnedTrustedArtifact(
+  artifactType,
+  artifactValue,
+  evidence = {}
+) {
+  const candidates =
+    learnedArtifactSignatures(
+      artifactType,
+      artifactValue,
+      evidence
+    );
+
+  if (!candidates.length)
+    return false;
+
+  const trusted =
+    await getLearnedTrustedSignatures();
+
+  return candidates.some((signature) =>
+    trusted.has(signature)
+  );
+}
+
+async function learnReleasedAnalysisArtifacts(
+  analysisId,
+  reason
+) {
+  const result =
+    await pool.query(
+      \`SELECT
+         id,
+         severity,
+         artifact_type,
+         artifact_value,
+         evidence
+       FROM scan_findings
+       WHERE analysis_id=$1
+         AND severity IN ('critical','high','medium')
+       ORDER BY id ASC\`,
+      [analysisId]
+    );
+
+  let learned = 0;
+
+  for (const finding of result.rows) {
+    const evidence =
+      finding.evidence &&
+      typeof finding.evidence === "object"
+        ? finding.evidence
+        : {};
+
+    const signatures =
+      learnedArtifactSignatures(
+        finding.artifact_type,
+        finding.artifact_value,
+        evidence
+      );
+
+    if (!signatures.length)
+      continue;
+
+    const fileName =
+      learnedArtifactFileName(
+        finding.artifact_value,
+        evidence
+      );
+
+    const sha256 =
+      learnedArtifactSha256(evidence);
+
+    for (const signature of signatures) {
+      await pool.query(
+        \`INSERT INTO learned_trusted_artifacts(
+           signature,
+           signature_type,
+           file_name,
+           sha256,
+           artifact_type,
+           artifact_value,
+           source_analysis_id,
+           source_reason
+         )
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+         ON CONFLICT (signature)
+         DO UPDATE SET
+           enabled=TRUE,
+           learned_count=
+             learned_trusted_artifacts.learned_count + 1,
+           source_analysis_id=EXCLUDED.source_analysis_id,
+           source_reason=EXCLUDED.source_reason,
+           artifact_type=EXCLUDED.artifact_type,
+           artifact_value=EXCLUDED.artifact_value,
+           file_name=EXCLUDED.file_name,
+           sha256=CASE
+             WHEN EXCLUDED.sha256 <> ''
+               THEN EXCLUDED.sha256
+             ELSE learned_trusted_artifacts.sha256
+           END,
+           updated_at=NOW()\`,
+        [
+          signature,
+          signature.startsWith("sha256:")
+            ? "sha256"
+            : "file_name",
+          fileName,
+          sha256,
+          String(finding.artifact_type || ""),
+          String(finding.artifact_value || "").slice(0, 2000),
+          analysisId,
+          cleanText(reason, 500),
+        ]
+      );
+
+      learned++;
+    }
+  }
+
+  if (learned > 0)
+    invalidateLearnedTrustedArtifacts();
+
+  return learned;
+}
+
 async function rebuildFindings(analysisId, report) {
   await pool.query(
     `UPDATE analyses
@@ -3897,6 +4219,16 @@ async function rebuildFindings(analysisId, report) {
       }
       if (
         shouldSuppressDiscordWebFinding(
+          artifact.type,
+          artifact.value,
+          artifact.evidence || {}
+        )
+      ) {
+        continue;
+      }
+
+      if (
+        await isLearnedTrustedArtifact(
           artifact.type,
           artifact.value,
           artifact.evidence || {}
@@ -4006,6 +4338,16 @@ async function insertReviewFinding(
 
   if (
     shouldSuppressDiscordWebFinding(
+      artifactType,
+      normalizedValue,
+      evidence || {}
+    )
+  ) {
+    return;
+  }
+
+  if (
+    await isLearnedTrustedArtifact(
       artifactType,
       normalizedValue,
       evidence || {}
@@ -7496,11 +7838,33 @@ app.post(
       ]
     );
 
+    let learnedArtifacts = 0;
+
+    if (decision === "approve") {
+      try {
+        learnedArtifacts =
+          await learnReleasedAnalysisArtifacts(
+            id,
+            reason
+          );
+      } catch (learnError) {
+        console.error(
+          "Falha ao aprender falsos positivos da análise liberada:",
+          {
+            analysisId: id,
+            message: learnError?.message,
+            code: learnError?.code,
+          }
+        );
+      }
+    }
+
     res.json({
       ok: true,
       decision,
       result: body?.result || "Decisão confirmada.",
-      evidenceUrl: evidenceUrl || null
+      evidenceUrl: evidenceUrl || null,
+      learnedArtifacts
     });
   }
 );
