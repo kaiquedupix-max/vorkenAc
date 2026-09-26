@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync, gunzipSync } from "node:zlib";
 import pg from "pg";
+import { runCalibratedFilterV2 } from "./calibratedFilterV2.js";
 
 const { Pool } = pg;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -3941,7 +3942,12 @@ function capFindingSeverityForArtifact(severity, artifactType, artifactValue, ev
   // correlation context, but must never reach the critical/high bucket by
   // filename, deletion history, download origin or catalog match alone.
   // Strong module/memory evidence remains visible for human review as medium.
-  if (extension === ".dll" && ["high", "critical"].includes(normalized)) {
+  if (
+    extension === ".dll" &&
+    ["high", "critical"].includes(normalized) &&
+    evidence?.injectionIntoRust !== true &&
+    evidence?.manualMapInRust !== true
+  ) {
     return "medium";
   }
 
@@ -4522,111 +4528,30 @@ async function rebuildFindings(analysisId, report) {
 
   await pool.query("DELETE FROM scan_findings WHERE analysis_id = $1", [analysisId]);
 
-  const rulesResult = await pool.query(
-    `SELECT id, name, type, pattern, severity, description
-     FROM detection_rules
-     WHERE enabled = TRUE
-     ORDER BY id ASC`
-  );
+  // Baseline V2: legacy database rules and the previous built-in filter
+  // remain in the codebase only for rollback. They no longer participate in
+  // classification. The threat-site catalog and trusted-app catalog are
+  // explicitly passed to the calibrated engine.
+  await runCalibratedFilterV2({
+    analysisId,
+    report,
+    insertFinding: insertReviewFinding,
+    helpers: {
+      isAbsoluteTrustedCatalogArtifact,
+      isTrustedCommonAppArtifact,
+      isTrustedPortableExecutableName,
+      findRustCatalogMatches,
+      isDirectCatalogWebMatch,
+      isKnownBenignPeNoise,
+    },
+  });
 
-  const artifacts = flattenArtifacts(report);
-
-  for (const rule of rulesResult.rows) {
-    for (const artifact of artifacts) {
-      if (isVorkenOwnedArtifact(artifact.value, artifact.evidence)) continue;
-      if (!matchesRule(rule, artifact)) continue;
-      if (isKnownBenignPeNoise(artifact.value)) continue;
-      if (
-        isAbsoluteTrustedCatalogArtifact(
-          artifact.type,
-          artifact.value,
-          artifact.evidence || {}
-        )
-      ) {
-        continue;
-      }
-      if (
-        shouldSuppressDiscordWebFinding(
-          artifact.type,
-          artifact.value,
-          artifact.evidence || {}
-        )
-      ) {
-        continue;
-      }
-
-      if (
-        await isLearnedTrustedArtifact(
-          artifact.type,
-          artifact.value,
-          artifact.evidence || {}
-        )
-      ) {
-        continue;
-      }
-
-      const strongIndependentSignal =
-        artifact.evidence?.priorityMaximum === true ||
-        artifact.evidence?.protectedByTechnicalEngine === true ||
-        artifact.evidence?.usbExecution === true ||
-        artifact.evidence?.knownCheatDomain === true ||
-        artifact.evidence?.directCatalogMatch === true;
-
-      if (
-        !strongIndependentSignal &&
-        isTrustedCommonAppArtifact(
-          artifact.value,
-          artifact.evidence || {}
-        )
-      ) {
-        continue;
-      }
-
-
-      const severity = forceInformationalFinding(
-        artifact.type,
-        artifact.evidence,
-        rule.name
-      )
-        ? "info"
-        : capFindingSeverityForArtifact(
-            rule.severity,
-            artifact.type,
-            artifact.value,
-            artifact.evidence
-          );
-
-      await pool.query(
-        `INSERT INTO scan_findings(
-           analysis_id, rule_id, title, severity, artifact_type, artifact_value, evidence
-         )
-         VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb)`,
-        [
-          analysisId,
-          rule.id,
-          rule.name,
-          severity,
-          artifact.type,
-          artifact.value.slice(0, 2000),
-          JSON.stringify({
-            ...artifact.evidence,
-            ruleDescription: rule.description || "",
-          }),
-        ]
-      );
-    }
-  }
-
-  await addBuiltInReviewFindings(analysisId, report);
-  await addSteamAccountBanFindings(analysisId, report);
-  await downgradeUnexecutedExeFindings(analysisId, report);
-  await consolidateExecutableEvidence(analysisId);
   await removeVorkenFindings(analysisId);
 
   await pool.query(
     `UPDATE analyses
      SET processing_stage='finalizing',
-         processing_message='Filtros locais concluídos. Preparando o resultado final...'
+         processing_message='Baseline V2 concluída. Preparando o resultado final...'
      WHERE id=$1`,
     [analysisId]
   );
@@ -4710,6 +4635,7 @@ async function insertReviewFinding(
   }
 
   if (
+    evidence?.baselineV2 !== true &&
     !protectedFinding &&
     !strongUnsignedInjection &&
     await isLearnedTrustedArtifact(
