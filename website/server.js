@@ -4147,6 +4147,9 @@ function learnedArtifactSignatures(
   if (
     evidence?.usbExecution === true ||
     evidence?.deletedExecutedExecutable === true ||
+    evidence?.injectionCapability === true ||
+    evidence?.recoilInputApi === true ||
+    evidence?.correlatedEvidence === true ||
     evidence?.currentRemovable === true ||
     String(evidence?.driveType || "").toLowerCase() === "removable"
   ) {
@@ -4617,6 +4620,7 @@ async function rebuildFindings(analysisId, report) {
   await addBuiltInReviewFindings(analysisId, report);
   await addSteamAccountBanFindings(analysisId, report);
   await downgradeUnexecutedExeFindings(analysisId, report);
+  await consolidateExecutableEvidence(analysisId);
   await removeVorkenFindings(analysisId);
 
   await pool.query(
@@ -4882,6 +4886,273 @@ async function downgradeUnexecutedExeFindings(analysisId, report) {
            evidence = $2::jsonb
        WHERE id = $1`,
       [finding.id, JSON.stringify(updatedEvidence)]
+    );
+  }
+}
+
+
+function executableNameFromFinding(finding) {
+  const evidence =
+    finding?.evidence &&
+    typeof finding.evidence === "object"
+      ? finding.evidence
+      : {};
+
+  const candidates = [
+    evidence.fileName,
+    evidence.name,
+    evidence.executableName,
+    evidence.processName,
+    evidence.path,
+    evidence.fullPath,
+    evidence.targetPath,
+    evidence.currentPath,
+    evidence.originalPath,
+    evidence.recoveredFileName,
+    finding?.artifact_value,
+  ].filter(Boolean);
+
+  for (const raw of candidates) {
+    const name =
+      windowsBaseName(raw)
+        .replace(/[?#].*$/, "")
+        .trim();
+
+    if (/\.exe$/i.test(name))
+      return name;
+  }
+
+  return "";
+}
+
+async function consolidateExecutableEvidence(
+  analysisId
+) {
+  const result =
+    await pool.query(
+      `SELECT
+         id,
+         title,
+         severity,
+         artifact_type,
+         artifact_value,
+         evidence
+       FROM scan_findings
+       WHERE analysis_id=$1
+         AND severity IN ('critical','high','medium')
+       ORDER BY id ASC`,
+      [analysisId]
+    );
+
+  const groups = new Map();
+
+  for (const finding of result.rows) {
+    const executableName =
+      executableNameFromFinding(finding);
+
+    if (!executableName)
+      continue;
+
+    const key =
+      executableName.toLowerCase();
+
+    if (!groups.has(key))
+      groups.set(key, {
+        executableName,
+        findings: [],
+      });
+
+    groups.get(key).findings.push(finding);
+  }
+
+  for (const group of groups.values()) {
+    if (group.findings.length < 2)
+      continue;
+
+    let execution = false;
+    let deletedOrMissing = false;
+    let usb = false;
+    let injection = false;
+    let mouseInput = false;
+    let catalog = false;
+
+    const sourceTypes = new Set();
+
+    for (const finding of group.findings) {
+      const evidence =
+        finding.evidence &&
+        typeof finding.evidence === "object"
+          ? finding.evidence
+          : {};
+
+      sourceTypes.add(
+        String(finding.artifact_type || "")
+      );
+
+      execution =
+        execution ||
+        evidence.executionConfirmed === true ||
+        ["bam", "prefetch_execution", "process_history"]
+          .includes(String(finding.artifact_type || ""));
+
+      deletedOrMissing =
+        deletedOrMissing ||
+        evidence.deletedExecutedExecutable === true ||
+        evidence.deletedSuspiciousExecutable === true ||
+        evidence.fileExists === false ||
+        evidence.executablePresent === false ||
+        ["usn_delete", "recycle_bin"]
+          .includes(String(finding.artifact_type || ""));
+
+      usb =
+        usb ||
+        evidence.usbExecution === true ||
+        evidence.currentRemovable === true ||
+        evidence.correlatedUsbExecutionByName === true ||
+        String(evidence.driveType || "")
+          .toLowerCase() === "removable";
+
+      injection =
+        injection ||
+        evidence.injectionCapability === true ||
+        (
+          Array.isArray(evidence.injectionApis) &&
+          evidence.injectionApis.length >= 2
+        );
+
+      mouseInput =
+        mouseInput ||
+        evidence.recoilInputApi === true;
+
+      catalog =
+        catalog ||
+        evidence.knownCheatDomain === true ||
+        evidence.directCatalogMatch === true ||
+        Boolean(evidence.catalogMatch) ||
+        (
+          Array.isArray(evidence.catalogMatches) &&
+          evidence.catalogMatches.length > 0
+        );
+    }
+
+    const strong =
+      usb ||
+      injection ||
+      mouseInput ||
+      catalog ||
+      (
+        execution &&
+        deletedOrMissing
+      );
+
+    if (!strong)
+      continue;
+
+    let title =
+      "Evidência correlacionada: executável suspeito";
+
+    if (usb)
+      title =
+        "PRIORIDADE MÁXIMA: EXE executado em pendrive/USB";
+    else if (
+      injection &&
+      execution &&
+      deletedOrMissing
+    )
+      title =
+        "PRIORIDADE MÁXIMA: injector executado e depois apagado";
+    else if (injection)
+      title =
+        "PRIORIDADE MÁXIMA: executável com capacidade de injeção";
+    else if (
+      execution &&
+      deletedOrMissing
+    )
+      title =
+        "PRIORIDADE MÁXIMA: EXE executado e depois apagado/ausente";
+    else if (
+      catalog &&
+      execution
+    )
+      title =
+        "PRIORIDADE MÁXIMA: executável catalogado com execução confirmada";
+    else if (catalog)
+      title =
+        "PRIORIDADE MÁXIMA: executável correspondente ao catálogo";
+    else if (mouseInput)
+      title =
+        "PRIORIDADE MÁXIMA: automação de mouse/input em executável não confiável";
+
+    const sourceFindings =
+      group.findings
+        .slice(0, 16)
+        .map((finding) => ({
+          id: Number(finding.id),
+          title: finding.title,
+          severity: finding.severity,
+          artifactType:
+            finding.artifact_type,
+          artifactValue:
+            finding.artifact_value,
+        }));
+
+    const sourceIds =
+      group.findings
+        .map((finding) => Number(finding.id))
+        .filter(Number.isInteger);
+
+    await pool.query(
+      `DELETE FROM scan_findings
+       WHERE analysis_id=$1
+         AND id = ANY($2::bigint[])`,
+      [analysisId, sourceIds]
+    );
+
+    await pool.query(
+      `INSERT INTO scan_findings(
+         analysis_id,
+         rule_id,
+         title,
+         severity,
+         artifact_type,
+         artifact_value,
+         evidence
+       )
+       VALUES (
+         $1,
+         NULL,
+         $2,
+         'critical',
+         'correlated_executable',
+         $3,
+         $4::jsonb
+       )`,
+      [
+        analysisId,
+        title,
+        group.executableName,
+        JSON.stringify({
+          correlatedEvidence: true,
+          priorityMaximum: true,
+          protectedByTechnicalEngine: true,
+          executableName:
+            group.executableName,
+          executionConfirmed: execution,
+          deletedOrMissing,
+          usbExecution: usb,
+          injectionCapability: injection,
+          recoilInputApi: mouseInput,
+          catalogMatchPresent: catalog,
+          sourceCount:
+            sourceFindings.length,
+          sourceTypes:
+            [...sourceTypes],
+          sourceFindings,
+          confidence: "high",
+          note:
+            "O Vorken correlacionou múltiplas fontes forenses referentes ao mesmo executável. O cartão consolidado substitui alertas duplicados sem remover os detalhes das fontes da evidência auditável."
+        }),
+      ]
     );
   }
 }
