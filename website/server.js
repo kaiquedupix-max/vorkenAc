@@ -99,6 +99,146 @@ function loadRustThreatCatalog() {
 
 const rustThreatCatalog = loadRustThreatCatalog();
 
+const knownCheatExecutablesPath = path.join(
+  __dirname,
+  "data",
+  "known-cheat-executables.json"
+);
+
+function loadKnownCheatExecutables() {
+  try {
+    const payload = JSON.parse(
+      fs.readFileSync(
+        knownCheatExecutablesPath,
+        "utf8"
+      )
+    );
+
+    const entries = Array.isArray(payload?.executables)
+      ? payload.executables
+      : [];
+
+    return {
+      byName: new Map(
+        entries
+          .map((item) => [
+            String(item?.name || "")
+              .trim()
+              .toLowerCase(),
+            item
+          ])
+          .filter(([name]) => Boolean(name))
+      ),
+      bySha256: new Map(
+        entries.flatMap((item) =>
+          safeArray(item?.sha256)
+            .map((hash) => [
+              String(hash || "")
+                .trim()
+                .toLowerCase(),
+              item
+            ])
+            .filter(([hash]) =>
+              /^[a-f0-9]{64}$/.test(hash)
+            )
+        )
+      ),
+    };
+  } catch (error) {
+    console.error(
+      "Falha ao carregar catálogo de executáveis de cheat:",
+      error.message
+    );
+
+    return {
+      byName: new Map(),
+      bySha256: new Map(),
+    };
+  }
+}
+
+const knownCheatExecutables =
+  loadKnownCheatExecutables();
+
+function knownCheatExecutableMatch(
+  value,
+  evidence = {}
+) {
+  const candidates = [
+    value,
+    evidence?.name,
+    evidence?.fileName,
+    evidence?.executableName,
+    evidence?.path,
+    evidence?.fullPath,
+    evidence?.processPath,
+    evidence?.targetPath,
+    evidence?.currentPath,
+    evidence?.originalPath,
+    evidence?.nativeExecutablePath,
+    evidence?.resolvedExecutablePath,
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    const normalized =
+      String(candidate || "")
+        .replaceAll("/", "\")
+        .split("\")
+        .filter(Boolean)
+        .at(-1)
+        ?.replace(/[?#].*$/, "")
+        .toLowerCase() || "";
+
+    const direct =
+      knownCheatExecutables.byName.get(
+        normalized
+      );
+
+    if (direct) {
+      return {
+        matched: true,
+        matchedBy: "name",
+        entry: direct,
+      };
+    }
+  }
+
+  const hashCandidates = [
+    evidence?.sha256,
+    evidence?.sha256Hash,
+    evidence?.fileSha256,
+    evidence?.hashes?.sha256,
+    evidence?.fileHashes?.sha256,
+  ];
+
+  for (const hashValue of hashCandidates) {
+    const normalized =
+      String(hashValue || "")
+        .trim()
+        .toLowerCase();
+
+    const direct =
+      knownCheatExecutables.bySha256.get(
+        normalized
+      );
+
+    if (direct) {
+      return {
+        matched: true,
+        matchedBy: "sha256",
+        entry: direct,
+      };
+    }
+  }
+
+  return {
+    matched: false,
+    matchedBy: "",
+    entry: null,
+  };
+}
+
+
 const rustOsintCatalogPath = path.join(
   __dirname,
   "data",
@@ -4543,6 +4683,7 @@ async function rebuildFindings(analysisId, report) {
       findRustCatalogMatches,
       isDirectCatalogWebMatch,
       isKnownBenignPeNoise,
+      knownCheatExecutableMatch,
     },
   });
 
