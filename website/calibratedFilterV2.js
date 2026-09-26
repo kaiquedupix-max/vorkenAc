@@ -1,3 +1,8 @@
+import {
+  classifyExplicitCheatNameEvidence,
+  classifyUnknownExecutableEvidence,
+} from "./detectionPolicyV4.js";
+
 const STRONG_INJECTION_APIS = new Set([
   "virtualallocex",
   "writeprocessmemory",
@@ -1025,7 +1030,7 @@ export async function runCalibratedFilterV2({
           );
 
     const randomLoaderName =
-      randomLoaderScore >= 3;
+      randomLoaderScore >= 4;
 
     const packedOrHighEntropy =
       pe?.packedLike === true ||
@@ -1038,6 +1043,16 @@ export async function runCalibratedFilterV2({
 
     const inputSignal =
       mouseApis.length > 0;
+
+    const knownCheatExecutableMatch =
+      helpers.knownCheatExecutableMatch?.(
+        representative,
+        evidenceForTrust
+      ) || {
+        matched: false,
+        matchedBy: "",
+        entry: null
+      };
 
     const trustedVersionedOneDriveComponent =
       knownVersionedOneDriveComponent &&
@@ -1064,35 +1079,74 @@ export async function runCalibratedFilterV2({
     let title = "";
     let reason = "";
 
+    const explicitNameAssessment =
+      classifyExplicitCheatNameEvidence({
+        executed,
+        highRiskName,
+        genericInstaller,
+        inSession: executionScope.inSession,
+        usb,
+        deletedOrMissing,
+        packedOrHighEntropy,
+        strongInjection,
+      });
+
+    const unknownLoaderAssessment =
+      classifyUnknownExecutableEvidence({
+        executed,
+        genericInstaller,
+        randomLoaderScore,
+        suspiciousPath,
+        inSession: executionScope.inSession,
+        usb,
+        deletedOrMissing,
+        packedOrHighEntropy,
+        strongInjection,
+      });
+
     const explicitCheatExecutable =
-      executed &&
-      !genericInstaller &&
-      highRiskName;
+      explicitNameAssessment.critical;
 
     const behavioralUnknownLoader =
-      executed &&
-      !genericInstaller &&
-      randomLoaderName &&
-      (
-        usb ||
-        deletedOrMissing ||
-        suspiciousPath ||
-        packedOrHighEntropy ||
-        strongInjection
-      );
+      unknownLoaderAssessment.critical;
 
-    if (explicitCheatExecutable) {
+    if (
+      knownCheatExecutableMatch.matched === true &&
+      executed
+    ) {
+      severity = "critical";
+      title =
+        "PRIORIDADE MÁXIMA: executável confirmado no catálogo com execução";
+      reason =
+        "Nome exato ou SHA-256 corresponde ao catálogo confirmado de executáveis de cheat e há evidência histórica de execução. A sessão atual do Rust não é necessária para preservar esse fato.";
+    } else if (
+      knownCheatExecutableMatch.matched === true
+    ) {
+      severity = "medium";
+      title =
+        "Executável confirmado no catálogo sem execução comprovada";
+      reason =
+        "Nome exato ou SHA-256 corresponde ao catálogo confirmado, mas os artefatos disponíveis não comprovam execução. Mantido para revisão sem afirmar uso.";
+    } else if (explicitCheatExecutable) {
       severity = "critical";
       title =
         "PRIORIDADE MÁXIMA: executável com nome explícito de cheat executado";
       reason =
-        "O executável foi efetivamente executado e o próprio nome contém indicador explícito de cheat/injector/aimbot/wallhack/spoofer/no-recoil. Essa evidência não é rebaixada por estar fora da sessão atual do Rust.";
+        "O executável foi executado durante a instância do Rust, possui nome explicitamente associado a cheat/injetor e apresenta ao menos uma evidência técnica independente.";
     } else if (behavioralUnknownLoader) {
       severity = "critical";
       title =
         "PRIORIDADE MÁXIMA: possível loader desconhecido executado";
       reason =
-        "O executável possui nome fortemente randômico e foi efetivamente executado em contexto típico de loader (Downloads/Temp/Desktop, USB, ausência posterior, packer/alta entropia ou APIs fortes). A detecção é comportamental, não depende de catálogo e não é rebaixada por IN/OUT-OF-SESSION.";
+        "O executável possui nome fortemente randômico, execução confirmada e correlação técnica independente (mídia removível, exclusão, packer/entropia ou APIs fortes). Pasta gravável pelo usuário é apenas contexto e não eleva o item sozinha.";
+    } else if (
+      explicitNameAssessment.review
+    ) {
+      severity = "medium";
+      title =
+        "Executável com nome explícito de cheat/injetor executado";
+      reason =
+        "O nome é suspeito e há execução confirmada, mas não existe correspondência inequívoca com catálogo nem correlação técnica suficiente com a sessão do Rust. Mantido para revisão, sem veredito automático.";
     } else if (
       usb &&
       executed &&
@@ -1239,6 +1293,16 @@ export async function runCalibratedFilterV2({
         "mouse_event/SendInput foi encontrado em executável com evidência de execução, porém sem contexto adicional suficiente para tratá-lo como recoil de Rust.";
     } else if (
       executed &&
+      randomLoaderName &&
+      suspiciousPath
+    ) {
+      severity = "medium";
+      title =
+        "Executável de nome randômico executado em pasta gravável";
+      reason =
+        "O nome e o local justificam revisão, mas faltam evidências técnicas independentes para classificar o item como crítico.";
+    } else if (
+      executed &&
       deletedOrMissing
     ) {
       severity = "medium";
@@ -1296,6 +1360,21 @@ export async function runCalibratedFilterV2({
         recoilInputApi:
           inputSignal,
         catalogMatches,
+        knownCheatExecutable:
+          knownCheatExecutableMatch.matched === true,
+        knownCheatExecutableMatch:
+          knownCheatExecutableMatch.matched === true
+            ? {
+                matchedBy:
+                  knownCheatExecutableMatch.matchedBy,
+                name:
+                  knownCheatExecutableMatch.entry?.name || "",
+                label:
+                  knownCheatExecutableMatch.entry?.label || "",
+                confidence:
+                  knownCheatExecutableMatch.entry?.confidence || "confirmed"
+              }
+            : null,
         signed:
           pe?.signed,
         suspiciousPath,
@@ -1305,6 +1384,10 @@ export async function runCalibratedFilterV2({
         randomLoaderName,
         randomLoaderScore,
         behavioralUnknownLoader,
+        unknownLoaderCorroborators:
+          unknownLoaderAssessment.corroborators,
+        contextualSignals:
+          unknownLoaderAssessment.contextualSignals,
         packedOrHighEntropy,
         priorityMaximum:
           severity === "critical",
@@ -2003,7 +2086,7 @@ export async function runCalibratedFilterV2({
 
   // 3. Web evidence. Direct navigation to a domain present in the cheat
   // catalog is critical by policy. Search-engine queries remain review context.
-  const directHosts = new Set();
+  const directVisits = new Set();
   const searches = new Set();
   const contextualPages = new Set();
 
@@ -2036,16 +2119,15 @@ export async function runCalibratedFilterV2({
           .toLowerCase()
           .replace(/^www\./, "");
 
-      const key =
-        host ||
-        String(
-          direct?.direct?.name ||
-          direct?.direct?.matchedBy ||
-          url
-        ).toLowerCase();
+      const key = [
+        String(item?.browser || "").toLowerCase(),
+        String(item?.profile || "").toLowerCase(),
+        String(url || host || "").toLowerCase(),
+        String(item?.visitTimeUtc || "")
+      ].join("|");
 
-      if (!directHosts.has(key)) {
-        directHosts.add(key);
+      if (!directVisits.has(key)) {
+        directVisits.add(key);
 
         await addFinding(
           insertFinding,
@@ -2063,6 +2145,12 @@ export async function runCalibratedFilterV2({
             directCatalogMatch: true,
             knownCheatDomain: true,
             searchEngineNavigation: false,
+            historyClassification:
+              "catalog_direct_visit",
+            historyClassificationVersion:
+              "forensic-confidence-v4",
+            evidenceIntegrity:
+              "structured_browser_history",
             priorityMaximum: true,
             protectedByTechnicalEngine: true,
             confidence: "high",
@@ -2082,10 +2170,12 @@ export async function runCalibratedFilterV2({
         helpers
       )
     ) {
-      const query =
-        String(item.searchQuery)
-          .trim()
-          .toLowerCase();
+      const query = [
+        String(item.searchQuery).trim().toLowerCase(),
+        String(item?.browser || "").toLowerCase(),
+        String(item?.profile || "").toLowerCase(),
+        String(item?.visitTimeUtc || "")
+      ].join("|");
 
       if (!searches.has(query)) {
         searches.add(query);
@@ -2121,10 +2211,10 @@ export async function runCalibratedFilterV2({
       hasActionableRustCheatPageIntent(title) &&
       !isSearchEngineUrl(item?.url)
     ) {
-      const key =
-        hostOf(item?.url) ||
-        item?.url ||
-        title;
+      const key = [
+        hostOf(item?.url) || item?.url || title,
+        String(item?.visitTimeUtc || "")
+      ].join("|");
 
       if (!contextualPages.has(key)) {
         contextualPages.add(key);
@@ -2172,10 +2262,17 @@ export async function runCalibratedFilterV2({
     const host =
       hostOf(value);
 
-    if (!host || directHosts.has(host))
+    const recoveredKey = [
+      "recovered",
+      host,
+      value,
+      String(item?.recoveredAtUtc || item?.visitTimeUtc || "")
+    ].join("|").toLowerCase();
+
+    if (!host || directVisits.has(recoveredKey))
       continue;
 
-    directHosts.add(host);
+    directVisits.add(recoveredKey);
 
     await addFinding(
       insertFinding,
@@ -2192,6 +2289,12 @@ export async function runCalibratedFilterV2({
           direct.matches,
         directCatalogMatch: true,
         knownCheatDomain: true,
+        historyClassification:
+          "catalog_recovered_fragment",
+        historyClassificationVersion:
+          "forensic-confidence-v4",
+        evidenceIntegrity:
+          "recovered_sqlite_fragment",
         confidence: "context",
         note:
           "Fragmento recuperado aponta para domínio do catálogo. Como a origem é recuperação SQLite/WAL, é mantido apenas para revisão."

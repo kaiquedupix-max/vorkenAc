@@ -1400,7 +1400,7 @@ pre.raw{max-height:420px;overflow:auto;background:#05080a;border:1px solid #1620
 }
 .report-category-grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(112px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
   gap: 9px;
   margin: 4px 0 16px;
 }
@@ -1437,6 +1437,7 @@ pre.raw{max-height:420px;overflow:auto;background:#05080a;border:1px solid #1620
 }
 .report-category-card.danger strong { color: #ff596d; }
 .report-category-card.warning strong { color: #f6bd39; }
+.report-category-card.history strong { color: #d985ff; }
 .report-category-card.usb strong,
 .report-category-card.board strong,
 .report-category-card.inventory strong { color: #43aaff; }

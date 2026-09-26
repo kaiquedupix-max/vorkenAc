@@ -92,6 +92,14 @@ Context/inventory is not automatically a finding. High-severity findings require
 
 Rules and heuristic matches are evidence for human review, not automatic proof that a player cheated.
 
+### Confidence engine V4
+
+- Direct browser visits to an exact catalog domain/invite are critical and are shown in the dedicated **Histórico suspeito** view.
+- Search results and recovered SQLite/WAL fragments remain review evidence; merely mentioning a catalog domain does not become a direct visit.
+- Exact executable name/SHA-256 catalog matches with historical execution are critical even outside the current Rust session.
+- Unknown random-name executables need independent technical corroboration (for example deletion plus packing, removable media or strong injection APIs) before becoming critical.
+- A user-writable path, an unsigned file, a random-looking name or a suspicious word is never sufficient by itself for a critical verdict.
+
 ## Public-tool compatibility layer
 
 Vorken implements its own defensive equivalents of publicly documented screenshare/forensic capabilities such as saved-file origin, browser downloads/history, Prefetch, BAM, Amcache, USB, PowerShell, autoruns, USN/JournalTrace, ADS, WER/crashes, PE/packer inspection, integrity checks and network/DNS correlation.

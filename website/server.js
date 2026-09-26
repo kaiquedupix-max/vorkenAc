@@ -6,7 +6,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync, gunzipSync } from "node:zlib";
 import pg from "pg";
-import { runEchoInspiredFilterV3 } from "./echoInspiredFilterV3.js";
+import { runDetectionEngineV4 } from "./echoInspiredFilterV3.js";
+import {
+  catalogWebTargetMatch,
+} from "./detectionPolicyV4.js";
 
 const { Pool } = pg;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -2429,60 +2432,17 @@ function isKnownBenignWebHost(value) {
 }
 
 function isDirectCatalogWebMatch(match, evidence = {}) {
-  const candidates = [
-    evidence.url,
-    evidence.sourceUrl,
-    evidence.finalUrl,
-    evidence.pageUrl,
-    evidence.siteUrl,
-    evidence.referrerUrl,
-    evidence.recoveredUrl,
-    ...(Array.isArray(evidence.urlChain) ? evidence.urlChain : [])
-  ].filter(Boolean);
+  const artifactType = evidence?.recoveredUrl
+    ? "browser_recovery"
+    : evidence?.targetPath || evidence?.fileName
+      ? "browser_download"
+      : "browser_history";
 
-  const matchedBy =
-    String(match?.matchedBy || "")
-      .toLowerCase();
-
-  let needle = "";
-
-  if (matchedBy.startsWith("domain:")) {
-    needle = matchedBy.slice("domain:".length);
-  } else if (matchedBy.startsWith("discord:")) {
-    needle = matchedBy.slice("discord:".length);
-  } else if (matchedBy.startsWith("osint-domain:")) {
-    needle = matchedBy.slice("osint-domain:".length);
-  } else if (matchedBy.startsWith("osint-url:")) {
-    needle = matchedBy.slice("osint-url:".length);
-  } else {
-    return false;
-  }
-
-  return candidates.some((value) => {
-    if (
-      isSearchEngineUrl(value) ||
-      isKnownBenignWebHost(value)
-    ) {
-      return false;
-    }
-
-    const lower =
-      String(value || "")
-        .toLowerCase()
-        .replace(/^https?:\/\/(www\.)?/, "")
-        .replace(/\/+$/, "");
-
-    const normalizedNeedle =
-      String(needle || "")
-        .toLowerCase()
-        .replace(/^https?:\/\/(www\.)?/, "")
-        .replace(/\/+$/, "");
-
-    return (
-      normalizedNeedle &&
-      lower.includes(normalizedNeedle)
-    );
-  });
+  return catalogWebTargetMatch(
+    match,
+    evidence,
+    artifactType
+  ).direct;
 }
 
 function isKnownBenignPeNoise(value) {
@@ -4668,11 +4628,11 @@ async function rebuildFindings(analysisId, report) {
 
   await pool.query("DELETE FROM scan_findings WHERE analysis_id = $1", [analysisId]);
 
-  // Baseline V3 / Echo-inspired: legacy database rules and the previous built-in filter
+  // Confidence V4: legacy database rules and the previous built-in filter
   // remain in the codebase only for rollback. They no longer participate in
   // classification. The threat-site catalog and trusted-app catalog are
   // explicitly passed to the calibrated engine.
-  await runEchoInspiredFilterV3({
+  await runDetectionEngineV4({
     analysisId,
     report,
     insertFinding: insertReviewFinding,
@@ -4692,7 +4652,7 @@ async function rebuildFindings(analysisId, report) {
   await pool.query(
     `UPDATE analyses
      SET processing_stage='finalizing',
-         processing_message='Baseline V3 Echo-inspired concluída. Preparando o resultado final...'
+         processing_message='Motor de confiança V4 concluído. Preparando o resultado final...'
      WHERE id=$1`,
     [analysisId]
   );

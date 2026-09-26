@@ -2804,42 +2804,157 @@ async function openReport(id) {
       }).join("")
     : '<div class="message ok">Nenhum arquivo apagado/executado de alta prioridade foi identificado.</div>';
 
-  const historyRiskOrder = { high: 3, medium: 2, low: 1 };
-  const browserHistorySignals = [...arrays.browserHistorySignals]
+  const historyFindingTypes = new Set([
+    "browser_catalog_visit_v2",
+    "browser_search_v2",
+    "browser_context_v2",
+    "browser_recovery_v2",
+    "browser_history"
+  ]);
+
+  const historyFindings = findings.filter((finding) =>
+    historyFindingTypes.has(String(finding?.artifact_type || ""))
+  );
+
+  const historyFindingKey = (finding) => {
+    const evidence = finding?.evidence || {};
+    return [
+      String(evidence.browser || "").toLowerCase(),
+      String(evidence.profile || "").toLowerCase(),
+      String(
+        evidence.url ||
+        evidence.recoveredUrl ||
+        finding?.artifact_value ||
+        ""
+      ).toLowerCase(),
+      String(evidence.visitTimeUtc || evidence.recoveredAtUtc || "")
+    ].join("|");
+  };
+
+  const rawHistoryKey = (item) => [
+    String(item?.browser || "").toLowerCase(),
+    String(item?.profile || "").toLowerCase(),
+    String(item?.url || "").toLowerCase(),
+    String(item?.visitTimeUtc || "")
+  ].join("|");
+
+  const findingsByHistoryKey = new Map();
+  for (const finding of historyFindings) {
+    const key = historyFindingKey(finding);
+    if (!findingsByHistoryKey.has(key))
+      findingsByHistoryKey.set(key, []);
+    findingsByHistoryKey.get(key).push(finding);
+  }
+
+  const usedHistoryFindingIds = new Set();
+  const severityRank = {
+    critical: 4,
+    high: 3,
+    medium: 2,
+    low: 1,
+    info: 0
+  };
+
+  const browserHistorySignals = arrays.browserHistorySignals
+    .map((item) => {
+      const matchedFindings = findingsByHistoryKey.get(rawHistoryKey(item)) || [];
+      const finding = matchedFindings
+        .sort((a, b) =>
+          (severityRank[b?.severity] || 0) -
+          (severityRank[a?.severity] || 0)
+        )[0] || null;
+
+      if (finding?.id)
+        usedHistoryFindingIds.add(String(finding.id));
+
+      return {
+        ...item,
+        finding,
+        resolvedSeverity:
+          finding?.severity ||
+          (String(item?.riskLevel || "").toLowerCase() === "high"
+            ? "high"
+            : "medium")
+      };
+    })
     .filter((item) =>
+      item.finding ||
       ["high", "medium"].includes(
         String(item.riskLevel || "").toLowerCase()
-      ))
-    .sort((a, b) =>
-      (historyRiskOrder[String(b.riskLevel || "").toLowerCase()] || 0) -
-      (historyRiskOrder[String(a.riskLevel || "").toLowerCase()] || 0) ||
-      new Date(b.visitTimeUtc || 0) - new Date(a.visitTimeUtc || 0))
-    .slice(0, 300);
+      )
+    );
+
+  for (const finding of historyFindings) {
+    if (usedHistoryFindingIds.has(String(finding.id)))
+      continue;
+
+    const evidence = finding.evidence || {};
+    browserHistorySignals.push({
+      ...evidence,
+      url:
+        evidence.url ||
+        evidence.recoveredUrl ||
+        finding.artifact_value ||
+        "",
+      finding,
+      resolvedSeverity: finding.severity || "medium",
+      reason: evidence.note || finding.title || "Ocorrência preservada pelo filtro técnico"
+    });
+  }
+
+  browserHistorySignals.sort((a, b) =>
+    (severityRank[b.resolvedSeverity] || 0) -
+    (severityRank[a.resolvedSeverity] || 0) ||
+    new Date(b.visitTimeUtc || b.recoveredAtUtc || 0) -
+    new Date(a.visitTimeUtc || a.recoveredAtUtc || 0)
+  );
+
+  browserHistorySignals.splice(500);
 
   document.getElementById("historyCountBadge").textContent = browserHistorySignals.length;
+  document.getElementById("filterHistoryCount")?.replaceChildren(
+    String(browserHistorySignals.length)
+  );
 
   document.getElementById("browserHistorySignalsList").innerHTML = browserHistorySignals.length
     ? browserHistorySignals.map((item) => {
-        const risk = String(item.riskLevel || "low").toLowerCase();
+        const severity = String(item.resolvedSeverity || "medium").toLowerCase();
         const safeUrl = safeExternalUrl(item.url);
-        const label = item.searchQuery ? "PESQUISA" : "SITE / PÁGINA";
+        const catalogMatch =
+          item.finding?.evidence?.catalogMatch ||
+          item.catalogMatch ||
+          null;
+        const label = severity === "critical"
+          ? "CRÍTICO · CATÁLOGO"
+          : item.searchQuery
+            ? "REVISAR · PESQUISA"
+            : item.finding?.artifact_type === "browser_recovery_v2"
+              ? "REVISAR · RECUPERADO"
+              : "REVISAR · SITE/PÁGINA";
+        const tagClass = severity === "critical"
+          ? "critical"
+          : severity === "high"
+            ? "high"
+            : "medium";
         return `
-          <div class="finding">
+          <div class="finding severity-card ${escapeHtml(severity)}">
             <div class="finding-head">
               <h4>${escapeHtml(item.searchQuery || item.host || item.title || "Histórico do navegador")}</h4>
-              <span class="tag ${escapeHtml(risk === "high" ? "high" : risk === "medium" ? "medium" : "info")}">${label}</span>
+              <span class="tag ${escapeHtml(tagClass)}">${escapeHtml(label)}</span>
             </div>
             <div class="kv"><span>Navegador</span><span>${escapeHtml((item.browser || "—") + " · " + (item.profile || "perfil"))}</span></div>
-            <div class="kv"><span>Visitado em</span><span>${escapeHtml(formatDate(item.visitTimeUtc))}</span></div>
+            <div class="kv"><span>Visitado em</span><span>${escapeHtml(formatDate(item.visitTimeUtc || item.recoveredAtUtc))}</span></div>
             <div class="kv"><span>Título</span><span>${escapeHtml(item.title || "—")}</span></div>
             ${item.searchQuery ? `<div class="kv"><span>Pesquisa</span><span>${escapeHtml(item.searchQuery)}</span></div>` : ""}
+            ${catalogMatch ? `<div class="kv"><span>Catálogo confirmado</span><span>${escapeHtml(catalogMatch.name || "Indicador catalogado")}</span></div>` : ""}
+            ${catalogMatch?.matchedBy ? `<div class="kv"><span>Indicador exato</span><span>${escapeHtml(catalogMatch.matchedBy)}</span></div>` : ""}
             <div class="kv"><span>Termos encontrados</span><span>${escapeHtml((item.matchedTerms || []).join(", ") || "—")}</span></div>
-            <div class="kv"><span>Motivo</span><span>${escapeHtml(item.reason || "—")}</span></div>
+            <div class="kv"><span>Motivo</span><span>${escapeHtml(item.finding?.evidence?.note || item.reason || "—")}</span></div>
             ${safeUrl ? `<div class="kv"><span>URL</span><span><a href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.url)}</a></span></div>` : `<code>${escapeHtml(item.url || "—")}</code>`}
           </div>
         `;
       }).join("")
-    : '<div class="message ok">Nenhuma pesquisa/site com os termos anti-cheat configurados foi preservado no histórico.</div>';
+    : '<div class="message ok">Nenhuma ocorrência suspeita foi preservada no histórico.</div>';
   const missingDownloads = [...arrays.browserDownloads]
     .filter((item) => item.fileMissing === true)
     .sort((a, b) =>

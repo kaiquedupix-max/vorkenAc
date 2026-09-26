@@ -1,6 +1,6 @@
 import { runCalibratedFilterV2 } from "./calibratedFilterV2.js";
 
-const V3_VERSION = "echo-inspired-v3";
+const V4_VERSION = "forensic-confidence-v4";
 
 function safeArray(value) {
   return Array.isArray(value) ? value : [];
@@ -315,14 +315,13 @@ function adjustExecutableSeverity(
     evidence?.knownCheatExecutable === true;
 
   const explicitCheatExecutable =
-    evidence?.executionConfirmed === true &&
-    evidence?.highRiskName === true;
+    evidence?.explicitCheatExecutable === true;
 
   const behavioralUnknownLoader =
     evidence?.behavioralUnknownLoader === true &&
     evidence?.executionConfirmed === true &&
     evidence?.randomLoaderName === true &&
-    Number(evidence?.randomLoaderScore || 0) >= 3;
+    Number(evidence?.randomLoaderScore || 0) >= 4;
 
   const protectedExecutedThreat =
     evidence?.executionConfirmed === true &&
@@ -412,7 +411,8 @@ async function addFinding(
     {
       baselineV2: true,
       baselineV3: true,
-      classifierVersion: V3_VERSION,
+      baselineV4: true,
+      classifierVersion: V4_VERSION,
       ...evidence
     }
   );
@@ -1052,7 +1052,7 @@ async function addEnvironmentWarnings({
   }
 }
 
-export async function runEchoInspiredFilterV3({
+export async function runDetectionEngineV4({
   analysisId,
   report,
   insertFinding,
@@ -1151,8 +1151,9 @@ export async function runEchoInspiredFilterV3({
           ...nextEvidence,
           baselineV2: true,
           baselineV3: true,
+          baselineV4: true,
           classifierVersion:
-            V3_VERSION,
+            V4_VERSION,
           sessionRelation,
           rustSession: {
             resolved:

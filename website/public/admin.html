@@ -131,6 +131,9 @@
               <button class="report-category-card warning" data-report-filter="medium">
                 <span>LARANJA · REVISAR</span><strong id="filterMediumCount">0</strong>
               </button>
+              <button class="report-category-card history" data-report-filter="history">
+                <span>HISTÓRICO SUSPEITO</span><strong id="filterHistoryCount">0</strong>
+              </button>
               <button class="report-category-card usb" data-report-filter="usb">
                 <span>PENDRIVES / USB</span><strong id="filterUsbCount">0</strong>
               </button>
@@ -178,9 +181,9 @@
                   <div id="mediumFindingsList"></div>
                 </details>
 
-                <details id="timelineSection" class="report-section history-section" data-report-group="critical medium" open>
+                <details id="timelineSection" class="report-section history-section" data-report-group="history" open>
                   <summary>
-                    <span>Eventos correlacionados</span>
+                    <span>Histórico suspeito</span>
                     <span id="historyCountBadge" class="summary-badge danger">0</span>
                   </summary>
                   <div id="browserHistorySignalsList"></div>

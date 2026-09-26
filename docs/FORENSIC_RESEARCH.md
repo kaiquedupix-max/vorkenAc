@@ -122,6 +122,16 @@ Examples:
 
 Vorken should surface evidence, provenance and correlation so a human administrator can review the result.
 
+## Confidence policy V4
+
+The classifier separates three concepts that older filters mixed together:
+
+- **observation**: a fact collected from one source;
+- **corroboration**: independent sources or technical properties supporting the same event;
+- **catalog confirmation**: an exact domain, invite, executable name or cryptographic hash maintained in a versioned catalog.
+
+Critical classification is reserved for exact catalog evidence with the required provenance, confirmed in-session injection/manual-map, or a behavioral executable detection supported by independent technical signals. Search queries, path names, unsigned status and recovered text fragments remain review context unless stronger evidence is present.
+
 
 ## Additional research supplied for Vorken
 
