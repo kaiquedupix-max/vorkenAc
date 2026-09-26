@@ -319,6 +319,7 @@ function adjustExecutableSeverity(
     evidence?.highRiskName === true;
 
   const behavioralUnknownLoader =
+    evidence?.behavioralUnknownLoader === true &&
     evidence?.executionConfirmed === true &&
     evidence?.randomLoaderName === true &&
     Number(evidence?.randomLoaderScore || 0) >= 3;
