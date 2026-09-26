@@ -1811,6 +1811,23 @@ async function openReport(id) {
             ? '<div class="kv"><span>Motor local</span><span>Evidência técnica protegida</span></div>'
             : '<div class="kv"><span>Motor local</span><span>Classificado pelos filtros Vorken</span></div>';
 
+      const browserAccessBlock =
+        String(finding.artifact_type || "") === "browser_history"
+          ? (
+              '<div class="kv"><span>Data do acesso</span><span>' +
+                escapeHtml(formatDate(evidence.visitTimeUtc || evidence.recoveredAtUtc)) +
+              '</span></div>' +
+              '<div class="kv"><span>Navegador</span><span>' +
+                escapeHtml(
+                  evidence.browser
+                    ? String(evidence.browser) +
+                      (evidence.profile ? " · " + String(evidence.profile) : "")
+                    : "—"
+                ) +
+              '</span></div>'
+            )
+          : "";
+
       const selectable =
         currentGuerraFriaLinked &&
         ["critical", "high", "medium"].includes(displaySeverity) &&
@@ -1824,6 +1841,7 @@ async function openReport(id) {
         ${selectionBlock}
         ${catalogName}
         ${reviewBlock}
+        ${browserAccessBlock}
         ${evidence.note ? '<div class="kv"><span>Motivo</span><span>' + escapeHtml(evidence.note) + '</span></div>' : ""}
         ${Object.keys(evidence).length ? '<div class="kv"><span>Evidência</span><span>Resumo técnico carregado. A evidência bruta permanece preservada no relatório original.</span></div>' : ""}
       `;
