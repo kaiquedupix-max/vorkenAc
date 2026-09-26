@@ -4027,6 +4027,7 @@ function learnedArtifactSignatures(
   // pelo auto-aprendizado, mesmo após liberação manual.
   if (
     evidence?.usbExecution === true ||
+    evidence?.deletedExecutedExecutable === true ||
     evidence?.currentRemovable === true ||
     String(evidence?.driveType || "").toLowerCase() === "removable"
   ) {
@@ -5360,6 +5361,48 @@ async function addBuiltInReviewFindings(analysisId, report) {
           }
         );
       }
+      continue;
+    }
+
+    const trustedDeletedExe =
+      extension === ".exe" &&
+      (
+        isAbsoluteTrustedCatalogArtifact(
+          "usn_delete",
+          name || item.originalPath || item.path || "",
+          item
+        ) ||
+        isTrustedCommonAppArtifact(
+          name || item.originalPath || item.path || "",
+          item
+        )
+      );
+
+    if (
+      extension === ".exe" &&
+      executed &&
+      !trustedDeletedExe
+    ) {
+      await insertReviewFinding(
+        analysisId,
+        "PRIORIDADE MÁXIMA: EXE executado e depois apagado",
+        "critical",
+        "usn_delete",
+        name || item.originalPath || item.path || item.volume || "EXE apagado",
+        {
+          ...item,
+          catalogMatches,
+          priorityMaximum: true,
+          protectedByTechnicalEngine: true,
+          deletedSuspiciousExecutable: true,
+          deletedExecutedExecutable: true,
+          executionConfirmed: true,
+          confidence: "high",
+          note:
+            "O Windows possui evidência independente de execução e o USN confirma que o arquivo .exe foi apagado. Como o executável não pertence ao catálogo confiável, o Vorken classifica o achado como crítico."
+        }
+      );
+
       continue;
     }
 
@@ -7045,17 +7088,45 @@ async function addBuiltInReviewFindings(analysisId, report) {
     if (!matches.length)
       continue;
 
+    const trustedDeletedExe =
+      ext === ".exe" &&
+      (
+        isAbsoluteTrustedCatalogArtifact(
+          "recycle_bin",
+          deleted.originalPath || deleted.fileName || "",
+          deleted
+        ) ||
+        isTrustedCommonAppArtifact(
+          deleted.originalPath || deleted.fileName || "",
+          deleted
+        )
+      );
+
     await insertReviewFinding(
       analysisId,
-      "Executável executado e depois enviado para a Lixeira",
-      "high",
+      ext === ".exe" && !trustedDeletedExe
+        ? "PRIORIDADE MÁXIMA: EXE executado e depois apagado"
+        : "Executável executado e depois enviado para a Lixeira",
+      ext === ".exe" && !trustedDeletedExe
+        ? "critical"
+        : "high",
       "recycle_bin",
       deleted.originalPath || deleted.fileName || "Lixeira",
       {
         ...deleted,
+        priorityMaximum:
+          ext === ".exe" && !trustedDeletedExe,
+        protectedByTechnicalEngine:
+          ext === ".exe" && !trustedDeletedExe,
+        deletedExecutedExecutable:
+          ext === ".exe" && !trustedDeletedExe,
+        executionConfirmed: true,
         confidence: "high",
         executionEvidence: matches,
-        note: "A Lixeira preserva o caminho original e horário de exclusão; o mesmo nome possui evidência separada de execução.",
+        note:
+          ext === ".exe" && !trustedDeletedExe
+            ? "A Lixeira confirma a exclusão do .exe e existe evidência independente de execução. Como o arquivo não pertence ao catálogo confiável, o Vorken classifica o achado como crítico."
+            : "A Lixeira preserva o caminho original e horário de exclusão; o mesmo nome possui evidência separada de execução.",
       }
     );
   }
