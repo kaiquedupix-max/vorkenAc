@@ -624,7 +624,11 @@ FIM DOS TERMOS
                 lastContentPosition.Y <=
                     termsBox.ClientSize.Height + termsBox.Font.Height;
 
+            bool nativeScrollAtBottom =
+                IsRichTextBoxScrolledToBottom(termsBox);
+
             bool reachedBottom =
+                nativeScrollAtBottom ||
                 visibleEndCharacter >= lastContentCharacter ||
                 lastVisibleLine >= lastContentLine ||
                 finalCharacterVisible;
@@ -632,7 +636,7 @@ FIM DOS TERMOS
             int percent = reachedBottom
                 ? 100
                 : Math.Clamp(
-                    (int)Math.Round(
+                    (int)Math.Floor(
                         Math.Max(0, visibleEndCharacter) * 100d /
                         Math.Max(1, lastContentCharacter)),
                     0,
@@ -2883,6 +2887,50 @@ FIM DOS TERMOS
         ReleaseCapture();
         SendMessage(Handle, 0xA1, 0x2, 0);
     }
+
+    private const int SbVert = 1;
+    private const uint SifRange = 0x0001;
+    private const uint SifPage = 0x0002;
+    private const uint SifPos = 0x0004;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ScrollInfo
+    {
+        public uint cbSize;
+        public uint fMask;
+        public int nMin;
+        public int nMax;
+        public uint nPage;
+        public int nPos;
+        public int nTrackPos;
+    }
+
+    private static bool IsRichTextBoxScrolledToBottom(RichTextBox box)
+    {
+        if (!box.IsHandleCreated)
+            return false;
+
+        var info = new ScrollInfo
+        {
+            cbSize = (uint)Marshal.SizeOf<ScrollInfo>(),
+            fMask = SifRange | SifPage | SifPos
+        };
+
+        if (!GetScrollInfo(box.Handle, SbVert, ref info))
+            return false;
+
+        int page = Math.Max(1, (int)info.nPage);
+        int bottom = Math.Max(info.nMin, info.nMax - page + 1);
+
+        // Small tolerance accounts for Win32 scrollbar rounding at high DPI.
+        return info.nPos >= bottom - 1;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool GetScrollInfo(
+        IntPtr hwnd,
+        int nBar,
+        ref ScrollInfo lpsi);
 
     [DllImport("user32.dll")]
     private static extern bool ReleaseCapture();
