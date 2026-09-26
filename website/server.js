@@ -5724,7 +5724,7 @@ async function addBuiltInReviewFindings(analysisId, report) {
         ? item.suspiciousApis
         : [])
         .filter((api) =>
-          ["mouse_event", "SendInput", "SetCursorPos", "GetAsyncKeyState"]
+          ["mouse_event", "SendInput"]
             .some((needle) =>
               String(api || "").toLowerCase() === needle.toLowerCase()
             )
@@ -5815,6 +5815,7 @@ async function addBuiltInReviewFindings(analysisId, report) {
           priorityMaximum: true,
           protectedByTechnicalEngine: true,
           injectionCapability: true,
+          executionSensitive: true,
           confidence: "high",
           note:
             "O executável não confiável contém múltiplas APIs clássicas de injeção/manipulação de processo. O Vorken classifica essa combinação como crítica."
@@ -6701,7 +6702,34 @@ async function addBuiltInReviewFindings(analysisId, report) {
       );
     }
 
-    if (danger.suspicious) {
+    const benignDangerExtension =
+      [
+        ".mp4", ".mkv", ".avi", ".mov", ".webm",
+        ".mp3", ".wav", ".flac", ".ogg",
+        ".jpg", ".jpeg", ".png", ".gif", ".webp",
+        ".txt", ".log", ".pdf"
+      ].includes(ext);
+
+    const officialUmodPlugin =
+      ext === ".cs" &&
+      [
+        download.sourceUrl,
+        download.finalUrl,
+        download.referrerUrl,
+        download.siteUrl,
+        download.pageUrl,
+      ]
+        .filter(Boolean)
+        .some((url) =>
+          /^https?:\/\/(?:www\.)?(?:umod\.org|codefling\.com)\//i
+            .test(String(url || ""))
+        );
+
+    if (
+      danger.suspicious &&
+      !benignDangerExtension &&
+      !officialUmodPlugin
+    ) {
       const severity =
         randomExecutable ? "critical" :
         danger.severity;
