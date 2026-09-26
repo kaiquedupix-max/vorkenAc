@@ -6078,20 +6078,30 @@ async function addBuiltInReviewFindings(analysisId, report) {
         );
 
     const trustedInjectionApp =
-      isAbsoluteTrustedCatalogArtifact(
-        "pe_inspection",
-        pathValue,
-        item
-      ) ||
-      isTrustedCommonAppArtifact(
-        pathValue,
-        item
-      ) ||
-      isTrustedExecutableCandidate(pathValue);
+      item.signed === true &&
+      (
+        isAbsoluteTrustedCatalogArtifact(
+          "pe_inspection",
+          pathValue,
+          item
+        ) ||
+        isTrustedCommonAppArtifact(
+          pathValue,
+          item
+        ) ||
+        isTrustedExecutableCandidate(pathValue)
+      );
+
+    const strongUntrustedInjection =
+      item.signed !== true &&
+      injectionApis.length >= 2;
 
     if (
-      injectionApis.length >= 2 &&
-      !trustedInjectionApp
+      strongUntrustedInjection ||
+      (
+        injectionApis.length >= 2 &&
+        !trustedInjectionApp
+      )
     ) {
       await insertReviewFinding(
         analysisId,
@@ -6166,6 +6176,65 @@ async function addBuiltInReviewFindings(analysisId, report) {
         }
       );
     }
+  }
+
+
+  // Defense-in-depth for reports reprocessed from older agents: if an EXE name
+  // contains "injector" and the PE inventory confirms the same file is unsigned
+  // with multiple injection APIs, create an explicit protected critical finding.
+  for (const item of report.peInspections || []) {
+    const pathValue =
+      item.path ||
+      item.name ||
+      "";
+
+    if (
+      !/injector/i.test(
+        windowsBaseName(pathValue)
+      ) ||
+      item.signed === true
+    ) {
+      continue;
+    }
+
+    const injectionApis =
+      (Array.isArray(item.suspiciousApis)
+        ? item.suspiciousApis
+        : [])
+        .filter((api) =>
+          [
+            "VirtualAllocEx",
+            "WriteProcessMemory",
+            "CreateRemoteThread",
+            "NtWriteVirtualMemory",
+            "NtCreateThreadEx",
+            "QueueUserAPC"
+          ].some((needle) =>
+            String(api || "").toLowerCase() ===
+            needle.toLowerCase()
+          )
+        );
+
+    if (injectionApis.length < 2)
+      continue;
+
+    await insertReviewFinding(
+      analysisId,
+      "PRIORIDADE MÁXIMA: injector não assinado com APIs de injeção",
+      "critical",
+      "pe_inspection",
+      pathValue,
+      {
+        ...item,
+        injectionApis,
+        priorityMaximum: true,
+        protectedByTechnicalEngine: true,
+        injectionCapability: true,
+        confidence: "high",
+        note:
+          "O executável contém 'injector' no nome, não possui assinatura confiável e expõe múltiplas APIs clássicas de injeção de processo. Tratado como crítico."
+      }
+    );
   }
 
   // Mark-of-the-Web / SavedFiles-style origin checks.
