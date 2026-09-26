@@ -663,7 +663,7 @@ function findingEvidence(base = {}) {
   return {
     baselineV2: true,
     classifierVersion:
-      "calibrated-v2",
+      "echo-inspired-v3",
     ...base
   };
 }
@@ -1299,6 +1299,22 @@ export async function runCalibratedFilterV2({
     );
   }
 
+  for (const item of safeArray(report?.processTerminationEvents)) {
+    pushTimeline(
+      item?.timestampUtc ||
+      item?.timeCreatedUtc ||
+      item?.createdAtUtc,
+      "CLOSED_PROGRAM",
+      "Closed Program",
+      item?.processPath || item?.processName,
+      {
+        source: "Event 4689",
+        processId: item?.processId || "",
+        exitStatus: item?.exitStatus || ""
+      }
+    );
+  }
+
   for (const item of safeArray(report?.bam)) {
     pushTimeline(
       item?.lastExecutionUtc,
@@ -1576,6 +1592,183 @@ export async function runCalibratedFilterV2({
       confidence: "info",
       note:
         "Compilation Times e Process Start Times são exibidos para auditoria e correlação temporal. Nenhum deles é prova de cheat isoladamente."
+    }
+  );
+
+  const pcaViewer =
+    safeArray(report?.pca)
+      .filter((item) =>
+        /\.exe$/i.test(
+          baseName(item?.path)
+        )
+      )
+      .map((item) => ({
+        path: item?.path || "",
+        source: item?.source || "",
+        fileExists: item?.fileExists
+      }));
+
+  const amcacheViewer =
+    safeArray(report?.amcache)
+      .filter((item) =>
+        /\.exe$/i.test(
+          baseName(
+            item?.fullPath ||
+            item?.name
+          )
+        )
+      )
+      .map((item) => ({
+        path:
+          item?.fullPath ||
+          item?.name ||
+          "",
+        sha1:
+          item?.sha1 || "",
+        fileId:
+          item?.fileId || "",
+        lastWriteUtc:
+          item?.lastWriteUtc || null
+      }));
+
+  const shimCacheViewer =
+    safeArray(report?.shimCache)
+      .filter((item) =>
+        /\.exe$/i.test(
+          baseName(item?.path)
+        )
+      )
+      .map((item) => ({
+        path: item?.path || "",
+        lastModifiedUtc:
+          item?.lastModifiedUtc || null,
+        executed:
+          item?.executed
+      }));
+
+  const userAssistViewer =
+    safeArray(report?.userAssist)
+      .filter((item) =>
+        /\.exe(?:$|[?#])/i.test(
+          String(item?.decodedName || "")
+        )
+      )
+      .map((item) => ({
+        decodedName:
+          item?.decodedName || "",
+        guid:
+          item?.guid || "",
+        dataLength:
+          item?.dataLength || 0
+      }));
+
+  await addFinding(
+    insertFinding,
+    analysisId,
+    "PCA / Amcache / ShimCache / UserAssist Viewer (inventário)",
+    "info",
+    "execution_artifact_viewer_v3",
+    "Artefatos históricos de execução",
+    {
+      inventoryOnly: true,
+      pcaClient:
+        pcaViewer.slice(0, 1500),
+      amcache:
+        amcacheViewer.slice(0, 1500),
+      shimCache:
+        shimCacheViewer.slice(0, 1500),
+      userAssist:
+        userAssistViewer.slice(0, 1500),
+      confidence: "info",
+      note:
+        "Viewer de artefatos de execução inspirado nas ferramentas públicas do Echo. PCA/Amcache/ShimCache/UserAssist servem para correlação e não geram verdictos isoladamente."
+    }
+  );
+
+  const recordingTokens = [
+    "obs",
+    "bandicam",
+    "xsplit",
+    "streamlabs",
+    "medal",
+    "action!",
+    "camtasia",
+    "fraps",
+    "nvidia share",
+    "shadowplay"
+  ];
+
+  const recordingSoftware =
+    safeArray(report?.processes)
+      .filter((item) => {
+        const haystack =
+          (
+            String(item?.name || "") +
+            " " +
+            String(item?.path || "")
+          ).toLowerCase();
+
+        return recordingTokens.some(
+          (token) =>
+            haystack.includes(token)
+        );
+      })
+      .map((item) => ({
+        name: item?.name || "",
+        path: item?.path || "",
+        startTimeUtc:
+          item?.startTimeUtc || null,
+        signed:
+          item?.signed === true,
+        signerSubject:
+          item?.signerSubject || ""
+      }));
+
+  if (recordingSoftware.length > 0) {
+    await addFinding(
+      insertFinding,
+      analysisId,
+      "Software de gravação/captura ativo (inventário)",
+      "info",
+      "recording_software_v3",
+      recordingSoftware[0]?.name ||
+      "Recording software",
+      {
+        inventoryOnly: true,
+        recordingSoftware,
+        confidence: "info",
+        note:
+          "Software de gravação/captura foi encontrado em execução. É exibido apenas como contexto de screenshare, sem ser tratado como cheat."
+      }
+    );
+  }
+
+  await addFinding(
+    insertFinding,
+    analysisId,
+    "Ambiente da máquina (inventário)",
+    "info",
+    "environment_inventory_v3",
+    report?.vmEnvironment?.isVirtualMachine
+      ? "Virtual machine: " +
+        String(
+          report?.vmEnvironment?.detectedPlatform ||
+          "detectada"
+        )
+      : "Máquina física / VM não detectada",
+    {
+      inventoryOnly: true,
+      vmEnvironment:
+        report?.vmEnvironment || {},
+      recycleBinEntryCount:
+        safeArray(report?.recycleBin).length,
+      hiddenVolumeCount:
+        safeArray(report?.hiddenVolumes).length,
+      securityProducts:
+        safeArray(report?.securityProducts).slice(0, 100),
+      confidence: "info",
+      note:
+        "Resumo de ambiente equivalente às informações auxiliares exibidas em scans de screenshare. Não é detecção por si só."
     }
   );
 
@@ -2080,6 +2273,43 @@ export async function runCalibratedFilterV2({
         ...report.systemArtifacts,
         note:
           "O BAM está configurado como desabilitado. Mantido como warning de integridade forense."
+      }
+    );
+  }
+
+  const disabledKeyServices =
+    safeArray(report?.systemIntegrityExpansion)
+      .filter((item) => {
+        const kind =
+          String(item?.kind || "")
+            .toLowerCase();
+        const combined =
+          (
+            String(item?.name || "") +
+            " " +
+            String(item?.detail || "")
+          ).toLowerCase();
+
+        return (
+          kind === "service_state" &&
+          /pcasvc|diagtrack|eventlog|dps/.test(combined) &&
+          /start=4/.test(combined)
+        );
+      })
+      .map((item) =>
+        String(item?.name || "serviço")
+      );
+
+  if (disabledKeyServices.length >= 2) {
+    await addWarning(
+      "multiple_key_features_disabled",
+      "Warning: recursos importantes do Windows desativados limitando resultados",
+      disabledKeyServices.join(", "),
+      {
+        disabledServices:
+          disabledKeyServices,
+        note:
+          "Múltiplos serviços relevantes para telemetria/compatibilidade estão desativados. Isso reduz a qualidade do scan e corresponde a um warning, não a uma detecção severa."
       }
     );
   }
