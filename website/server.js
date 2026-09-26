@@ -6939,28 +6939,125 @@ async function addBuiltInReviewFindings(analysisId, report) {
     );
   }
 
-  // BAM is useful as corroboration, but stale system/application entries are common.
+  // BAM: execução de EXE que desapareceu depois é crítica quando o
+  // executável não pertence ao catálogo confiável. Também correlaciona o
+  // mesmo nome com execuções removíveis vistas no Prefetch.
+  const usbExecutedExeNames = new Set(
+    (report.prefetchExecutions || [])
+      .filter((execution) => {
+        const candidates = [
+          execution.executableName,
+          execution.resolvedExecutablePath,
+          execution.nativeExecutablePath,
+        ].filter(Boolean);
+
+        const exeLike =
+          candidates.some((value) =>
+            /\.exe(?:$|[?#])/i.test(
+              String(value || "").trim()
+            )
+          );
+
+        if (!exeLike)
+          return false;
+
+        const detachedRemovable =
+          execution.currentRemovable === true ||
+          (
+            execution.volumeNotMounted === true &&
+            execution.nonSystemVolume === true &&
+            execution.likelyDetachedOrRemovable === true
+          );
+
+        return detachedRemovable;
+      })
+      .map((execution) =>
+        fileName(
+          execution.executableName ||
+          execution.resolvedExecutablePath ||
+          execution.nativeExecutablePath ||
+          ""
+        ).toLowerCase()
+      )
+      .filter(Boolean)
+  );
+
   for (const item of report.bam || []) {
     const lastAge = ageDays(item.lastExecutionUtc);
     const p = item.path || "";
+    const name = fileName(p);
+    const exeLike = /\.exe$/i.test(name);
 
-    if (lastAge > 7 ||
-        item.fileExists !== false ||
-        isTrustedInstalledPath(p) ||
-        (!isSuspiciousUserPath(p) && !isVolumeRootExecutable(p))) {
+    const trusted =
+      isTrustedInstalledPath(p) ||
+      isAbsoluteTrustedCatalogArtifact(
+        "bam",
+        p,
+        item
+      ) ||
+      isTrustedCommonAppArtifact(
+        p,
+        {
+          ...item,
+          path: p,
+          fileName: name,
+        }
+      ) ||
+      isTrustedExecutableCandidate(p);
+
+    const correlatedUsb =
+      exeLike &&
+      usbExecutedExeNames.has(
+        String(name || "").toLowerCase()
+      );
+
+    if (
+      lastAge > 7 ||
+      item.fileExists !== false ||
+      trusted ||
+      (
+        !isSuspiciousUserPath(p) &&
+        !isVolumeRootExecutable(p) &&
+        !correlatedUsb
+      )
+    ) {
       continue;
     }
 
+    const criticalExe =
+      exeLike &&
+      !trusted;
+
     await insertReviewFinding(
       analysisId,
-      "BAM: execução recente de arquivo não localizado",
-      "medium",
+      correlatedUsb
+        ? "PRIORIDADE MÁXIMA: EXE executado também em pendrive/USB"
+        : criticalExe
+          ? "PRIORIDADE MÁXIMA: EXE executado e depois não localizado"
+          : "BAM: execução recente de arquivo não localizado",
+      criticalExe
+        ? "critical"
+        : "medium",
       "bam",
       p || "BAM",
       {
         ...item,
-        confidence: "medium",
-        note: "BAM registrou execução recente em caminho temporário/usuário ou raiz de volume, e o arquivo não está mais presente.",
+        priorityMaximum: criticalExe,
+        protectedByTechnicalEngine: criticalExe,
+        deletedExecutedExecutable: criticalExe,
+        usbExecution: correlatedUsb,
+        executionConfirmed: true,
+        correlatedUsbExecutionByName: correlatedUsb,
+        confidence:
+          criticalExe
+            ? "high"
+            : "medium",
+        note:
+          correlatedUsb
+            ? "O BAM confirma execução do EXE e o Prefetch registrou o mesmo executável em mídia removível/USB. A execução local e a execução no USB permanecem evidências separadas."
+            : criticalExe
+              ? "O BAM confirma execução recente de um .exe que não está mais presente. Como não pertence ao catálogo confiável, o Vorken classifica como crítico."
+              : "BAM registrou execução recente de arquivo não localizado.",
       }
     );
   }
