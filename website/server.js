@@ -4655,7 +4655,41 @@ async function insertReviewFinding(
   if (isKnownBenignPeNoise(normalizedValue))
     return;
 
+  const protectedFinding =
+    evidence?.priorityMaximum === true ||
+    evidence?.protectedByTechnicalEngine === true ||
+    evidence?.usbExecution === true ||
+    evidence?.knownCheatDomain === true ||
+    evidence?.directCatalogMatch === true ||
+    evidence?.injectionIntoRust === true ||
+    evidence?.deletedExecutedExecutable === true ||
+    evidence?.correlatedEvidence === true ||
+    (
+      evidence?.executionConfirmed === true &&
+      (
+        evidence?.catalogMatch ||
+        (
+          Array.isArray(evidence?.catalogMatches) &&
+          evidence.catalogMatches.length > 0
+        )
+      )
+    );
+
+  const strongUnsignedInjection =
+    evidence?.injectionCapability === true &&
+    evidence?.signed !== true &&
+    (
+      Array.isArray(evidence?.injectionApis) &&
+      evidence.injectionApis.length >= 2
+    );
+
+  // Evidência técnica forte não pode desaparecer por uma allowlist antiga
+  // ou por aprendizado de falso positivo. Para apps legítimos conhecidos,
+  // a regra de injeção só atravessa a allowlist quando o binário é não assinado
+  // e possui múltiplas APIs clássicas de injeção.
   if (
+    !protectedFinding &&
+    !strongUnsignedInjection &&
     isAbsoluteTrustedCatalogArtifact(
       artifactType,
       normalizedValue,
@@ -4676,6 +4710,8 @@ async function insertReviewFinding(
   }
 
   if (
+    !protectedFinding &&
+    !strongUnsignedInjection &&
     await isLearnedTrustedArtifact(
       artifactType,
       normalizedValue,
@@ -4684,23 +4720,6 @@ async function insertReviewFinding(
   ) {
     return;
   }
-
-  const protectedFinding =
-    evidence?.priorityMaximum === true ||
-    evidence?.protectedByTechnicalEngine === true ||
-    evidence?.usbExecution === true ||
-    evidence?.knownCheatDomain === true ||
-    evidence?.directCatalogMatch === true ||
-    (
-      evidence?.executionConfirmed === true &&
-      (
-        evidence?.catalogMatch ||
-        (
-          Array.isArray(evidence?.catalogMatches) &&
-          evidence.catalogMatches.length > 0
-        )
-      )
-    );
 
   if (
     !protectedFinding &&
@@ -6510,14 +6529,15 @@ async function addBuiltInReviewFindings(analysisId, report) {
     ) {
       await insertReviewFinding(
         analysisId,
-        "Banco de histórico do navegador apagado/alterado",
-        "medium",
+        "Banco de histórico do navegador apagado/alterado (inventário)",
+        "info",
         "usn_activity",
         name,
         {
           ...item,
-          confidence: "medium",
-          note: "O USN Journal registrou exclusão de banco do navegador como History/places.sqlite."
+          confidence: "info",
+          inventoryOnly: true,
+          note: "O USN Journal registrou exclusão/alteração de banco do navegador como History/places.sqlite. Mantido somente no inventário azul; não é evidência suspeita por si só."
         }
       );
       continue;
