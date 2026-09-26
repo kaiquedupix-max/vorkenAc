@@ -1247,6 +1247,338 @@ export async function runCalibratedFilterV2({
     );
   }
 
+  // 3. Echo-style audit inventory: session timeline, file logs,
+  // compilation times and process start times. These are facts, not verdicts.
+  const timeline = [];
+
+  const pushTimeline = (
+    timestamp,
+    category,
+    label,
+    value,
+    extra = {}
+  ) => {
+    const ms = validDateMs(timestamp);
+    if (!ms)
+      return;
+
+    timeline.push({
+      timestampUtc: timestampIso(ms),
+      category,
+      label,
+      value: String(value || ""),
+      ...extra
+    });
+  };
+
+  for (const item of safeArray(report?.processes)) {
+    pushTimeline(
+      item?.startTimeUtc,
+      "PROCESS_START",
+      "Process Start",
+      item?.path || item?.name,
+      {
+        pid: item?.pid,
+        signed: item?.signed === true,
+        signerSubject: item?.signerSubject || ""
+      }
+    );
+  }
+
+  for (const item of safeArray(report?.processCreationEvents)) {
+    pushTimeline(
+      item?.timestampUtc ||
+      item?.timeCreatedUtc ||
+      item?.createdAtUtc,
+      "EXECUTED_FILE",
+      "Executed File",
+      item?.processPath || item?.processName,
+      {
+        source: "Event 4688"
+      }
+    );
+  }
+
+  for (const item of safeArray(report?.bam)) {
+    pushTimeline(
+      item?.lastExecutionUtc,
+      "EXECUTED_FILE",
+      "Executed File",
+      item?.path,
+      {
+        source: "BAM",
+        fileExists: item?.fileExists
+      }
+    );
+  }
+
+  for (const item of safeArray(report?.prefetchExecutions)) {
+    pushTimeline(
+      item?.lastRunUtc,
+      "EXECUTED_FILE",
+      "Executed File",
+      item?.resolvedExecutablePath ||
+      item?.nativeExecutablePath ||
+      item?.executableName,
+      {
+        source: "Prefetch",
+        executablePresent:
+          item?.executablePresent
+      }
+    );
+  }
+
+  for (const item of safeArray(report?.usnActivity)) {
+    const value =
+      item?.fileName ||
+      item?.volume ||
+      "";
+
+    if (item?.Created === true || item?.created === true) {
+      pushTimeline(
+        item?.timestampUtc,
+        "FILE_CREATED",
+        "Created File",
+        value,
+        {
+          volume: item?.volume || "",
+          reasons: item?.reasons || []
+        }
+      );
+    }
+
+    if (item?.Deleted === true || item?.deleted === true) {
+      pushTimeline(
+        item?.timestampUtc,
+        "FILE_DELETED",
+        "Deleted File",
+        value,
+        {
+          volume: item?.volume || "",
+          reasons: item?.reasons || []
+        }
+      );
+    }
+
+    if (item?.Renamed === true || item?.renamed === true) {
+      pushTimeline(
+        item?.timestampUtc,
+        "FILE_MOVED",
+        "Moved/Renamed File",
+        value,
+        {
+          volume: item?.volume || "",
+          reasons: item?.reasons || []
+        }
+      );
+    }
+
+    if (item?.Modified === true || item?.modified === true) {
+      pushTimeline(
+        item?.timestampUtc,
+        "DATA_CHANGE",
+        "Data Change",
+        value,
+        {
+          volume: item?.volume || "",
+          reasons: item?.reasons || []
+        }
+      );
+    }
+  }
+
+  for (const item of safeArray(report?.deletedUsnRecords)) {
+    pushTimeline(
+      item?.timestampUtc ||
+      item?.deletedAtUtc,
+      "FILE_DELETED",
+      "Deleted File",
+      item?.fileName ||
+      item?.path ||
+      item?.volume,
+      {
+        source: "USN delete"
+      }
+    );
+  }
+
+  for (const item of safeArray(report?.recycleBin)) {
+    pushTimeline(
+      item?.deletedAtUtc,
+      "FILE_DELETED",
+      "Deleted File",
+      item?.originalPath ||
+      item?.fileName,
+      {
+        source: "Recycle Bin"
+      }
+    );
+  }
+
+  for (const item of safeArray(report?.usbTimeline)) {
+    pushTimeline(
+      item?.timestampUtc ||
+      item?.timeCreatedUtc ||
+      item?.eventTimeUtc,
+      "USB_EVENT",
+      "Plugged In Device",
+      item?.deviceId ||
+      item?.evidence ||
+      item?.eventId,
+      {
+        source: "USB timeline"
+      }
+    );
+  }
+
+  timeline.sort((a, b) =>
+    validDateMs(a.timestampUtc) -
+    validDateMs(b.timestampUtc)
+  );
+
+  const sessionTimeline =
+    rustSession.known
+      ? timeline.filter((entry) => {
+          const ms =
+            validDateMs(entry.timestampUtc);
+
+          return (
+            ms >= rustSession.startMs - 2 * 60 * 1000 &&
+            ms <= rustSession.endMs + 5 * 60 * 1000
+          );
+        })
+      : [];
+
+  await addFinding(
+    insertFinding,
+    analysisId,
+    "Timeline forense da sessão (inventário)",
+    "info",
+    "session_timeline_v3",
+    rustSession.known
+      ? "Rust session " +
+        timestampIso(rustSession.startMs)
+      : "Sessão Rust não determinada",
+    {
+      inventoryOnly: true,
+      rustSessionKnown:
+        rustSession.known,
+      rustSessionStartUtc:
+        rustSession.known
+          ? timestampIso(rustSession.startMs)
+          : "",
+      rustSessionEndUtc:
+        timestampIso(rustSession.endMs),
+      eventCount:
+        timeline.length,
+      sessionEventCount:
+        sessionTimeline.length,
+      sessionEvents:
+        sessionTimeline.slice(0, 500),
+      recentEvents:
+        timeline.slice(-500),
+      confidence: "info",
+      note:
+        "Timeline auditável inspirada nos File Logs públicos do Echo. Os eventos são fatos forenses e não são tratados como detecção isoladamente."
+    }
+  );
+
+  const compilationInventory =
+    [
+      ...safeArray(report?.files)
+        .filter((item) =>
+          item?.compilationTimeUtc &&
+          /\.exe$/i.test(
+            baseName(
+              item?.path ||
+              item?.name
+            )
+          )
+        )
+        .map((item) => ({
+          executable:
+            item?.path ||
+            item?.name,
+          compilationTimeUtc:
+            item?.compilationTimeUtc,
+          signed:
+            item?.signed === true,
+          signerSubject:
+            item?.signerSubject || "",
+          sha256:
+            item?.sha256 || ""
+        })),
+      ...safeArray(report?.peInspections)
+        .filter((item) =>
+          item?.compilationTimeUtc
+        )
+        .map((item) => ({
+          executable:
+            item?.path ||
+            item?.name,
+          compilationTimeUtc:
+            item?.compilationTimeUtc,
+          signed:
+            item?.signed === true,
+          signerSubject:
+            item?.signerSubject || "",
+          sha256:
+            item?.sha256 || ""
+        }))
+    ]
+      .filter((item, index, arr) =>
+        arr.findIndex((other) =>
+          normalizePath(other.executable) ===
+            normalizePath(item.executable) &&
+          String(other.compilationTimeUtc) ===
+            String(item.compilationTimeUtc)
+        ) === index
+      )
+      .sort((a,b) =>
+        validDateMs(b.compilationTimeUtc) -
+        validDateMs(a.compilationTimeUtc)
+      );
+
+  const processStartInventory =
+    safeArray(report?.processes)
+      .filter((item) =>
+        item?.startTimeUtc
+      )
+      .map((item) => ({
+        pid: item?.pid,
+        name: item?.name || "",
+        path: item?.path || "",
+        startTimeUtc:
+          item?.startTimeUtc,
+        signed:
+          item?.signed === true,
+        signerSubject:
+          item?.signerSubject || ""
+      }))
+      .sort((a,b) =>
+        validDateMs(b.startTimeUtc) -
+        validDateMs(a.startTimeUtc)
+      );
+
+  await addFinding(
+    insertFinding,
+    analysisId,
+    "Compilation Times / Process Start Times (inventário)",
+    "info",
+    "time_inventory_v3",
+    "Metadados temporais de executáveis/processos",
+    {
+      inventoryOnly: true,
+      compilationTimes:
+        compilationInventory.slice(0, 1000),
+      processStartTimes:
+        processStartInventory.slice(0, 1000),
+      confidence: "info",
+      note:
+        "Compilation Times e Process Start Times são exibidos para auditoria e correlação temporal. Nenhum deles é prova de cheat isoladamente."
+    }
+  );
+
   // 3. Web evidence. Browsing is context, not proof of cheat execution.
   const directHosts = new Set();
   const searches = new Set();
