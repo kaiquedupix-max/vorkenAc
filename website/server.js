@@ -4030,9 +4030,9 @@ async function getLearnedTrustedSignatures(
 
   const result =
     await pool.query(
-      \`SELECT signature
+      `SELECT signature
        FROM learned_trusted_artifacts
-       WHERE enabled=TRUE\`
+       WHERE enabled=TRUE`
     );
 
   const signatures =
@@ -4089,7 +4089,7 @@ async function learnReleasedAnalysisArtifacts(
 ) {
   const result =
     await pool.query(
-      \`SELECT
+      `SELECT
          id,
          severity,
          artifact_type,
@@ -4098,7 +4098,7 @@ async function learnReleasedAnalysisArtifacts(
        FROM scan_findings
        WHERE analysis_id=$1
          AND severity IN ('critical','high','medium')
-       ORDER BY id ASC\`,
+       ORDER BY id ASC`,
       [analysisId]
     );
 
@@ -4132,7 +4132,7 @@ async function learnReleasedAnalysisArtifacts(
 
     for (const signature of signatures) {
       await pool.query(
-        \`INSERT INTO learned_trusted_artifacts(
+        `INSERT INTO learned_trusted_artifacts(
            signature,
            signature_type,
            file_name,
@@ -4158,7 +4158,7 @@ async function learnReleasedAnalysisArtifacts(
                THEN EXCLUDED.sha256
              ELSE learned_trusted_artifacts.sha256
            END,
-           updated_at=NOW()\`,
+           updated_at=NOW()`,
         [
           signature,
           signature.startsWith("sha256:")
