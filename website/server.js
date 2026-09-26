@@ -8505,6 +8505,236 @@ app.post("/api/admin/analyses", requireAdmin, async (req, res) => {
   });
 });
 
+function compactAdminUiValue(value, depth = 0) {
+  if (value == null) return value;
+
+  if (typeof value === "string")
+    return value.length > 4000 ? value.slice(0, 4000) + "…" : value;
+
+  if (typeof value !== "object")
+    return value;
+
+  if (depth >= 4)
+    return Array.isArray(value) ? [] : {};
+
+  if (Array.isArray(value))
+    return value.slice(0, 50).map((item) => compactAdminUiValue(item, depth + 1));
+
+  const out = {};
+  for (const [key, item] of Object.entries(value).slice(0, 40))
+    out[key] = compactAdminUiValue(item, depth + 1);
+
+  return out;
+}
+
+function compactAdminUiList(value, limit) {
+  return Array.isArray(value)
+    ? value.slice(0, limit).map((item) => compactAdminUiValue(item))
+    : [];
+}
+
+function compactAdminCatalogMatch(value) {
+  if (!value || typeof value !== "object")
+    return value || null;
+
+  const out = {};
+  for (const key of [
+    "name",
+    "title",
+    "domain",
+    "url",
+    "source",
+    "category",
+    "kind",
+    "confidence",
+  ]) {
+    if (value[key] != null)
+      out[key] = compactAdminUiValue(value[key], 1);
+  }
+  return out;
+}
+
+function compactAdminFindingEvidence(evidence) {
+  if (!evidence || typeof evidence !== "object")
+    return {};
+
+  const out = {};
+  for (const key of [
+    "note",
+    "priorityMaximum",
+    "protectedByTechnicalEngine",
+    "usbExecution",
+    "knownCheatDomain",
+    "directCatalogMatch",
+    "executionConfirmed",
+    "fileName",
+    "name",
+    "path",
+    "fullPath",
+    "currentPath",
+    "originalPath",
+    "targetPath",
+    "url",
+    "sourceUrl",
+    "finalUrl",
+    "browser",
+    "profile",
+    "visitTimeUtc",
+    "recoveredAtUtc",
+    "recoveredUrl",
+  ]) {
+    if (evidence[key] != null)
+      out[key] = compactAdminUiValue(evidence[key], 1);
+  }
+
+  if (evidence.catalogMatch)
+    out.catalogMatch = compactAdminCatalogMatch(evidence.catalogMatch);
+
+  if (Array.isArray(evidence.catalogMatches)) {
+    out.catalogMatches = evidence.catalogMatches
+      .slice(0, 3)
+      .map(compactAdminCatalogMatch)
+      .filter(Boolean);
+  }
+
+  return out;
+}
+
+function compactAdminReportPayload(report) {
+  const payload =
+    report && typeof report === "object"
+      ? report
+      : {};
+
+  const count = (key) =>
+    Array.isArray(payload[key])
+      ? payload[key].length
+      : 0;
+
+  const suspiciousCount = (key) =>
+    Array.isArray(payload[key])
+      ? payload[key].filter((item) => item?.suspicious === true).length
+      : 0;
+
+  const countKeys = [
+    "steamAccounts",
+    "usbCurrent",
+    "usbHistory",
+    "usbTimeline",
+    "usbFiles",
+    "serialDevices",
+    "processes",
+    "prefetch",
+    "prefetchExecutions",
+    "services",
+    "drivers",
+    "startup",
+    "files",
+    "peInspections",
+    "zoneIdentifiers",
+    "alternateDataStreams",
+    "autorunIntegrity",
+    "processModuleIntegrity",
+    "processMemoryIntegrity",
+    "protectedWindows",
+    "bam",
+    "userAssist",
+    "muiCache",
+    "pca",
+    "amcache",
+    "shimCache",
+    "setupApiUsb",
+    "powerShellHits",
+    "powerShellArtifacts",
+    "prefetchIntegrity",
+    "hiddenVolumes",
+    "logClearSignals",
+    "processCreationEvents",
+    "defenderDetections",
+    "recentShortcuts",
+    "crashArtifacts",
+    "securityProducts",
+    "recycleBin",
+    "browserDownloads",
+    "browserHistorySignals",
+    "browserRecoveredArtifacts",
+    "networkIndicators",
+    "deletedUsnRecords",
+    "extensionMismatches",
+    "defenderExclusions",
+    "bootIntegrity",
+    "systemTimeChanges",
+    "virtualDisks",
+    "rustModules",
+    "usnJournalState",
+    "usnActivity",
+    "systemIntegrityExpansion",
+  ];
+
+  const uiCounts = {};
+  for (const key of countKeys)
+    uiCounts[key] = count(key);
+
+  const disconnectedUsb =
+    Array.isArray(payload.usbHistory)
+      ? payload.usbHistory.filter((item) => item?.present === false).length
+      : 0;
+
+  const advancedForensicsCount =
+    count("peInspections") +
+    count("zoneIdentifiers") +
+    count("alternateDataStreams") +
+    suspiciousCount("autorunIntegrity") +
+    suspiciousCount("processModuleIntegrity") +
+    count("processMemoryIntegrity") +
+    count("protectedWindows") +
+    count("powerShellArtifacts") +
+    count("crashArtifacts") +
+    count("securityProducts") +
+    count("networkIndicators") +
+    count("usnActivity") +
+    count("systemIntegrityExpansion");
+
+  const informationalInventoryCount =
+    count("files") +
+    count("browserDownloads") +
+    count("recycleBin") +
+    count("browserRecoveredArtifacts") +
+    count("deletedUsnRecords");
+
+  const hardwareTotal =
+    Number(payload.hardwareSummary?.totalRelevantDevices || count("serialDevices"));
+
+  return {
+    uiProjection: true,
+    uiCounts,
+    uiSummary: {
+      disconnectedUsb,
+      hardwareCount: disconnectedUsb + hardwareTotal,
+      advancedForensicsCount,
+      informationalInventoryCount,
+    },
+
+    // Only the categories that the first report screen can actually use are
+    // transferred. Large PE/process/file/USN inventories remain server-side.
+    steamAccounts: compactAdminUiList(payload.steamAccounts, 100),
+    steamAccountCorrelation: compactAdminUiValue(payload.steamAccountCorrelation || {}),
+    usbCurrent: compactAdminUiList(payload.usbCurrent, 150),
+    usbHistory: compactAdminUiList(payload.usbHistory, 400),
+    usbTimeline: compactAdminUiList(payload.usbTimeline, 400),
+    usbFiles: compactAdminUiList(payload.usbFiles, 300),
+    serialDevices: compactAdminUiList(payload.serialDevices, 250),
+    browserHistorySignals: compactAdminUiList(payload.browserHistorySignals, 500),
+    browserDownloads: compactAdminUiList(payload.browserDownloads, 300),
+    browserRecoveredArtifacts: compactAdminUiList(payload.browserRecoveredArtifacts, 300),
+
+    hardwareSummary: compactAdminUiValue(payload.hardwareSummary || {}),
+    vmEnvironment: compactAdminUiValue(payload.vmEnvironment || {}),
+    systemArtifacts: compactAdminUiValue(payload.systemArtifacts || {}),
+    errors: compactAdminUiList(payload.errors, 20),
+  };
+}
+
 app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "invalid_id" });
@@ -8548,8 +8778,11 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
   );
 
   if (reportResult.rows[0]) {
-    reportResult.rows[0].payload =
+    const rawAdminReport =
       decodeStoredRawReport(reportResult.rows[0]);
+
+    reportResult.rows[0].payload =
+      compactAdminReportPayload(rawAdminReport);
 
     delete reportResult.rows[0].payload_raw;
     delete reportResult.rows[0].payload_encoding;
@@ -8630,7 +8863,10 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
   res.json({
     analysis,
     report: reportResult.rows[0] || null,
-    findings: findingsResult.rows,
+    findings: findingsResult.rows.map((finding) => ({
+      ...finding,
+      evidence: compactAdminFindingEvidence(finding.evidence),
+    })),
     filteredFindings: aiFilteredResult.rows,
     reviewState: {
       status: analysisInternal.filter_status || "local_filters",

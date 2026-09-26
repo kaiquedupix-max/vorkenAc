@@ -1086,6 +1086,20 @@ async function openReport(id) {
   const payload = report?.payload && typeof report.payload === "object"
     ? report.payload
     : {};
+  const uiCounts =
+    payload.uiCounts && typeof payload.uiCounts === "object"
+      ? payload.uiCounts
+      : {};
+  const uiSummary =
+    payload.uiSummary && typeof payload.uiSummary === "object"
+      ? payload.uiSummary
+      : {};
+  const countFor = (key, rows = []) => {
+    const projected = Number(uiCounts[key]);
+    return Number.isFinite(projected)
+      ? projected
+      : safeArray(rows).length;
+  };
 
   // Abre o cartão antes de montar as seções pesadas. Assim um erro em uma
   // seção específica não faz o botão parecer que "não funciona".
@@ -1261,7 +1275,9 @@ async function openReport(id) {
   };
 
   const disconnectedUsb =
-    arrays.usbHistory.filter((item) => item.present === false).length;
+    Number.isFinite(Number(uiSummary.disconnectedUsb))
+      ? Number(uiSummary.disconnectedUsb)
+      : arrays.usbHistory.filter((item) => item.present === false).length;
 
   const effectiveFindingSeverity = (item) =>
     item.severity || "info";
@@ -1307,31 +1323,43 @@ async function openReport(id) {
   const collectedFindings = infoFindings;
 
   const hardwareCount =
-    disconnectedUsb +
-    Number(payload.hardwareSummary?.totalRelevantDevices ?? arrays.serialDevices.length);
+    Number.isFinite(Number(uiSummary.hardwareCount))
+      ? Number(uiSummary.hardwareCount)
+      : disconnectedUsb +
+        Number(payload.hardwareSummary?.totalRelevantDevices ?? arrays.serialDevices.length);
 
   const advancedForensicsCount =
-    arrays.peInspections.length +
-    arrays.zoneIdentifiers.length +
-    arrays.alternateDataStreams.length +
-    arrays.autorunIntegrity.filter((x) => x.suspicious === true).length +
-    arrays.processModuleIntegrity.filter((x) => x.suspicious === true).length +
-    arrays.processMemoryIntegrity.length +
-    arrays.protectedWindows.length +
-    arrays.powerShellArtifacts.length +
-    arrays.crashArtifacts.length +
-    arrays.securityProducts.length +
-    arrays.networkIndicators.length +
-    arrays.usnActivity.length +
-    arrays.systemIntegrityExpansion.length;
+    Number.isFinite(Number(uiSummary.advancedForensicsCount))
+      ? Number(uiSummary.advancedForensicsCount)
+      : (
+          arrays.peInspections.length +
+          arrays.zoneIdentifiers.length +
+          arrays.alternateDataStreams.length +
+          arrays.autorunIntegrity.filter((x) => x.suspicious === true).length +
+          arrays.processModuleIntegrity.filter((x) => x.suspicious === true).length +
+          arrays.processMemoryIntegrity.length +
+          arrays.protectedWindows.length +
+          arrays.powerShellArtifacts.length +
+          arrays.crashArtifacts.length +
+          arrays.securityProducts.length +
+          arrays.networkIndicators.length +
+          arrays.usnActivity.length +
+          arrays.systemIntegrityExpansion.length
+        );
 
   const informationalCount =
     infoFindings.length +
-    arrays.files.length +
-    arrays.browserDownloads.length +
-    arrays.recycleBin.length +
-    arrays.browserRecoveredArtifacts.length +
-    arrays.deletedUsnRecords.length;
+    (
+      Number.isFinite(Number(uiSummary.informationalInventoryCount))
+        ? Number(uiSummary.informationalInventoryCount)
+        : (
+            arrays.files.length +
+            arrays.browserDownloads.length +
+            arrays.recycleBin.length +
+            arrays.browserRecoveredArtifacts.length +
+            arrays.deletedUsnRecords.length
+          )
+    );
 
   const currentStageLabel =
     processingStageLabel(
@@ -1344,7 +1372,7 @@ async function openReport(id) {
 
   document.getElementById("reportMetrics").innerHTML = `
     <div class="metric"><small>STATUS</small><strong>${escapeHtml(currentStageLabel)}</strong></div>
-    <div class="metric"><small>CONTAS STEAM</small><strong>${arrays.steamAccounts.length}</strong><span>${arrays.steamAccounts.filter((x) => x?.banConsensus?.banDetected === true).length} com histórico de ban</span></div>
+    <div class="metric"><small>CONTAS STEAM</small><strong>${countFor("steamAccounts", arrays.steamAccounts)}</strong><span>${arrays.steamAccounts.filter((x) => x?.banConsensus?.banDetected === true).length} com histórico de ban</span></div>
     <div class="metric"><small>CLASSIFICAÇÃO</small><strong>FILTRO LOCAL</strong><span>Classificação determinística pelos filtros Vorken</span></div>
     <div class="metric danger-metric"><small>VERMELHO · CRÍTICO</small><strong>${criticalFindings.length}</strong><span>Somente evidências de prioridade máxima</span></div>
     <div class="metric warning-metric"><small>LARANJA · REVISAR</small><strong>${mediumFindings.length}</strong><span>Itens suspeitos que exigem verificação administrativa</span></div>
@@ -1419,7 +1447,7 @@ async function openReport(id) {
   document.getElementById("filterCriticalCount")?.replaceChildren(String(criticalFindings.length));
   document.getElementById("filterMediumCount")?.replaceChildren(String(mediumFindings.length));
   document.getElementById("filterUsbCount")?.replaceChildren(String(disconnectedUsb));
-  document.getElementById("filterSerialCount")?.replaceChildren(String(arrays.serialDevices.length));
+  document.getElementById("filterSerialCount")?.replaceChildren(String(countFor("serialDevices", arrays.serialDevices)));
   document.getElementById("filterInventoryCount")?.replaceChildren(String(informationalCount));
 
   document.getElementById("reportMeta").innerHTML = `
@@ -1797,7 +1825,7 @@ async function openReport(id) {
         ${catalogName}
         ${reviewBlock}
         ${evidence.note ? '<div class="kv"><span>Motivo</span><span>' + escapeHtml(evidence.note) + '</span></div>' : ""}
-        <details class="evidence-details"><summary>Ver evidência completa</summary><pre>${escapeHtml(JSON.stringify(evidence, null, 2))}</pre></details>
+        ${Object.keys(evidence).length ? '<div class="kv"><span>Evidência</span><span>Resumo técnico carregado. A evidência bruta permanece preservada no relatório original.</span></div>' : ""}
       `;
       const checkbox = element.querySelector(".ban-evidence-checkbox");
       checkbox?.addEventListener("change", () => {
