@@ -212,6 +212,106 @@ function suspiciousUserPath(value) {
   );
 }
 
+function executableToken(value) {
+  const raw =
+    String(value || "")
+      .replaceAll("/", "\\")
+      .trim();
+
+  const matches =
+    [...raw.matchAll(/([A-Za-z0-9._-]+\.exe)\b/gi)];
+
+  if (matches.length > 0)
+    return matches.at(-1)?.[1] || "";
+
+  return baseName(raw);
+}
+
+function loaderNameScore(value, evidence = {}) {
+  if (evidence?.randomLikeName === true)
+    return 4;
+
+  const file =
+    executableToken(value);
+
+  const stem =
+    file
+      .replace(/\.exe$/i, "");
+
+  if (
+    stem.length < 7 ||
+    stem.length > 36 ||
+    !/^[A-Za-z0-9_-]+$/.test(stem)
+  ) {
+    return 0;
+  }
+
+  const lower =
+    stem.toLowerCase();
+
+  if (
+    /(setup|install|update|updater|uninstall|chrome|discord|steam|windows|microsoft|nvidia|amd|opera|spotify|notepad|powershell|runtime|service|helper|launcher|client|server|directx|vcredist|edge|onedrive|visual|studio|code)/i
+      .test(lower)
+  ) {
+    return 0;
+  }
+
+  let score = 0;
+
+  const hasUpper = /[A-Z]/.test(stem);
+  const hasLower = /[a-z]/.test(stem);
+  const hasDigit = /\d/.test(stem);
+
+  if (hasUpper && hasLower)
+    score += 2;
+
+  if (hasDigit && (hasUpper || hasLower))
+    score += 1;
+
+  if (/^[A-Z0-9]{8,24}$/.test(stem))
+    score += 2;
+
+  const transitions =
+    [...stem]
+      .slice(1)
+      .reduce((count, ch, i) => {
+        const prev = stem[i];
+        const caseFlip =
+          /[A-Z]/.test(ch) !==
+          /[A-Z]/.test(prev) &&
+          /[A-Za-z]/.test(ch) &&
+          /[A-Za-z]/.test(prev);
+
+        return count + (caseFlip ? 1 : 0);
+      }, 0);
+
+  if (transitions >= 3)
+    score += 2;
+
+  const uniqueRatio =
+    new Set(stem.toLowerCase()).size /
+    Math.max(stem.length, 1);
+
+  if (
+    stem.length >= 9 &&
+    uniqueRatio >= 0.55
+  ) {
+    score += 1;
+  }
+
+  return score;
+}
+
+function looksLikeUnknownLoaderName(
+  value,
+  evidence = {}
+) {
+  return loaderNameScore(
+    value,
+    evidence
+  ) >= 3;
+}
+
 function isGenericInstaller(value) {
   const name = baseName(value);
   return (
@@ -885,6 +985,27 @@ export async function runCalibratedFilterV2({
       /(^|[^a-z0-9])(injector|aimbot|wallhack|spoofer|cheat|no[ -]?recoil)([^a-z0-9]|$)/i
         .test(name.replace(/\.exe$/i, ""));
 
+    const randomLoaderScore =
+      Math.max(
+        loaderNameScore(
+          representative,
+          evidenceForTrust
+        ),
+        loaderNameScore(
+          name,
+          evidenceForTrust
+        )
+      );
+
+    const randomLoaderName =
+      randomLoaderScore >= 3;
+
+    const packedOrHighEntropy =
+      pe?.packedLike === true ||
+      pe?.highEntropy === true ||
+      safeArray(pe?.packerIndicators)
+        .length > 0;
+
     const strongInjection =
       injectApis.length >= 2;
 
@@ -901,7 +1022,25 @@ export async function runCalibratedFilterV2({
     let title = "";
     let reason = "";
 
-    if (
+    const unknownLoaderContext =
+      randomLoaderName &&
+      executed &&
+      !genericInstaller &&
+      (
+        usb ||
+        deletedOrMissing ||
+        suspiciousPath ||
+        packedOrHighEntropy ||
+        strongInjection
+      );
+
+    if (unknownLoaderContext) {
+      severity = "critical";
+      title =
+        "PRIORIDADE MÁXIMA: possível loader desconhecido executado";
+      reason =
+        "O executável possui nome fortemente randômico e foi efetivamente executado em contexto típico de loader (Downloads/Temp/Desktop, USB, ausência posterior, packer/alta entropia ou APIs fortes). A detecção é comportamental e não depende de catálogo.";
+    } else if (
       usb &&
       executed &&
       executionScope.inSession
@@ -1109,6 +1248,9 @@ export async function runCalibratedFilterV2({
         suspiciousPath,
         genericInstaller,
         highRiskName,
+        randomLoaderName,
+        randomLoaderScore,
+        packedOrHighEntropy,
         priorityMaximum:
           severity === "critical",
         protectedByTechnicalEngine:
