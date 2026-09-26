@@ -1,0 +1,1389 @@
+const STRONG_INJECTION_APIS = new Set([
+  "virtualallocex",
+  "writeprocessmemory",
+  "createremotethread",
+  "ntwritevirtualmemory",
+  "ntcreatethreadex",
+  "queueuserapc"
+]);
+
+const INPUT_APIS = new Set([
+  "mouse_event",
+  "sendinput"
+]);
+
+const GENERIC_EXECUTABLE_NAMES = new Set([
+  "setup.exe",
+  "installer.exe",
+  "install.exe",
+  "update.exe",
+  "updater.exe",
+  "uninstall.exe",
+  "uninstaller.exe"
+]);
+
+const KNOWN_OVERLAY_TOKENS = [
+  "steam",
+  "discord",
+  "nvidia",
+  "amd",
+  "radeon",
+  "obs",
+  "overwolf",
+  "medal",
+  "steelseries",
+  "logitech",
+  "razer",
+  "microsoft"
+];
+
+function safeArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function normalizePath(value) {
+  return String(value || "")
+    .replaceAll("/", "\\")
+    .trim()
+    .toLowerCase();
+}
+
+function baseName(value) {
+  const normalized = normalizePath(value)
+    .replace(/[?#].*$/, "");
+  const parts = normalized
+    .split("\\")
+    .filter(Boolean);
+  return parts.at(-1) || "";
+}
+
+function extName(value) {
+  const name = baseName(value);
+  const index = name.lastIndexOf(".");
+  return index >= 0 ? name.slice(index) : "";
+}
+
+function validDateMs(value) {
+  const ms = new Date(value || 0).getTime();
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function suspiciousUserPath(value) {
+  const p = normalizePath(value);
+  return (
+    p.includes("\\downloads\\") ||
+    p.includes("\\desktop\\") ||
+    p.includes("\\appdata\\local\\temp\\") ||
+    p.includes("\\temp\\")
+  );
+}
+
+function isGenericInstaller(value) {
+  const name = baseName(value);
+  return (
+    GENERIC_EXECUTABLE_NAMES.has(name) ||
+    /(?:setup|installer|install|update|updater|uninstall)[^\\]*\.exe$/i
+      .test(name)
+  );
+}
+
+function isSearchEngineUrl(value) {
+  const raw = String(value || "").toLowerCase();
+  return (
+    raw.includes("google.") && raw.includes("/search") ||
+    raw.includes("bing.com/search") ||
+    raw.includes("duckduckgo.com/") ||
+    raw.includes("search.yahoo.com/")
+  );
+}
+
+function hostOf(value) {
+  try {
+    return new URL(String(value || "")).hostname
+      .toLowerCase()
+      .replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+}
+
+function hasStrongRustIntent(value) {
+  const text = String(value || "").toLowerCase();
+  if (!text) return false;
+
+  const rust =
+    /(^|[^a-z0-9])rust([^a-z0-9]|$)/i.test(text);
+
+  const strong =
+    /(^|[^a-z0-9])(cheat|aimbot|wallhack|flyhack|recoil|macro|script|loader|spoofer|injector|no[ -]?recoil)([^a-z0-9]|$)/i
+      .test(text);
+
+  return rust && strong;
+}
+
+function apiList(item) {
+  return safeArray(item?.suspiciousApis)
+    .map((api) => String(api || "").trim())
+    .filter(Boolean);
+}
+
+function injectionApis(item) {
+  return apiList(item).filter((api) =>
+    STRONG_INJECTION_APIS.has(api.toLowerCase())
+  );
+}
+
+function inputApis(item) {
+  return apiList(item).filter((api) =>
+    INPUT_APIS.has(api.toLowerCase())
+  );
+}
+
+function buildRecentUsb(report) {
+  return safeArray(report?.usbHistory)
+    .filter((item) => item?.present === false)
+    .map((item) => ({
+      item,
+      when:
+        validDateMs(item?.lastDisconnectedUtc) ||
+        validDateMs(item?.lastConnectedUtc)
+    }))
+    .filter((entry) => entry.when > 0);
+}
+
+function usbCorrelatesExecution(execution, recentUsb) {
+  if (execution?.currentRemovable === true)
+    return {
+      confirmed: true,
+      reason: "current_removable",
+      device: null
+    };
+
+  const strongDetached =
+    execution?.volumeNotMounted === true &&
+    execution?.nonSystemVolume === true &&
+    execution?.likelyDetachedOrRemovable === true;
+
+  if (!strongDetached) {
+    return {
+      confirmed: false,
+      reason: "",
+      device: null
+    };
+  }
+
+  const runMs =
+    validDateMs(execution?.lastRunUtc);
+
+  if (!runMs) {
+    return {
+      confirmed: false,
+      reason: "detached_without_time",
+      device: null
+    };
+  }
+
+  const match =
+    recentUsb
+      .map((entry) => ({
+        ...entry,
+        delta: Math.abs(entry.when - runMs)
+      }))
+      .filter((entry) =>
+        runMs <= entry.when + 15 * 60 * 1000 &&
+        runMs >= entry.when - 24 * 60 * 60 * 1000
+      )
+      .sort((a, b) => a.delta - b.delta)[0];
+
+  return {
+    confirmed: Boolean(match),
+    reason: match
+      ? "detached_correlated_usb"
+      : "detached_unconfirmed",
+    device: match?.item || null
+  };
+}
+
+function buildExecutionIndex(report) {
+  const byName = new Map();
+  const recentUsb = buildRecentUsb(report);
+
+  const remember = (
+    rawPath,
+    source,
+    details = {}
+  ) => {
+    const name = baseName(rawPath);
+    if (!/\.exe$/i.test(name))
+      return;
+
+    if (!byName.has(name)) {
+      byName.set(name, {
+        name,
+        paths: new Set(),
+        sources: [],
+        executed: false,
+        missing: false,
+        usbConfirmed: false,
+        usbContext: null
+      });
+    }
+
+    const entry = byName.get(name);
+    const normalized = normalizePath(rawPath);
+
+    if (normalized)
+      entry.paths.add(normalized);
+
+    entry.executed = true;
+    entry.sources.push({
+      source,
+      path: rawPath,
+      ...details
+    });
+
+    if (details.missing === true)
+      entry.missing = true;
+
+    if (details.usb?.confirmed === true) {
+      entry.usbConfirmed = true;
+      entry.usbContext = details.usb;
+    }
+  };
+
+  for (const item of safeArray(report?.processes)) {
+    remember(
+      item?.path || item?.name,
+      "process_snapshot",
+      {
+        missing: false,
+        raw: item
+      }
+    );
+  }
+
+  for (const item of safeArray(report?.prefetchExecutions)) {
+    const pathValue =
+      item?.resolvedExecutablePath ||
+      item?.nativeExecutablePath ||
+      item?.executableName;
+
+    remember(
+      pathValue,
+      "prefetch",
+      {
+        missing:
+          item?.executablePresent === false,
+        usb:
+          usbCorrelatesExecution(
+            item,
+            recentUsb
+          ),
+        raw: item
+      }
+    );
+  }
+
+  for (const item of safeArray(report?.bam)) {
+    remember(
+      item?.path,
+      "bam",
+      {
+        missing:
+          item?.fileExists === false,
+        raw: item
+      }
+    );
+  }
+
+  for (const item of safeArray(report?.processCreationEvents)) {
+    remember(
+      item?.processPath ||
+      item?.processName,
+      "event_4688",
+      {
+        missing:
+          item?.processPresent === false,
+        usb: {
+          confirmed:
+            String(item?.driveType || "")
+              .toLowerCase() === "removable",
+          reason:
+            String(item?.driveType || "")
+              .toLowerCase() === "removable"
+              ? "event_4688_removable"
+              : "",
+          device: null
+        },
+        raw: item
+      }
+    );
+  }
+
+  return byName;
+}
+
+function buildDeletedIndex(report) {
+  const deleted = new Map();
+
+  const remember = (value, source, raw) => {
+    const name = baseName(value);
+    if (!/\.exe$/i.test(name))
+      return;
+
+    if (!deleted.has(name))
+      deleted.set(name, []);
+
+    deleted.get(name).push({
+      source,
+      value,
+      raw
+    });
+  };
+
+  for (const item of safeArray(report?.deletedUsnRecords)) {
+    remember(
+      item?.fileName ||
+      item?.path ||
+      item?.originalPath,
+      "usn_delete",
+      item
+    );
+  }
+
+  for (const item of safeArray(report?.recycleBin)) {
+    remember(
+      item?.originalPath ||
+      item?.fileName,
+      "recycle_bin",
+      item
+    );
+  }
+
+  return deleted;
+}
+
+function buildPeIndex(report) {
+  const index = new Map();
+
+  for (const item of safeArray(report?.peInspections)) {
+    const value =
+      item?.path ||
+      item?.name;
+    const name = baseName(value);
+
+    if (!/\.exe$/i.test(name))
+      continue;
+
+    if (!index.has(name))
+      index.set(name, []);
+
+    index.get(name).push(item);
+  }
+
+  return index;
+}
+
+function strongestPe(peItems) {
+  const sorted =
+    [...peItems].sort((a, b) => {
+      const aScore =
+        injectionApis(a).length * 10 +
+        inputApis(a).length * 5 +
+        (a?.signed === false ? 2 : 0);
+      const bScore =
+        injectionApis(b).length * 10 +
+        inputApis(b).length * 5 +
+        (b?.signed === false ? 2 : 0);
+      return bScore - aScore;
+    });
+
+  return sorted[0] || null;
+}
+
+function buildFileEvidence(report, name) {
+  const wanted = String(name || "").toLowerCase();
+
+  return safeArray(report?.files)
+    .filter((item) =>
+      baseName(item?.path || item?.name) === wanted
+    );
+}
+
+function fileLooksTrusted(
+  value,
+  evidence,
+  helpers
+) {
+  if (
+    helpers.isKnownBenignPeNoise?.(value)
+  ) {
+    return true;
+  }
+
+  if (
+    helpers.isAbsoluteTrustedCatalogArtifact?.(
+      "file",
+      value,
+      evidence || {}
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    helpers.isTrustedCommonAppArtifact?.(
+      value,
+      evidence || {}
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    helpers.isTrustedPortableExecutableName?.(
+      baseName(value)
+    )
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function catalogMatchesForFile(
+  value,
+  evidence,
+  helpers
+) {
+  return helpers.findRustCatalogMatches?.(
+    value,
+    evidence?.name,
+    evidence?.path,
+    evidence?.fileName,
+    evidence?.originalPath,
+    evidence?.targetPath
+  ) || [];
+}
+
+function findingEvidence(base = {}) {
+  return {
+    baselineV2: true,
+    classifierVersion:
+      "calibrated-v2",
+    ...base
+  };
+}
+
+async function addFinding(
+  insertFinding,
+  analysisId,
+  title,
+  severity,
+  type,
+  value,
+  evidence
+) {
+  await insertFinding(
+    analysisId,
+    title,
+    severity,
+    type,
+    value,
+    findingEvidence(evidence)
+  );
+}
+
+function explicitSearchIntent(item, helpers) {
+  const query =
+    String(item?.searchQuery || "")
+      .trim();
+
+  if (!query)
+    return false;
+
+  if (hasStrongRustIntent(query))
+    return true;
+
+  const matches =
+    helpers.findRustCatalogMatches?.(
+      query
+    ) || [];
+
+  return matches.length > 0;
+}
+
+function directCatalogWebMatch(item, helpers) {
+  const matches =
+    helpers.findRustCatalogMatches?.(
+      item?.url,
+      item?.sourceUrl,
+      item?.finalUrl,
+      item?.pageUrl,
+      item?.siteUrl,
+      item?.referrerUrl,
+      item?.recoveredUrl
+    ) || [];
+
+  const direct =
+    matches.find((match) =>
+      helpers.isDirectCatalogWebMatch?.(
+        match,
+        item
+      )
+    );
+
+  return direct
+    ? { direct, matches }
+    : null;
+}
+
+export async function runCalibratedFilterV2({
+  analysisId,
+  report,
+  insertFinding,
+  helpers
+}) {
+  const executionIndex =
+    buildExecutionIndex(report);
+
+  const deletedIndex =
+    buildDeletedIndex(report);
+
+  const peIndex =
+    buildPeIndex(report);
+
+  const candidateNames =
+    new Set([
+      ...executionIndex.keys(),
+      ...deletedIndex.keys(),
+      ...peIndex.keys()
+    ]);
+
+  // 1. Executable correlation. Presence alone is not guilt.
+  for (const name of candidateNames) {
+    const execution =
+      executionIndex.get(name) || {
+        executed: false,
+        missing: false,
+        usbConfirmed: false,
+        sources: [],
+        paths: new Set()
+      };
+
+    const deleted =
+      deletedIndex.get(name) || [];
+
+    const peItems =
+      peIndex.get(name) || [];
+
+    const pe =
+      strongestPe(peItems);
+
+    const fileEvidence =
+      buildFileEvidence(report, name);
+
+    const representative =
+      pe?.path ||
+      pe?.name ||
+      execution.sources?.[0]?.path ||
+      deleted?.[0]?.value ||
+      name;
+
+    const evidenceForTrust =
+      pe ||
+      fileEvidence[0] ||
+      execution.sources?.[0]?.raw ||
+      {};
+
+    if (
+      fileLooksTrusted(
+        representative,
+        evidenceForTrust,
+        helpers
+      )
+    ) {
+      continue;
+    }
+
+    const injectApis =
+      pe ? injectionApis(pe) : [];
+
+    const mouseApis =
+      pe ? inputApis(pe) : [];
+
+    const catalogMatches =
+      catalogMatchesForFile(
+        representative,
+        evidenceForTrust,
+        helpers
+      );
+
+    const executed =
+      execution.executed === true;
+
+    const deletedOrMissing =
+      deleted.length > 0 ||
+      execution.missing === true;
+
+    const usb =
+      execution.usbConfirmed === true;
+
+    const unsigned =
+      pe?.signed === false ||
+      fileEvidence.some(
+        (item) => item?.signed === false
+      );
+
+    const suspiciousPath =
+      suspiciousUserPath(
+        representative
+      ) ||
+      execution.sources.some(
+        (source) =>
+          suspiciousUserPath(source?.path)
+      );
+
+    const genericInstaller =
+      isGenericInstaller(representative);
+
+    const strongInjection =
+      injectApis.length >= 2;
+
+    const inputSignal =
+      mouseApis.length > 0;
+
+    const rustInputContext =
+      /rust|recoil|macro|script/i.test(
+        representative
+      ) ||
+      catalogMatches.length > 0;
+
+    let severity = "";
+    let title = "";
+    let reason = "";
+
+    if (usb && executed) {
+      severity = "critical";
+      title =
+        "EXE não confiável executado em pendrive/USB";
+      reason =
+        "Há evidência de execução em mídia removível correlacionada ao dispositivo USB.";
+    } else if (
+      executed &&
+      deletedOrMissing &&
+      !genericInstaller &&
+      (
+        unsigned ||
+        suspiciousPath ||
+        strongInjection ||
+        catalogMatches.length > 0
+      )
+    ) {
+      severity = "critical";
+      title =
+        "EXE executado e posteriormente apagado/ausente";
+      reason =
+        "O Windows preservou evidência de execução e o executável não está mais disponível no caminho original.";
+    } else if (
+      strongInjection &&
+      executed
+    ) {
+      severity = "critical";
+      title =
+        "Executável executado com forte capacidade de injeção";
+      reason =
+        "O executável foi executado e contém múltiplas APIs clássicas de injeção/manipulação de processo.";
+    } else if (
+      catalogMatches.length > 0 &&
+      executed
+    ) {
+      severity = "critical";
+      title =
+        "Executável do catálogo com execução confirmada";
+      reason =
+        "O executável corresponde ao catálogo de ameaça e possui evidência independente de execução.";
+    } else if (
+      inputSignal &&
+      executed &&
+      (
+        rustInputContext ||
+        usb ||
+        deletedOrMissing
+      )
+    ) {
+      severity = "critical";
+      title =
+        "Automação de mouse/input executada em contexto de alto risco";
+      reason =
+        "O executável foi executado, usa mouse_event/SendInput e possui contexto adicional associado a script/recoil/Rust, USB ou exclusão posterior.";
+    } else if (
+      strongInjection
+    ) {
+      severity = "medium";
+      title =
+        "Executável com APIs fortes de injeção";
+      reason =
+        "Foram encontradas múltiplas APIs de injeção, porém esta análise não comprovou execução do executável.";
+    } else if (
+      catalogMatches.length > 0
+    ) {
+      severity = "medium";
+      title =
+        "Executável correspondente ao catálogo";
+      reason =
+        "O arquivo corresponde ao catálogo, mas não há evidência suficiente de execução nesta análise.";
+    } else if (
+      inputSignal &&
+      executed
+    ) {
+      severity = "medium";
+      title =
+        "Executável com automação de mouse/input";
+      reason =
+        "mouse_event/SendInput foi encontrado em executável com evidência de execução, porém sem contexto adicional suficiente para tratá-lo como recoil de Rust.";
+    } else if (
+      executed &&
+      deletedOrMissing &&
+      genericInstaller
+    ) {
+      severity = "medium";
+      title =
+        "Instalador/updater executado e posteriormente ausente";
+      reason =
+        "Há execução e ausência posterior, mas instaladores e atualizadores podem remover a si próprios legitimamente.";
+    }
+
+    if (!severity)
+      continue;
+
+    await addFinding(
+      insertFinding,
+      analysisId,
+      title,
+      severity,
+      "correlated_executable_v2",
+      representative,
+      {
+        executableName: name,
+        executionConfirmed: executed,
+        executionSources:
+          execution.sources,
+        deletedEvidence:
+          deleted,
+        deletedOrMissing,
+        usbExecution: usb,
+        usbContext:
+          execution.usbContext,
+        injectionApis:
+          injectApis,
+        injectionCapability:
+          strongInjection,
+        inputApis:
+          mouseApis,
+        recoilInputApi:
+          inputSignal,
+        catalogMatches,
+        signed:
+          pe?.signed,
+        suspiciousPath,
+        genericInstaller,
+        priorityMaximum:
+          severity === "critical",
+        protectedByTechnicalEngine:
+          severity === "critical",
+        confidence:
+          severity === "critical"
+            ? "high"
+            : "medium",
+        note: reason
+      }
+    );
+  }
+
+  // 2. Confirmed injection/manual-map into Rust.
+  for (const item of safeArray(report?.processMemoryIntegrity)) {
+    if (item?.potentialManualMap !== true)
+      continue;
+
+    const processName =
+      String(
+        item?.processName ||
+        item?.processPath ||
+        ""
+      ).toLowerCase();
+
+    const rust =
+      processName.includes("rustclient") ||
+      /(^|\\)rust(?:client)?\.exe$/i
+        .test(processName);
+
+    await addFinding(
+      insertFinding,
+      analysisId,
+      rust
+        ? "Possível manual-map confirmado na memória do Rust"
+        : "Região executável privada com cabeçalho PE",
+      rust ? "critical" : "medium",
+      "memory_integrity_v2",
+      (item?.processName || "processo") +
+        " @ " +
+        (item?.baseAddress || "memória"),
+      {
+        ...item,
+        manualMapInRust: rust,
+        injectionIntoRust: rust,
+        priorityMaximum: rust,
+        protectedByTechnicalEngine: rust,
+        confidence: rust ? "high" : "medium",
+        note: rust
+          ? "Foi encontrada região MEM_PRIVATE executável com assinatura PE dentro do processo do Rust."
+          : "Foi encontrada região executável privada com assinatura PE em outro processo; requer contexto adicional."
+      }
+    );
+  }
+
+  for (const item of safeArray(report?.processModuleIntegrity)) {
+    if (item?.suspicious !== true)
+      continue;
+
+    const processName =
+      String(item?.processName || "")
+        .toLowerCase();
+
+    const rust =
+      processName === "rust" ||
+      processName === "rustclient" ||
+      processName.includes("rustclient");
+
+    const moduleValue =
+      item?.modulePath ||
+      item?.moduleName ||
+      "";
+
+    if (
+      !rust ||
+      fileLooksTrusted(
+        moduleValue,
+        item,
+        helpers
+      )
+    ) {
+      continue;
+    }
+
+    await addFinding(
+      insertFinding,
+      analysisId,
+      "Módulo externo suspeito carregado dentro do Rust",
+      "critical",
+      "rust_module_injection_v2",
+      moduleValue,
+      {
+        ...item,
+        injectionIntoRust: true,
+        priorityMaximum: true,
+        protectedByTechnicalEngine: true,
+        confidence: "high",
+        note:
+          "O módulo foi observado carregado no processo do Rust e não corresponde ao catálogo confiável."
+      }
+    );
+  }
+
+  for (const item of safeArray(report?.rustModules)) {
+    const haystack = [
+      item?.path,
+      item?.moduleName,
+      item?.companyName,
+      item?.signerSubject
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+
+    const knownOverlay =
+      KNOWN_OVERLAY_TOKENS.some(
+        (token) => haystack.includes(token)
+      );
+
+    const suspicious =
+      !knownOverlay &&
+      item?.signed === false &&
+      item?.underGameDirectory === false &&
+      item?.underWindows === false &&
+      (
+        item?.underTemp === true ||
+        (
+          item?.underUserProfile === true &&
+          item?.underProgramFiles !== true &&
+          !item?.companyName
+        )
+      );
+
+    if (!suspicious)
+      continue;
+
+    const value =
+      item?.path ||
+      item?.moduleName ||
+      "";
+
+    if (
+      fileLooksTrusted(
+        value,
+        item,
+        helpers
+      )
+    ) {
+      continue;
+    }
+
+    await addFinding(
+      insertFinding,
+      analysisId,
+      "Módulo externo não confiável carregado no Rust",
+      "critical",
+      "rust_module_v2",
+      value,
+      {
+        ...item,
+        injectionIntoRust: true,
+        priorityMaximum: true,
+        protectedByTechnicalEngine: true,
+        confidence: "high",
+        note:
+          "O módulo externo foi carregado dentro do Rust a partir de local de usuário/temporário e não é confiável."
+      }
+    );
+  }
+
+  // 3. Web evidence. Browsing is context, not proof of cheat execution.
+  const directHosts = new Set();
+  const searches = new Set();
+  const contextualPages = new Set();
+
+  for (const item of safeArray(report?.browserHistorySignals)) {
+    const direct =
+      directCatalogWebMatch(
+        item,
+        helpers
+      );
+
+    if (direct) {
+      const url =
+        item?.url ||
+        item?.pageUrl ||
+        item?.siteUrl ||
+        item?.host ||
+        "";
+
+      const host =
+        hostOf(url) ||
+        hostOf(item?.url) ||
+        String(item?.host || "")
+          .toLowerCase()
+          .replace(/^www\./, "");
+
+      const key =
+        host ||
+        String(
+          direct?.direct?.name ||
+          direct?.direct?.matchedBy ||
+          url
+        ).toLowerCase();
+
+      if (!directHosts.has(key)) {
+        directHosts.add(key);
+
+        await addFinding(
+          insertFinding,
+          analysisId,
+          "Site do catálogo de cheat acessado",
+          "medium",
+          "browser_catalog_visit_v2",
+          url || key,
+          {
+            ...item,
+            catalogMatch:
+              direct.direct,
+            catalogMatches:
+              direct.matches,
+            directCatalogMatch: true,
+            knownCheatDomain: true,
+            confidence: "medium",
+            note:
+              "Acesso direto a domínio do catálogo é contexto relevante, mas não prova execução de cheat/loader."
+          }
+        );
+      }
+
+      continue;
+    }
+
+    if (
+      item?.searchQuery &&
+      explicitSearchIntent(
+        item,
+        helpers
+      )
+    ) {
+      const query =
+        String(item.searchQuery)
+          .trim()
+          .toLowerCase();
+
+      if (!searches.has(query)) {
+        searches.add(query);
+
+        await addFinding(
+          insertFinding,
+          analysisId,
+          "Pesquisa explícita relacionada a cheat/script de Rust",
+          "medium",
+          "browser_search_v2",
+          item.searchQuery,
+          {
+            ...item,
+            confidence: "medium",
+            note:
+              "Pesquisa explícita é contexto para revisão. Não equivale a download ou execução."
+          }
+        );
+      }
+
+      continue;
+    }
+
+    const title =
+      String(item?.title || "");
+
+    const pageValue =
+      title +
+      " " +
+      String(item?.url || "");
+
+    if (
+      hasStrongRustIntent(title) &&
+      !isSearchEngineUrl(item?.url)
+    ) {
+      const key =
+        hostOf(item?.url) ||
+        item?.url ||
+        title;
+
+      if (!contextualPages.has(key)) {
+        contextualPages.add(key);
+
+        await addFinding(
+          insertFinding,
+          analysisId,
+          "Página com conteúdo explícito de cheat/script para Rust",
+          "medium",
+          "browser_context_v2",
+          item?.url || title,
+          {
+            ...item,
+            confidence: "medium",
+            note:
+              "O título da página contém contexto explícito de Rust + cheat/script. Mantido como revisão, não como prova de uso."
+          }
+        );
+      }
+    }
+  }
+
+  // Recovered browser fragments are noisy. Only keep a valid direct catalog URL.
+  for (const item of safeArray(report?.browserRecoveredArtifacts)) {
+    const value =
+      item?.recoveredUrl ||
+      "";
+
+    if (!/^https?:\/\//i.test(value))
+      continue;
+
+    const direct =
+      directCatalogWebMatch(
+        {
+          ...item,
+          url: value,
+          recoveredUrl: value
+        },
+        helpers
+      );
+
+    if (!direct)
+      continue;
+
+    const host =
+      hostOf(value);
+
+    if (!host || directHosts.has(host))
+      continue;
+
+    directHosts.add(host);
+
+    await addFinding(
+      insertFinding,
+      analysisId,
+      "Vestígio recuperado de domínio do catálogo",
+      "medium",
+      "browser_recovery_v2",
+      value,
+      {
+        ...item,
+        catalogMatch:
+          direct.direct,
+        catalogMatches:
+          direct.matches,
+        directCatalogMatch: true,
+        knownCheatDomain: true,
+        confidence: "context",
+        note:
+          "Fragmento recuperado aponta para domínio do catálogo. Como a origem é recuperação SQLite/WAL, é mantido apenas para revisão."
+      }
+    );
+  }
+
+  // Browser database deletion is inventory only.
+  for (const item of safeArray(report?.usnActivity)) {
+    if (item?.browserDatabase !== true)
+      continue;
+
+    await addFinding(
+      insertFinding,
+      analysisId,
+      "Banco de histórico do navegador apagado/alterado (inventário)",
+      "info",
+      "browser_history_inventory_v2",
+      item?.fileName ||
+      item?.name ||
+      "History",
+      {
+        ...item,
+        inventoryOnly: true,
+        confidence: "info",
+        note:
+          "Alteração/exclusão de History/places.sqlite é inventário forense e não é tratada como suspeita."
+      }
+    );
+  }
+
+  // 4. Download context. A download alone is never critical in V2.
+  const downloadSeen = new Set();
+
+  for (const item of safeArray(report?.browserDownloads)) {
+    const value =
+      item?.targetPath ||
+      item?.fileName ||
+      item?.finalUrl ||
+      item?.sourceUrl ||
+      "";
+
+    const extension =
+      extName(value);
+
+    const direct =
+      directCatalogWebMatch(
+        item,
+        helpers
+      );
+
+    const discordAttachment =
+      [".exe", ".zip", ".rar", ".7z"]
+        .includes(extension) &&
+      /(?:cdn\.discordapp\.com|media\.discordapp\.net|discordattachments\.com)\/attachments\//i
+        .test(
+          [
+            item?.sourceUrl,
+            item?.finalUrl,
+            item?.referrerUrl
+          ]
+            .filter(Boolean)
+            .join(" ")
+        );
+
+    if (!direct && !discordAttachment)
+      continue;
+
+    const key =
+      normalizePath(value);
+
+    if (downloadSeen.has(key))
+      continue;
+
+    downloadSeen.add(key);
+
+    await addFinding(
+      insertFinding,
+      analysisId,
+      direct
+        ? "Arquivo baixado a partir de fonte do catálogo"
+        : "Executável/arquivo compactado baixado de anexo real do Discord",
+      "medium",
+      "browser_download_v2",
+      value,
+      {
+        ...item,
+        catalogMatch:
+          direct?.direct || null,
+        catalogMatches:
+          direct?.matches || [],
+        directCatalogMatch:
+          Boolean(direct),
+        knownCheatDomain:
+          Boolean(direct),
+        discordAttachment,
+        confidence: "medium",
+        note:
+          "O download é contexto de revisão. Somente execução ou outra evidência técnica forte pode elevá-lo a crítico."
+      }
+    );
+  }
+
+  // 5. Steam bans: Rust-specific/server bans are critical; generic bans are context.
+  for (const account of safeArray(report?.steamAccounts)) {
+    const consensus =
+      account?.banConsensus || {};
+
+    if (consensus?.banDetected !== true)
+      continue;
+
+    const serverBanCount =
+      Number(
+        account?.providerChecks?.serverArmour?.serverBanCount || 0
+      );
+
+    const rustSpecific =
+      consensus?.rustSpecific === true ||
+      account?.providerChecks?.steam?.rustSpecific === true;
+
+    const critical =
+      serverBanCount > 0 ||
+      rustSpecific;
+
+    await addFinding(
+      insertFinding,
+      analysisId,
+      critical
+        ? "Conta Steam com ban relacionado ao Rust/servidores"
+        : "Conta Steam com histórico de ban",
+      critical ? "critical" : "medium",
+      "steam_account_ban_v2",
+      String(
+        account?.steamId64 ||
+        "Steam"
+      ),
+      {
+        steamId64:
+          account?.steamId64 || "",
+        accountName:
+          account?.accountName || "",
+        personaName:
+          account?.personaName || "",
+        profileUrl:
+          account?.profileUrl || "",
+        isLinkedAccount:
+          account?.isLinkedAccount === true,
+        mostRecent:
+          account?.mostRecent === true,
+        providerChecks:
+          account?.providerChecks || {},
+        banConsensus:
+          consensus,
+        priorityMaximum:
+          critical,
+        protectedByTechnicalEngine:
+          critical,
+        confidence:
+          critical ? "high" : "context",
+        note:
+          critical
+            ? "A fonte consultada indica ban relacionado ao Rust ou ban aplicado por servidor. Revise motivo e data."
+            : "Existe histórico genérico de ban na conta Steam. Mantido como contexto porque o PC pode ser compartilhado e o ban pode ser de outro jogo."
+      }
+    );
+  }
+
+  // 6. Defender detections are review context unless independently correlated above.
+  for (const item of safeArray(report?.defenderDetections)) {
+    const value =
+      item?.path ||
+      item?.threatName ||
+      "";
+
+    if (
+      fileLooksTrusted(
+        value,
+        item,
+        helpers
+      )
+    ) {
+      continue;
+    }
+
+    const text =
+      [
+        item?.threatName,
+        item?.path,
+        item?.resources
+      ]
+        .filter(Boolean)
+        .join(" ");
+
+    if (
+      !/cheat|hack|inject|loader|aimbot|recoil|trojan|malware/i
+        .test(text)
+    ) {
+      continue;
+    }
+
+    await addFinding(
+      insertFinding,
+      analysisId,
+      "Detecção do Microsoft Defender para revisão",
+      "medium",
+      "defender_detection_v2",
+      value,
+      {
+        ...item,
+        confidence: "medium",
+        note:
+          "Detecção do antivírus é contexto útil, mas pode conter falso positivo. Exige correlação com execução/arquivo."
+      }
+    );
+  }
+
+  // 7. Boot integrity changes are review context, never proof alone.
+  for (const item of safeArray(report?.bootIntegrity)) {
+    const raw =
+      String(item?.raw || "")
+        .toLowerCase();
+
+    const risky =
+      /(testsigning|nointegritychecks|debug)/i
+        .test(raw) &&
+      /\b(yes|on|true|1)\b/i
+        .test(raw);
+
+    if (!risky)
+      continue;
+
+    await addFinding(
+      insertFinding,
+      analysisId,
+      "Integridade de boot do Windows alterada",
+      "medium",
+      "boot_integrity_v2",
+      item?.raw ||
+      item?.setting ||
+      "BCD",
+      {
+        ...item,
+        confidence: "context",
+        note:
+          "Test mode/debug/nointegritychecks reduzem garantias do Windows, mas não provam cheat isoladamente."
+      }
+    );
+  }
+}
