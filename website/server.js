@@ -4528,7 +4528,7 @@ async function rebuildFindings(analysisId, report) {
 
   await pool.query("DELETE FROM scan_findings WHERE analysis_id = $1", [analysisId]);
 
-  // Baseline V2: legacy database rules and the previous built-in filter
+  // Baseline V3 / Echo-inspired: legacy database rules and the previous built-in filter
   // remain in the codebase only for rollback. They no longer participate in
   // classification. The threat-site catalog and trusted-app catalog are
   // explicitly passed to the calibrated engine.
