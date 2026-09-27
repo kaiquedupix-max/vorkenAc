@@ -91,13 +91,14 @@ jobs:
           $repo = "${{ github.repository }}"
           $shortSha = "${{ github.sha }}".Substring(0, 7)
 
-          gh release delete $tag --repo $repo --yes --cleanup-tag 2>$null
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "No previous automatic agent release found."
+          gh release view $tag --repo $repo *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag .\publish\Vorken.Agent.exe .\publish\SHA256SUMS.txt --repo $repo --clobber
+            gh release edit $tag --repo $repo --title "Vorken Agent · latest" --notes "Build automático do Vorken Agent a partir do commit $shortSha."
+          } else {
             $global:LASTEXITCODE = 0
+            gh release create $tag .\publish\Vorken.Agent.exe .\publish\SHA256SUMS.txt --repo $repo --target "${{ github.sha }}" --title "Vorken Agent · latest" --notes "Build automático do Vorken Agent a partir do commit $shortSha." --latest=false
           }
-
-          gh release create $tag .\publish\Vorken.Agent.exe .\publish\SHA256SUMS.txt --repo $repo --target "${{ github.sha }}" --title "Vorken Agent · latest" --notes "Build automático do Vorken Agent a partir do commit $shortSha." --latest=false
 
           Write-Host "Automatic agent release updated: https://github.com/$repo/releases/tag/$tag"
           Write-Host "Stable EXE URL: https://github.com/$repo/releases/download/$tag/Vorken.Agent.exe"

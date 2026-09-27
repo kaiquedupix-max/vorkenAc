@@ -21,55 +21,138 @@ const publicUrl = String(process.env.PUBLIC_URL || "http://localhost:" + port).r
 const agentBinaryPath = String(
   process.env.AGENT_BINARY_PATH || path.join(__dirname, "agent-build", "Vorken.Agent.exe")
 );
+const agentBinaryUrl = String(
+  process.env.AGENT_BINARY_URL ||
+  "https://github.com/kaiquedupix-max/vorkenAc/releases/download/agent-latest/Vorken.Agent.exe"
+).trim();
+const agentBinaryCacheMs = Math.max(
+  15000,
+  Number(process.env.AGENT_BINARY_CACHE_MS || 60000)
+);
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.DATABASE_SSL === "true" ? { rejectUnauthorized: false } : undefined,
 });
 
-let agentHashCache = {
-  mtimeMs: -1,
-  size: 0,
-  sha256: ""
+let agentBinaryCache = {
+  fetchedAt: 0,
+  binary: null,
+  source: "",
 };
 
-function getAgentVerification() {
-  try {
-    const stat = fs.statSync(agentBinaryPath);
+function validateAgentBinary(binary) {
+  return (
+    Buffer.isBuffer(binary) &&
+    binary.length > 1024 &&
+    binary[0] === 0x4d &&
+    binary[1] === 0x5a
+  );
+}
 
-    if (
-      agentHashCache.mtimeMs === stat.mtimeMs &&
-      agentHashCache.size === stat.size &&
-      agentHashCache.sha256
-    ) {
-      return {
-        sha256: agentHashCache.sha256,
-        sizeBytes: agentHashCache.size
+async function loadPublishedAgentBinary() {
+  const now = Date.now();
+
+  if (
+    agentBinaryCache.binary &&
+    now - agentBinaryCache.fetchedAt < agentBinaryCacheMs
+  ) {
+    return agentBinaryCache;
+  }
+
+  if (agentBinaryUrl) {
+    try {
+      const response = await fetch(agentBinaryUrl, {
+        redirect: "follow",
+        headers: {
+          Accept: "application/octet-stream",
+          "User-Agent": "Vorken-Web-Agent-Distributor",
+        },
+        signal: AbortSignal.timeout(30000),
+      });
+
+      if (!response.ok)
+        throw new Error("HTTP " + response.status);
+
+      const binary = Buffer.from(
+        await response.arrayBuffer()
+      );
+
+      if (!validateAgentBinary(binary))
+        throw new Error("Resposta não contém um executável PE válido.");
+
+      agentBinaryCache = {
+        fetchedAt: now,
+        binary,
+        source: "github-release",
       };
+
+      return agentBinaryCache;
+    } catch (error) {
+      console.error(
+        "Falha ao obter Vorken Agent da release assinável:",
+        error
+      );
+
+      // If a previously fetched release exists, preserve it rather than falling
+      // back to a different hash while GitHub is temporarily unavailable.
+      if (agentBinaryCache.binary)
+        return agentBinaryCache;
     }
+  }
 
-    const binary = fs.readFileSync(agentBinaryPath);
-    const sha256 = crypto
-      .createHash("sha256")
-      .update(binary)
-      .digest("hex");
+  try {
+    const binary =
+      fs.readFileSync(agentBinaryPath);
 
-    agentHashCache = {
-      mtimeMs: stat.mtimeMs,
-      size: stat.size,
-      sha256
+    if (!validateAgentBinary(binary))
+      throw new Error("Binário local inválido.");
+
+    agentBinaryCache = {
+      fetchedAt: now,
+      binary,
+      source: "local-fallback",
     };
 
+    return agentBinaryCache;
+  } catch (error) {
+    console.error(
+      "Vorken Agent indisponível:",
+      error
+    );
+
     return {
-      sha256,
-      sizeBytes: stat.size
-    };
-  } catch {
-    return {
-      sha256: "",
-      sizeBytes: 0
+      fetchedAt: now,
+      binary: null,
+      source: "",
     };
   }
+}
+
+function agentVerificationFromBinary(binary) {
+  if (!validateAgentBinary(binary)) {
+    return {
+      sha256: "",
+      sizeBytes: 0,
+    };
+  }
+
+  return {
+    sha256: crypto
+      .createHash("sha256")
+      .update(binary)
+      .digest("hex"),
+    sizeBytes: binary.length,
+  };
+}
+
+async function getAgentVerification() {
+  const published =
+    await loadPublishedAgentBinary();
+
+  return agentVerificationFromBinary(
+    published.binary
+  );
 }
 
 const ADMIN_COOKIE = "vorken_admin";
@@ -9779,67 +9862,9 @@ app.get("/api/public/analyses/:token", async (req, res) => {
     },
     downloadUrl: "/api/public/analyses/" + token + "/download",
     packageUrl: "/api/public/analyses/" + token + "/download",
-    agentVerification: getAgentVerification(),
+    agentVerification: await getAgentVerification(),
   });
 });
-
-const ANALYSIS_TOKEN_SLOT =
-  "__VORKEN_ANALYSIS_TOKEN_SLOT__" +
-  "_".repeat(
-    128 -
-    "__VORKEN_ANALYSIS_TOKEN_SLOT__".length
-  );
-
-function personalizeAgentBinaryToken(binary, token) {
-  const slotBuffer =
-    Buffer.from(
-      ANALYSIS_TOKEN_SLOT,
-      "utf8"
-    );
-
-  const tokenText =
-    String(token || "").trim();
-
-  if (!validToken(tokenText)) {
-    throw new Error(
-      "Token de análise inválido para personalização do agente."
-    );
-  }
-
-  if (tokenText.length > slotBuffer.length) {
-    throw new Error(
-      "Token de análise excede o espaço reservado no agente."
-    );
-  }
-
-  const offset =
-    binary.indexOf(slotBuffer);
-
-  if (offset < 0) {
-    throw new Error(
-      "Slot de token não encontrado no Vorken Agent publicado."
-    );
-  }
-
-  const personalized =
-    Buffer.from(binary);
-
-  const replacement =
-    Buffer.from(
-      tokenText.padEnd(
-        slotBuffer.length,
-        " "
-      ),
-      "utf8"
-    );
-
-  replacement.copy(
-    personalized,
-    offset
-  );
-
-  return personalized;
-}
 
 app.get("/api/public/analyses/:token/download", async (req, res) => {
   const token = String(req.params.token || "");
@@ -9848,45 +9873,34 @@ app.get("/api/public/analyses/:token/download", async (req, res) => {
   const analysis = await getAnalysisByToken(token);
   if (!ensureAnalysisUsable(analysis, res)) return;
 
-  if (!fs.existsSync(agentBinaryPath)) {
-    return res.status(503).send(
-      "O executável do Vorken Agent ainda não foi publicado no servidor."
-    );
-  }
+  const published =
+    await loadPublishedAgentBinary();
 
   const binary =
-    fs.readFileSync(agentBinaryPath);
+    published.binary;
 
-  let personalizedBinary;
-
-  try {
-    personalizedBinary =
-      personalizeAgentBinaryToken(
-        binary,
-        token
-      );
-  } catch (error) {
-    console.error(
-      "Falha ao personalizar Vorken Agent:",
-      error
-    );
-
+  if (!validateAgentBinary(binary)) {
     return res.status(503).send(
-      "O Vorken Agent publicado precisa ser recompilado antes de gerar esta análise."
+      "O executável oficial do Vorken Agent ainda não está disponível."
     );
   }
 
   const sha256 = crypto
     .createHash("sha256")
-    .update(personalizedBinary)
+    .update(binary)
     .digest("hex");
 
   const clientName =
     await getAnalysisClientName(analysis);
 
+  // IMPORTANT: only the filename is personalized. The EXE bytes remain
+  // byte-for-byte identical to the GitHub build so Authenticode and SmartScreen
+  // reputation are preserved.
   const fileName =
     "Vorken AntiCheat - " +
     clientName +
+    "--" +
+    token +
     ".exe";
 
   const asciiFileName =
@@ -9911,12 +9925,12 @@ app.get("/api/public/analyses/:token/download", async (req, res) => {
   );
   res.setHeader(
     "Content-Length",
-    String(personalizedBinary.length)
+    String(binary.length)
   );
   res.setHeader("Cache-Control", "private, no-store");
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Vorken-SHA256", sha256);
-  res.end(personalizedBinary);
+  res.end(binary);
 });
 
 app.get("/api/public/analyses/:token/package", (req, res) => {
