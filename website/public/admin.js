@@ -9,6 +9,7 @@ let currentReportId = null;
 let showTechnicalResult = false;
 let currentClientReportReleased = false;
 let currentGuerraFriaLinked = false;
+let currentDecisionSelectable = false;
 let currentIntegrationDecision = null;
 let selectedBanEvidenceIds = new Set();
 let selectedTrustedEvidenceIds = new Set();
@@ -115,6 +116,88 @@ function requestGuerraFriaBanReason() {
     dialog.addEventListener("cancel", onDialogCancel);
 
     dialog.showModal();
+  });
+}
+
+function requestManualBanPlayer() {
+  return new Promise((resolve) => {
+    const dialog = document.getElementById("manualBanPlayerDialog");
+    const steamIdInput = document.getElementById("manualBanSteamId");
+    const discordIdInput = document.getElementById("manualBanDiscordId");
+    const ticketIdInput = document.getElementById("manualBanTicketId");
+    const message = document.getElementById("manualBanPlayerMessage");
+    const confirmBtn = document.getElementById("manualBanPlayerConfirmBtn");
+    const cancelBtn = document.getElementById("manualBanPlayerCancelBtn");
+
+    if (!dialog || !steamIdInput || !confirmBtn || !cancelBtn) {
+      const steamId = String(window.prompt("SteamID64 do jogador:", "") || "").trim();
+      resolve(steamId ? { steamId, discordUserId: "", ticketChannelId: "" } : null);
+      return;
+    }
+
+    steamIdInput.value = "";
+    if (discordIdInput) discordIdInput.value = "";
+    if (ticketIdInput) ticketIdInput.value = "";
+    if (message) {
+      message.textContent = "";
+      message.className = "message hidden";
+    }
+
+    const cleanup = () => {
+      confirmBtn.removeEventListener("click", onConfirm);
+      cancelBtn.removeEventListener("click", onCancel);
+      dialog.removeEventListener("cancel", onDialogCancel);
+    };
+
+    const finish = (value) => {
+      cleanup();
+      if (dialog.open) dialog.close();
+      resolve(value);
+    };
+
+    const showError = (text) => {
+      if (!message) return;
+      message.textContent = text;
+      message.className = "message error";
+    };
+
+    const onConfirm = () => {
+      const steamId = String(steamIdInput.value || "").trim();
+      const discordUserId = String(discordIdInput?.value || "").trim();
+      const ticketChannelId = String(ticketIdInput?.value || "").trim();
+
+      if (!/^7656119\d{10}$/.test(steamId)) {
+        showError("Informe um SteamID64 válido com 17 dígitos, começando por 7656119.");
+        steamIdInput.focus();
+        return;
+      }
+
+      if (discordUserId && !/^\d{16,20}$/.test(discordUserId)) {
+        showError("O Discord User ID deve conter entre 16 e 20 dígitos.");
+        discordIdInput?.focus();
+        return;
+      }
+
+      if (ticketChannelId && !/^\d{16,20}$/.test(ticketChannelId)) {
+        showError("O Ticket / Channel ID deve conter entre 16 e 20 dígitos.");
+        ticketIdInput?.focus();
+        return;
+      }
+
+      finish({ steamId, discordUserId, ticketChannelId });
+    };
+
+    const onCancel = () => finish(null);
+    const onDialogCancel = (event) => {
+      event.preventDefault();
+      finish(null);
+    };
+
+    confirmBtn.addEventListener("click", onConfirm);
+    cancelBtn.addEventListener("click", onCancel);
+    dialog.addEventListener("cancel", onDialogCancel);
+    dialog.showModal();
+    setTimeout(() => steamIdInput.focus(), 0);
   });
 }
 
@@ -892,6 +975,7 @@ document.getElementById("closeReportBtn").addEventListener("click", () => {
   currentReportId = null;
   currentClientReportReleased = false;
   currentGuerraFriaLinked = false;
+  currentDecisionSelectable = false;
   currentIntegrationDecision = null;
   selectedBanEvidenceIds.clear();
   selectedTrustedEvidenceIds.clear();
@@ -900,7 +984,7 @@ document.getElementById("closeReportBtn").addEventListener("click", () => {
 });
 
 async function queueGuerraFriaDecision(action) {
-  if (!currentReportId || !currentGuerraFriaLinked)
+  if (!currentReportId || !currentDecisionSelectable)
     return;
 
   const isBan =
@@ -931,6 +1015,14 @@ async function queueGuerraFriaDecision(action) {
     alert("Selecione pelo menos uma evidência que justifique o banimento.");
     return;
   }
+
+  const manualPlayer =
+    isBan && !currentGuerraFriaLinked
+      ? await requestManualBanPlayer()
+      : null;
+
+  if (isBan && !currentGuerraFriaLinked && !manualPlayer)
+    return;
 
   const confirmed =
     window.confirm(
@@ -965,6 +1057,7 @@ async function queueGuerraFriaDecision(action) {
           reason,
           evidenceIds,
           trustedEvidenceIds,
+          manualPlayer,
         }),
       }
     );
@@ -1312,10 +1405,14 @@ async function openReport(id, options = {}) {
     analysis.client_report_released === true;
 
   currentGuerraFriaLinked =
-    analysis.external_source === "guerra_fria" &&
+    ["guerra_fria", "guerra_fria_manual"].includes(analysis.external_source) &&
     /^7656119\d{10}$/.test(
       String(analysis.external_player_id || "")
     );
+
+  currentDecisionSelectable =
+    analysis.status === "completed" &&
+    !analysis.external_decision;
 
   currentIntegrationDecision =
     analysis.external_decision
@@ -1341,10 +1438,10 @@ async function openReport(id, options = {}) {
 
   gfActions?.classList.toggle(
     "hidden",
-    !currentGuerraFriaLinked
+    false
   );
 
-  if (currentGuerraFriaLinked && gfDecisionBadge) {
+  if (gfDecisionBadge) {
     const decision =
       currentIntegrationDecision;
 
@@ -1357,7 +1454,9 @@ async function openReport(id, options = {}) {
           ) +
           " · " +
           String(decision.status || "").toUpperCase()
-        : "GUERRA FRIA · AGUARDANDO DECISÃO";
+        : currentGuerraFriaLinked
+          ? "GUERRA FRIA · AGUARDANDO DECISÃO"
+          : "VORKEN · DECISÃO MANUAL";
 
     gfDecisionBadge.className =
       "gf-decision-badge " +
@@ -1388,13 +1487,17 @@ async function openReport(id, options = {}) {
         : "⚠ Banir jogador";
   }
 
-  if (gfReleaseBtn)
+  if (gfReleaseBtn) {
+    gfReleaseBtn.classList.toggle("hidden", !currentGuerraFriaLinked);
     gfReleaseBtn.disabled = decisionLocked;
+  }
 
   const gfTrustAllBtn =
     document.getElementById("gfTrustAllBtn");
-  if (gfTrustAllBtn)
+  if (gfTrustAllBtn) {
+    gfTrustAllBtn.classList.toggle("hidden", !currentGuerraFriaLinked);
     gfTrustAllBtn.disabled = decisionLocked;
+  }
 
   const clientToggle = document.getElementById("clientReportToggleBtn");
   if (clientToggle) {
@@ -1878,7 +1981,7 @@ async function openReport(id, options = {}) {
               null;
 
             const steamEvidenceSelection =
-              currentGuerraFriaLinked &&
+              currentDecisionSelectable &&
               selectableSteamFinding &&
               Number.isInteger(Number(selectableSteamFinding.id))
                 ? (
@@ -2160,7 +2263,7 @@ async function openReport(id, options = {}) {
           : "";
 
       const selectable =
-        currentGuerraFriaLinked &&
+        currentDecisionSelectable &&
         ["critical", "high", "medium"].includes(displaySeverity) &&
         Number.isInteger(Number(finding.id));
       const selectionBlock = selectable

@@ -584,7 +584,33 @@
     </form>
   </dialog>
 
+  <dialog id="manualBanPlayerDialog" class="gf-ban-dialog">
+    <form method="dialog" class="gf-ban-dialog-card">
+      <div class="eyebrow">VORKEN · BANIMENTO MANUAL</div>
+      <h2>Identificar o jogador</h2>
+      <p class="muted">Esta análise foi criada por link manual. Informe o SteamID64 para aplicar o banimento ao jogador correto e vincular a decisão ao relatório.</p>
+
+      <label>SteamID64 do jogador
+        <input id="manualBanSteamId" type="text" inputmode="numeric" maxlength="17" placeholder="7656119XXXXXXXXXX" autocomplete="off" required>
+      </label>
+
+      <label>Discord User ID <span class="muted">(opcional)</span>
+        <input id="manualBanDiscordId" type="text" inputmode="numeric" maxlength="20" placeholder="ID numérico do usuário" autocomplete="off">
+      </label>
+
+      <label>Ticket / Channel ID <span class="muted">(opcional)</span>
+        <input id="manualBanTicketId" type="text" inputmode="numeric" maxlength="20" placeholder="ID numérico do canal" autocomplete="off">
+      </label>
+
+      <div id="manualBanPlayerMessage" class="message hidden"></div>
+      <div class="gf-ban-dialog-actions">
+        <button id="manualBanPlayerCancelBtn" class="button ghost" type="button">Cancelar</button>
+        <button id="manualBanPlayerConfirmBtn" class="button gf-ban-button" type="button">Continuar com o banimento</button>
+      </div>
+    </form>
+  </dialog>
+
   <script src="/ui-polish.js?v=20260927-remote-admin-v1"></script>
-  <script src="/admin.js?v=20260928-learning-v2"></script>
+  <script src="/admin.js?v=20260928-manual-ban-v1"></script>
 </body>
 </html>

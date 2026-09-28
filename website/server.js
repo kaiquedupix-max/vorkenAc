@@ -9557,6 +9557,20 @@ app.post(
       )
     ].slice(0, 500);
 
+    const submittedManualPlayer =
+      req.body?.manualPlayer && typeof req.body.manualPlayer === "object"
+        ? req.body.manualPlayer
+        : {};
+    const manualSteamId = cleanText(submittedManualPlayer.steamId, 17);
+    const manualDiscordUserId = cleanText(submittedManualPlayer.discordUserId, 20);
+    const manualTicketChannelId = cleanText(submittedManualPlayer.ticketChannelId, 20);
+
+    if (manualDiscordUserId && !/^\d{16,20}$/.test(manualDiscordUserId))
+      return res.status(400).json({ error: "invalid_discord_user_id", message: "Discord User ID inválido." });
+
+    if (manualTicketChannelId && !/^\d{16,20}$/.test(manualTicketChannelId))
+      return res.status(400).json({ error: "invalid_ticket_channel_id", message: "Ticket / Channel ID inválido." });
+
     if (decision === "deny" && evidenceIds.length === 0) {
       return res.status(400).json({
         error: "evidence_required",
@@ -9567,6 +9581,7 @@ app.post(
     const analysisResult = await pool.query(
       `SELECT
          id,
+         label,
          status,
          external_source,
          external_player_id,
@@ -9584,11 +9599,25 @@ app.post(
     if (!analysis)
       return res.status(404).json({ error: "analysis_not_found" });
 
-    if (analysis.external_source !== "guerra_fria" ||
-        !/^7656119\d{10}$/.test(String(analysis.external_player_id || ""))) {
+    const linkedSteamId =
+      ["guerra_fria", "guerra_fria_manual"].includes(analysis.external_source) &&
+      /^7656119\d{10}$/.test(String(analysis.external_player_id || ""))
+        ? String(analysis.external_player_id)
+        : "";
+    const isManualDecision = !linkedSteamId;
+    const decisionSteamId = linkedSteamId || manualSteamId;
+
+    if (!/^7656119\d{10}$/.test(decisionSteamId)) {
       return res.status(409).json({
         error: "analysis_not_linked",
-        message: "Esta análise não está vinculada ao Guerra Fria."
+        message: "Informe o SteamID64 do jogador para aplicar o banimento desta análise manual."
+      });
+    }
+
+    if (isManualDecision && decision !== "deny") {
+      return res.status(409).json({
+        error: "manual_release_not_supported",
+        message: "A decisão manual sem vínculo está disponível apenas para banimento."
       });
     }
 
@@ -9727,9 +9756,9 @@ app.post(
           reason,
           evidenceUrl: evidenceUrl || null,
           evidenceCount: evidenceIds.length,
-          steamId: analysis.external_player_id,
-          discordUserId: analysis.external_discord_user_id,
-          ticketChannelId: analysis.external_ticket_channel_id
+          steamId: decisionSteamId,
+          discordUserId: analysis.external_discord_user_id || manualDiscordUserId || null,
+          ticketChannelId: analysis.external_ticket_channel_id || manualTicketChannelId || null
         })
       }
     );
@@ -9759,13 +9788,21 @@ app.post(
        SET external_decision=$2,
            external_decision_at=NOW(),
            external_decision_result=$3,
-           external_evidence_url=$4
+           external_evidence_url=$4,
+           external_source=CASE WHEN $5 THEN 'guerra_fria_manual' ELSE external_source END,
+           external_player_id=CASE WHEN $5 THEN $6 ELSE external_player_id END,
+           external_discord_user_id=CASE WHEN $5 THEN NULLIF($7, '') ELSE external_discord_user_id END,
+           external_ticket_channel_id=CASE WHEN $5 THEN NULLIF($8, '') ELSE external_ticket_channel_id END
        WHERE id=$1`,
       [
         id,
         decision,
         cleanText(body?.result, 900) || "Decisão confirmada.",
-        evidenceUrl || null
+        evidenceUrl || null,
+        isManualDecision,
+        decisionSteamId,
+        manualDiscordUserId,
+        manualTicketChannelId
       ]
     );
 
