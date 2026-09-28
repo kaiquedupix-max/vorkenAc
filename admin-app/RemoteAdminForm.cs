@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Net.WebSockets;
 using System.Drawing.Drawing2D;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
@@ -34,6 +35,9 @@ internal sealed class RemoteAdminForm : Form
     private readonly SemaphoreSlim _sendLock = new(1, 1);
     private SupportRequest? _activeRequest;
     private bool _available = true;
+    private long _lastFrameSequence;
+    private long _lastPointerSentAt;
+    private bool _observerMode;
 
     public RemoteAdminForm()
     {
@@ -118,6 +122,7 @@ internal sealed class RemoteAdminForm : Form
 
     private void ShowLogin()
     {
+        SavedCredentials? saved = CredentialStore.Load();
         _content.Controls.Clear();
         _shellStatus.Text = "●  LOGIN";
         _shellStatus.ForeColor = TextSecondary;
@@ -130,21 +135,23 @@ internal sealed class RemoteAdminForm : Form
         var card = new AdminCard { Bounds = new Rectangle(54, 185, 610, 470), BackColor = Surface };
         card.Controls.Add(LabelAt("IDENTIFICAÇÃO DO ADMINISTRADOR", 28, 24, 500, 30, 12F, TextPrimary, FontStyle.Bold));
         card.Controls.Add(LabelAt("Use suas credenciais individuais. A disponibilidade só é ativada após o login.", 28, 57, 530, 38, 8.8F, TextSecondary));
+        if (!string.IsNullOrWhiteSpace(saved?.ServerUrl)) _serverUrl = saved.ServerUrl;
         var server = Input(_serverUrl, 28, 126, false, 550);
-        var user = Input("", 28, 207, false, 550);
-        var password = Input("", 28, 288, true, 550);
+        var user = Input(saved?.Username ?? "", 28, 207, false, 550);
+        var password = Input(saved?.Password ?? "", 28, 288, true, 550);
         card.Controls.Add(LabelAt("SERVIDOR VORKEN", 28, 104, 240, 20, 8F, TextSecondary, FontStyle.Bold));
         card.Controls.Add(LabelAt("USUÁRIO", 28, 185, 240, 20, 8F, TextSecondary, FontStyle.Bold));
         card.Controls.Add(LabelAt("SENHA", 28, 266, 240, 20, 8F, TextSecondary, FontStyle.Bold));
         card.Controls.Add(server); card.Controls.Add(user); card.Controls.Add(password);
-        var login = Button("ENTRAR NO PAINEL   →", 28, 360, 245, 50, Accent);
-        var message = LabelAt("", 292, 370, 285, 42, 8.7F, Danger, FontStyle.Bold);
-        card.Controls.Add(login); card.Controls.Add(message);
+        var remember = new CheckBox { Text = "Salvar usuário e senha neste computador", Checked = saved is not null, Bounds = new Rectangle(28, 337, 340, 25), ForeColor = TextSecondary, BackColor = Color.Transparent, Font = new Font("Segoe UI", 8.5F), Cursor = Cursors.Hand };
+        var login = Button("ENTRAR NO PAINEL   →", 28, 378, 245, 50, Accent);
+        var message = LabelAt("", 292, 386, 285, 42, 8.7F, Danger, FontStyle.Bold);
+        card.Controls.Add(remember); card.Controls.Add(login); card.Controls.Add(message);
         _content.Controls.Add(card);
 
         var info = new AdminCard { Bounds = new Rectangle(692, 185, 535, 470), BackColor = Color.FromArgb(5, 18, 24) };
         info.Controls.Add(LabelAt("SESSÕES SOB CONTROLE", 28, 26, 430, 30, 12F, Accent, FontStyle.Bold));
-        info.Controls.Add(LabelAt("O administrador só recebe conexões direcionadas à sua conta e precisa aceitar cada solicitação.", 28, 66, 465, 60, 10F, TextSecondary));
+        info.Controls.Add(LabelAt("Solicitações direcionadas exigem aceite. Sessões ao vivo podem ser acompanhadas por outros administradores somente para visualização.", 28, 66, 465, 60, 10F, TextSecondary));
         info.Controls.Add(SecurityRow("01", "Consentimento duplo", "O jogador solicita e o administrador aceita.", 28, 148));
         info.Controls.Add(SecurityRow("02", "Permissão limitada", "Visualização ou controle, conforme escolhido.", 28, 226));
         info.Controls.Add(SecurityRow("03", "Encerramento imediato", "Qualquer lado pode finalizar a sessão.", 28, 304));
@@ -164,6 +171,10 @@ internal sealed class RemoteAdminForm : Form
                 var result = await response.Content.ReadFromJsonAsync<LoginResponse>() ?? throw new InvalidOperationException("Resposta inválida.");
                 _accessToken = result.AccessToken;
                 _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _accessToken);
+                if (remember.Checked)
+                    CredentialStore.Save(new SavedCredentials(_serverUrl, user.Text.Trim(), password.Text));
+                else
+                    CredentialStore.Delete();
                 _shellStatus.Text = "●  ONLINE";
                 _shellStatus.ForeColor = Accent;
                 ShowDashboard(result.DisplayName);
@@ -240,6 +251,13 @@ internal sealed class RemoteAdminForm : Form
         };
         accept.Click += async (_, _) => await DecideSelectedAsync("accept");
         reject.Click += async (_, _) => await DecideSelectedAsync("reject");
+        _requestList.SelectedIndexChanged += (_, _) =>
+        {
+            if (_requestList.SelectedItem is not RequestListItem selected) return;
+            bool live = selected.Request.Status == "accepted";
+            accept.Text = live ? "ASSISTIR AO VIVO" : "ACEITAR";
+            reject.Enabled = !live || !selected.Request.CanObserve;
+        };
         end.Click += async (_, _) => await EndViewerAsync(true);
         _viewer.MouseMove += async (_, e) => await SendPointerAsync(e, "move");
         _viewer.MouseDown += async (_, e) => await SendPointerAsync(e, e.Button == MouseButtons.Left ? "leftDown" : "rightDown");
@@ -281,56 +299,150 @@ internal sealed class RemoteAdminForm : Form
     private async Task DecideSelectedAsync(string decision)
     {
         if (_http is null || _requestList?.SelectedItem is not RequestListItem item) return;
-        var response = await _http.PostAsync($"api/remote/admin/sessions/{item.Request.Id}/{decision}", null);
-        if (!response.IsSuccessStatusCode) return;
-        if (decision == "accept") await OpenViewerAsync(item.Request);
-        await RefreshRequestsAsync();
+        try
+        {
+            if (decision == "accept" && item.Request.Status == "accepted")
+            {
+                if (item.Request.CanObserve)
+                {
+                    var watch = await _http.PostAsync($"api/remote/admin/sessions/{item.Request.Id}/watch", null);
+                    watch.EnsureSuccessStatusCode();
+                }
+                await OpenViewerAsync(item.Request, item.Request.CanObserve);
+                return;
+            }
+            var response = await _http.PostAsync($"api/remote/admin/sessions/{item.Request.Id}/{decision}", null);
+            if (!response.IsSuccessStatusCode) return;
+            if (decision == "accept") await OpenViewerAsync(item.Request, false);
+            await RefreshRequestsAsync();
+        }
+        catch (Exception ex)
+        {
+            if (_status is not null) _status.Text = "Não foi possível abrir a sessão: " + ex.Message;
+            await EndViewerAsync(false);
+        }
     }
 
-    private async Task OpenViewerAsync(SupportRequest request)
+    private async Task OpenViewerAsync(SupportRequest request, bool observerMode)
     {
         await EndViewerAsync(false);
         _activeRequest = request;
+        _observerMode = observerMode;
         _sessionCancellation = new CancellationTokenSource();
-        _socket = new ClientWebSocket();
-        var wsUrl = new Uri(_serverUrl.Replace("https://", "wss://").Replace("http://", "ws://") + "/ws/remote");
-        await _socket.ConnectAsync(wsUrl, _sessionCancellation.Token);
-        await SendJsonAsync(new { type = "authenticate", role = "admin", sessionId = request.Id, accessToken = _accessToken });
-        if (_status is not null) _status.Text = request.Mode == "control" ? "Sessão ativa · TELA + CONTROLE" : "Sessão ativa · SOMENTE VISUALIZAÇÃO";
+        _lastFrameSequence = 0;
+        if (observerMode)
+        {
+            if (_status is not null) _status.Text = "Assistindo sessão ao vivo · SOMENTE TELA";
+            _ = PollFramesHttpAsync(_sessionCancellation.Token);
+            _viewer?.Focus();
+            return;
+        }
+        try
+        {
+            _socket = new ClientWebSocket();
+            var wsUrl = new Uri(_serverUrl.Replace("https://", "wss://").Replace("http://", "ws://") + "/ws/remote");
+            await _socket.ConnectAsync(wsUrl, _sessionCancellation.Token);
+            await SendJsonAsync(new { type = "authenticate", role = "admin", sessionId = request.Id, accessToken = _accessToken });
+            if (_status is not null) _status.Text = request.Mode == "control" ? "Sessão ativa · TELA + CONTROLE" : "Sessão ativa · SOMENTE VISUALIZAÇÃO";
+            _ = ReceiveFramesAsync(_sessionCancellation.Token);
+        }
+        catch (Exception ex) when (
+            (ex is WebSocketException or HttpRequestException or InvalidOperationException) &&
+            !_sessionCancellation.IsCancellationRequested)
+        {
+            _socket?.Dispose();
+            _socket = null;
+            if (_status is not null)
+                _status.Text = request.Mode == "control"
+                    ? "Sessão ativa · TELA + CONTROLE · HTTPS COMPATÍVEL"
+                    : "Sessão ativa · SOMENTE TELA · HTTPS COMPATÍVEL";
+            _ = PollFramesHttpAsync(_sessionCancellation.Token);
+        }
         _viewer?.Focus();
-        _ = ReceiveFramesAsync(_sessionCancellation.Token);
     }
 
     private async Task ReceiveFramesAsync(CancellationToken cancellationToken)
     {
-        byte[] buffer = new byte[2 * 1024 * 1024];
-        while (_socket?.State == WebSocketState.Open && !cancellationToken.IsCancellationRequested)
+        try
         {
-            using var frame = new MemoryStream();
-            WebSocketReceiveResult result;
-            do
+            byte[] buffer = new byte[2 * 1024 * 1024];
+            while (_socket?.State == WebSocketState.Open && !cancellationToken.IsCancellationRequested)
             {
-                result = await _socket.ReceiveAsync(buffer, cancellationToken);
-                if (result.MessageType == WebSocketMessageType.Close) return;
-                if (result.MessageType == WebSocketMessageType.Binary) frame.Write(buffer, 0, result.Count);
-            } while (!result.EndOfMessage);
-            if (result.MessageType != WebSocketMessageType.Binary || frame.Length == 0) continue;
-            frame.Position = 0;
-            using var source = Image.FromStream(frame);
-            var image = new Bitmap(source);
-            BeginInvoke(() =>
-            {
-                if (_viewer is null) { image.Dispose(); return; }
-                Image? old = _viewer.Image;
-                _viewer.Image = image;
-                old?.Dispose();
-            });
+                using var frame = new MemoryStream();
+                WebSocketReceiveResult result;
+                do
+                {
+                    result = await _socket.ReceiveAsync(buffer, cancellationToken);
+                    if (result.MessageType == WebSocketMessageType.Close) return;
+                    if (result.MessageType == WebSocketMessageType.Binary) frame.Write(buffer, 0, result.Count);
+                } while (!result.EndOfMessage);
+                if (result.MessageType != WebSocketMessageType.Binary || frame.Length == 0) continue;
+                ShowFrame(frame.ToArray());
+            }
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            _socket?.Dispose();
+            _socket = null;
+            if (_status is not null) _status.Text = "Reconectando pelo modo HTTPS compatível...";
+            await PollFramesHttpAsync(cancellationToken);
+        }
+    }
+
+    private async Task PollFramesHttpAsync(CancellationToken cancellationToken)
+    {
+        if (_http is null) return;
+        try
+        {
+            while (_activeRequest is not null && !cancellationToken.IsCancellationRequested)
+            {
+                string id = Uri.EscapeDataString(_activeRequest.Id);
+                using HttpResponseMessage response = await _http.GetAsync(
+                    $"api/remote/admin/sessions/{id}/frame?after={_lastFrameSequence}", cancellationToken);
+                if (response.StatusCode == System.Net.HttpStatusCode.NoContent)
+                {
+                    await Task.Delay(120, cancellationToken);
+                    continue;
+                }
+                response.EnsureSuccessStatusCode();
+                if (response.Headers.TryGetValues("X-Frame-Sequence", out var values) &&
+                    long.TryParse(values.FirstOrDefault(), out long sequence))
+                    _lastFrameSequence = Math.Max(_lastFrameSequence, sequence);
+                byte[] frame = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+                if (frame.Length > 0) ShowFrame(frame);
+                await Task.Delay(75, cancellationToken);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            if (_status is not null && !cancellationToken.IsCancellationRequested)
+                _status.Text = "Conexão interrompida: " + ex.Message;
+        }
+    }
+
+    private void ShowFrame(byte[] frame)
+    {
+        using var stream = new MemoryStream(frame);
+        using var source = Image.FromStream(stream);
+        var image = new Bitmap(source);
+        if (IsDisposed) { image.Dispose(); return; }
+        BeginInvoke(() =>
+        {
+            if (_viewer is null) { image.Dispose(); return; }
+            Image? old = _viewer.Image;
+            _viewer.Image = image;
+            old?.Dispose();
+        });
     }
 
     private async Task SendPointerAsync(MouseEventArgs e, string action)
     {
-        if (_activeRequest?.Mode != "control" || _viewer?.Image is null || _viewer.Width <= 0 || _viewer.Height <= 0) return;
+        if (_observerMode || _activeRequest?.Mode != "control" || _viewer?.Image is null || _viewer.Width <= 0 || _viewer.Height <= 0) return;
+        long now = Environment.TickCount64;
+        if (action == "move" && now - _lastPointerSentAt < 50) return;
+        _lastPointerSentAt = now;
         double scale = Math.Min(_viewer.Width / (double)_viewer.Image.Width, _viewer.Height / (double)_viewer.Image.Height);
         double shownWidth = _viewer.Image.Width * scale;
         double shownHeight = _viewer.Image.Height * scale;
@@ -348,15 +460,25 @@ internal sealed class RemoteAdminForm : Form
 
     private async Task SendKeyAsync(int keyCode, bool up)
     {
-        if (_activeRequest?.Mode != "control") return;
+        if (_observerMode || _activeRequest?.Mode != "control") return;
         await SendJsonAsync(new { type = "key", keyCode, up });
     }
 
     private async Task SendJsonAsync(object value)
     {
-        if (_socket?.State != WebSocketState.Open) return;
         await _sendLock.WaitAsync();
-        try { await _socket.SendAsync(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(value)), WebSocketMessageType.Text, true, CancellationToken.None); }
+        try
+        {
+            if (_socket?.State == WebSocketState.Open)
+            {
+                await _socket.SendAsync(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(value)), WebSocketMessageType.Text, true, CancellationToken.None);
+            }
+            else if (_http is not null && !_observerMode && _activeRequest?.Mode == "control")
+            {
+                string id = Uri.EscapeDataString(_activeRequest.Id);
+                using var response = await _http.PostAsJsonAsync($"api/remote/admin/sessions/{id}/input", value);
+            }
+        }
         catch { }
         finally { _sendLock.Release(); }
     }
@@ -364,15 +486,18 @@ internal sealed class RemoteAdminForm : Form
     private async Task EndViewerAsync(bool notifyServer)
     {
         SupportRequest? active = _activeRequest;
+        bool wasObserver = _observerMode;
         _activeRequest = null;
+        _observerMode = false;
         _sessionCancellation?.Cancel();
         if (_socket is { State: WebSocketState.Open })
         {
             try { await _socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Encerrada", CancellationToken.None); } catch { }
         }
         _socket?.Dispose(); _socket = null;
+        _lastFrameSequence = 0;
         _sessionCancellation?.Dispose(); _sessionCancellation = null;
-        if (notifyServer && active is not null && _http is not null)
+        if (notifyServer && !wasObserver && active is not null && _http is not null)
             try { await _http.PostAsync($"api/remote/admin/sessions/{active.Id}/end", null); } catch { }
         if (_viewer is not null) { Image? old = _viewer.Image; _viewer.Image = null; old?.Dispose(); }
         if (_status is not null) _status.Text = "Sessão encerrada.";
@@ -389,7 +514,9 @@ internal sealed class RemoteAdminForm : Form
             TextRenderer.DrawText(e.Graphics, item.Request.Label, new Font("Segoe UI", 9.4F, FontStyle.Bold),
                 new Rectangle(e.Bounds.X + 12, e.Bounds.Y + 7, e.Bounds.Width - 24, 20), TextPrimary, TextFormatFlags.EndEllipsis);
             TextRenderer.DrawText(e.Graphics,
-                item.Request.Mode == "control" ? "TELA + CONTROLE" : "SOMENTE TELA",
+                item.Request.Status == "accepted"
+                    ? $"● AO VIVO · {(item.Request.CanObserve ? "ASSISTIR" : item.Request.Mode == "control" ? "TELA + CONTROLE" : "SOMENTE TELA")}"
+                    : item.Request.Mode == "control" ? "TELA + CONTROLE" : "SOMENTE TELA",
                 new Font("Consolas", 7.5F, FontStyle.Bold),
                 new Rectangle(e.Bounds.X + 12, e.Bounds.Y + 29, e.Bounds.Width - 24, 18), modeColor);
         }
@@ -473,8 +600,45 @@ internal sealed class RemoteAdminForm : Form
 
     private sealed class LoginResponse { public string AccessToken { get; set; } = ""; public string DisplayName { get; set; } = ""; }
     private sealed class RequestsResponse { public List<SupportRequest> Requests { get; set; } = []; }
-    private sealed class SupportRequest { public string Id { get; set; } = ""; public string Mode { get; set; } = "view"; public string Status { get; set; } = ""; public string Label { get; set; } = ""; public string? MachineName { get; set; } }
+    private sealed class SupportRequest { public string Id { get; set; } = ""; public string Mode { get; set; } = "view"; public string Status { get; set; } = ""; public string Label { get; set; } = ""; public string? MachineName { get; set; } public bool CanObserve { get; set; } public string OwnerDisplayName { get; set; } = ""; }
     private sealed record RequestListItem(SupportRequest Request) { public override string ToString() => $"{Request.Label}  ·  {(Request.Mode == "control" ? "CONTROLE" : "TELA")}"; }
+}
+
+internal sealed record SavedCredentials(string ServerUrl, string Username, string Password);
+
+internal static class CredentialStore
+{
+    private static readonly byte[] Entropy = Encoding.UTF8.GetBytes("Vorken.RemoteAdmin.Credentials.v1");
+    private static readonly string FilePath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "Vorken", "RemoteAdmin", "credentials.bin");
+
+    internal static SavedCredentials? Load()
+    {
+        try
+        {
+            if (!File.Exists(FilePath)) return null;
+            byte[] encrypted = File.ReadAllBytes(FilePath);
+            byte[] clear = ProtectedData.Unprotect(encrypted, Entropy, DataProtectionScope.CurrentUser);
+            return JsonSerializer.Deserialize<SavedCredentials>(clear);
+        }
+        catch { return null; }
+    }
+
+    internal static void Save(SavedCredentials credentials)
+    {
+        byte[] clear = JsonSerializer.SerializeToUtf8Bytes(credentials);
+        byte[] encrypted = ProtectedData.Protect(clear, Entropy, DataProtectionScope.CurrentUser);
+        string? directory = Path.GetDirectoryName(FilePath);
+        if (!string.IsNullOrWhiteSpace(directory)) Directory.CreateDirectory(directory);
+        File.WriteAllBytes(FilePath, encrypted);
+        CryptographicOperations.ZeroMemory(clear);
+    }
+
+    internal static void Delete()
+    {
+        try { if (File.Exists(FilePath)) File.Delete(FilePath); } catch { }
+    }
 }
 
 internal static class AdminGeometry

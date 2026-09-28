@@ -427,11 +427,61 @@ function buildRecentUsb(report) {
     .filter((entry) => entry.when > 0);
 }
 
-function usbCorrelatesExecution(execution, recentUsb) {
+function buildRemovableDrivePrefixes(report) {
+  const prefixes = new Set();
+  const remember = (value) => {
+    const normalized = normalizePath(value);
+    const match = /^([a-z]:)(?:\\|$)/i.exec(normalized);
+    if (match) prefixes.add(match[1].toLowerCase());
+  };
+
+  // usbFiles is collected only from drives Windows reports as removable.
+  for (const item of safeArray(report?.usbFiles)) {
+    remember(item?.drive);
+    remember(item?.path);
+  }
+  for (const item of safeArray(report?.files)) {
+    if (String(item?.driveType || "").toLowerCase() === "removable")
+      remember(item?.path);
+  }
+  for (const item of safeArray(report?.prefetchExecutions)) {
+    for (const volume of safeArray(item?.volumes)) {
+      if (String(volume?.currentDriveType || "").toLowerCase() === "removable")
+        remember(volume?.currentDriveLetter);
+    }
+  }
+  return prefixes;
+}
+
+function pathOnRemovableDrive(value, removableDrives) {
+  const normalized = normalizePath(value);
+  const match = /^([a-z]:)(?:\\|$)/i.exec(normalized);
+  return Boolean(match && removableDrives.has(match[1].toLowerCase()));
+}
+
+function usbCorrelatesExecution(execution, recentUsb, removableDrives = new Set()) {
+  const executionPaths = [
+    execution?.resolvedExecutablePath,
+    execution?.nativeExecutablePath,
+    execution?.processPath,
+    execution?.path,
+    execution?.decodedName,
+  ];
+  const removableVolume = safeArray(execution?.volumes).some((volume) =>
+    String(volume?.currentDriveType || "").toLowerCase() === "removable"
+  );
+
   if (execution?.currentRemovable === true)
     return {
       confirmed: true,
       reason: "current_removable",
+      device: null
+    };
+
+  if (removableVolume || executionPaths.some((value) => pathOnRemovableDrive(value, removableDrives)))
+    return {
+      confirmed: true,
+      reason: removableVolume ? "prefetch_removable_volume" : "current_removable_path",
       device: null
     };
 
@@ -483,6 +533,7 @@ function usbCorrelatesExecution(execution, recentUsb) {
 function buildExecutionIndex(report) {
   const byName = new Map();
   const recentUsb = buildRecentUsb(report);
+  const removableDrives = buildRemovableDrivePrefixes(report);
 
   const remember = (
     rawPath,
@@ -533,6 +584,11 @@ function buildExecutionIndex(report) {
       "process_snapshot",
       {
         missing: false,
+        usb: {
+          confirmed: pathOnRemovableDrive(item?.path, removableDrives),
+          reason: "process_snapshot_removable_path",
+          device: null
+        },
         raw: item
       }
     );
@@ -553,7 +609,8 @@ function buildExecutionIndex(report) {
         usb:
           usbCorrelatesExecution(
             item,
-            recentUsb
+            recentUsb,
+            removableDrives
           ),
         raw: item
       }
@@ -567,6 +624,11 @@ function buildExecutionIndex(report) {
       {
         missing:
           item?.fileExists === false,
+        usb: {
+          confirmed: pathOnRemovableDrive(item?.path, removableDrives),
+          reason: "bam_removable_path",
+          device: null
+        },
         raw: item
       }
     );
@@ -583,10 +645,12 @@ function buildExecutionIndex(report) {
         usb: {
           confirmed:
             String(item?.driveType || "")
-              .toLowerCase() === "removable",
+              .toLowerCase() === "removable" ||
+            pathOnRemovableDrive(item?.processPath || item?.processName, removableDrives),
           reason:
             String(item?.driveType || "")
-              .toLowerCase() === "removable"
+              .toLowerCase() === "removable" ||
+            pathOnRemovableDrive(item?.processPath || item?.processName, removableDrives)
               ? "event_4688_removable"
               : "",
           device: null
@@ -604,6 +668,11 @@ function buildExecutionIndex(report) {
       "userassist",
       {
         missing: false,
+        usb: {
+          confirmed: pathOnRemovableDrive(item?.decodedName, removableDrives),
+          reason: "userassist_removable_path",
+          device: null
+        },
         raw: item
       }
     );
@@ -626,6 +695,13 @@ function buildExecutionIndex(report) {
       {
         missing:
           item?.filePresent === false,
+        usb: {
+          confirmed:
+            String(item?.driveType || "").toLowerCase() === "removable" ||
+            pathOnRemovableDrive(item?.path, removableDrives),
+          reason: "shimcache_removable_path",
+          device: null
+        },
         raw: item
       }
     );

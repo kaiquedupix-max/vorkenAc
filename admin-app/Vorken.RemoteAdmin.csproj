@@ -8,12 +8,18 @@
     <Nullable>enable</Nullable>
     <AssemblyName>Vorken.RemoteAdmin</AssemblyName>
     <RootNamespace>Vorken.RemoteAdmin</RootNamespace>
-    <Version>1.0.0</Version>
+    <Version>1.0.1</Version>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <Title>Vorken Administração Remota</Title>
     <Product>Vorken Remote Support</Product>
     <Company>Vorken</Company>
+    <AssemblyVersion>1.0.1.0</AssemblyVersion>
+    <FileVersion>1.0.1.0</FileVersion>
+    <InformationalVersion>1.0.1</InformationalVersion>
   </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
+  </ItemGroup>
 </Project>

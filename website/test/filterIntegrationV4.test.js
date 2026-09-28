@@ -218,3 +218,49 @@ test("any confirmed EXE execution on USB is critical", async () => {
   assert.equal(executable.severity, "critical");
   assert.match(executable.title, /EXECUTADO DENTRO DE PENDRIVE/i);
 });
+
+test("USB execution is recovered from the removable drive inventory", async () => {
+  const findings = await collect({
+    collectedAtUtc: "2026-09-26T12:00:00Z",
+    usbFiles: [{ drive: "F:", path: "F:\\Tools\\helper.exe" }],
+    bam: [{
+      path: "F:\\Tools\\helper.exe",
+      fileExists: true,
+      lastExecutionUtc: "2026-09-26T11:30:00Z"
+    }]
+  });
+
+  const executable = findings.find((item) =>
+    item.artifactType === "correlated_executable_v2"
+  );
+  assert.ok(executable);
+  assert.equal(executable.severity, "critical");
+  assert.match(executable.title, /EXECUTADO DENTRO DE PENDRIVE/i);
+});
+
+test("detached USB Prefetch remains critical when correlated with disconnect history", async () => {
+  const findings = await collect({
+    collectedAtUtc: "2026-09-26T12:00:00Z",
+    usbHistory: [{
+      present: false,
+      friendlyName: "USB Mass Storage",
+      lastDisconnectedUtc: "2026-09-26T11:40:00Z"
+    }],
+    prefetchExecutions: [{
+      executableName: "portable.exe",
+      nativeExecutablePath: "\\Device\\HarddiskVolume9\\portable.exe",
+      executablePresent: false,
+      volumeNotMounted: true,
+      nonSystemVolume: true,
+      likelyDetachedOrRemovable: true,
+      lastRunUtc: "2026-09-26T11:35:00Z"
+    }]
+  });
+
+  const executable = findings.find((item) =>
+    item.artifactType === "correlated_executable_v2"
+  );
+  assert.ok(executable);
+  assert.equal(executable.severity, "critical");
+  assert.match(executable.title, /EXECUTADO DENTRO DE PENDRIVE/i);
+});

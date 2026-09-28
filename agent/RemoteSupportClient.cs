@@ -1,4 +1,5 @@
 using System.Drawing.Imaging;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Net.WebSockets;
 using System.Runtime.InteropServices;
@@ -67,23 +68,41 @@ internal sealed class RemoteSupportClient : IAsyncDisposable
                 throw new TimeoutException("A solicitação expirou sem resposta.");
         }
 
-        _socket = new ClientWebSocket();
-        await _socket.ConnectAsync(new Uri(created.WebSocketUrl), linked.Token);
-        await SendTextAsync(JsonSerializer.Serialize(new
-        {
-            type = "authenticate", role = "agent", sessionId = created.SessionId, secret = created.AgentSecret
-        }), linked.Token);
-
         IsActive = true;
-        status(_controlEnabled
-            ? "TELA + CONTROLE ativos. Clique em PARAR a qualquer momento."
-            : "TRANSMISSÃO DE TELA ativa. Clique em PARAR a qualquer momento.");
         try
         {
-            Task receive = ReceiveControlsAsync(linked.Token);
-            Task capture = CaptureLoopAsync(linked.Token);
-            await Task.WhenAny(receive, capture);
+            try
+            {
+                _socket = new ClientWebSocket();
+                await _socket.ConnectAsync(new Uri(created.WebSocketUrl), linked.Token);
+                await SendTextAsync(JsonSerializer.Serialize(new
+                {
+                    type = "authenticate", role = "agent", sessionId = created.SessionId, secret = created.AgentSecret
+                }), linked.Token);
+                status(_controlEnabled
+                    ? "TELA + CONTROLE ativos. Clique em PARAR a qualquer momento."
+                    : "TRANSMISSÃO DE TELA ativa. Clique em PARAR a qualquer momento.");
+                Task receive = ReceiveControlsAsync(linked.Token);
+                Task capture = CaptureLoopAsync(linked.Token);
+                Task completed = await Task.WhenAny(receive, capture);
+                await completed;
+            }
+            catch (Exception ex) when (
+                (ex is WebSocketException or HttpRequestException or InvalidOperationException) &&
+                !linked.IsCancellationRequested)
+            {
+                _socket?.Dispose();
+                _socket = null;
+                status(_controlEnabled
+                    ? "TELA + CONTROLE ativos pelo modo HTTPS compatível."
+                    : "TRANSMISSÃO DE TELA ativa pelo modo HTTPS compatível.");
+                Task receive = PollHttpControlsAsync(created, linked.Token);
+                Task capture = CaptureHttpLoopAsync(created, linked.Token);
+                Task completed = await Task.WhenAny(receive, capture);
+                await completed;
+            }
         }
+        catch (OperationCanceledException) when (linked.IsCancellationRequested) { }
         finally
         {
             IsActive = false;
@@ -120,6 +139,42 @@ internal sealed class RemoteSupportClient : IAsyncDisposable
             byte[] frame = CaptureJpeg();
             await _socket.SendAsync(frame, WebSocketMessageType.Binary, true, cancellationToken);
             await Task.Delay(240, cancellationToken);
+        }
+    }
+
+    private async Task CaptureHttpLoopAsync(CreateSessionResponse session, CancellationToken cancellationToken)
+    {
+        string path = $"api/agent/{Uri.EscapeDataString(_config.Token)}/remote/sessions/{Uri.EscapeDataString(session.SessionId)}/frame";
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            byte[] frame = CaptureJpeg();
+            using var request = new HttpRequestMessage(HttpMethod.Post, path);
+            request.Headers.Add("X-Vorken-Session-Secret", session.AgentSecret);
+            request.Content = new ByteArrayContent(frame);
+            request.Content.Headers.ContentType = new MediaTypeHeaderValue("image/jpeg");
+            using HttpResponseMessage response = await _http.SendAsync(request, cancellationToken);
+            response.EnsureSuccessStatusCode();
+            await Task.Delay(280, cancellationToken);
+        }
+    }
+
+    private async Task PollHttpControlsAsync(CreateSessionResponse session, CancellationToken cancellationToken)
+    {
+        long sequence = 0;
+        string basePath = $"api/agent/{Uri.EscapeDataString(_config.Token)}/remote/sessions/{Uri.EscapeDataString(session.SessionId)}/input";
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"{basePath}?after={sequence}");
+            request.Headers.Add("X-Vorken-Session-Secret", session.AgentSecret);
+            using HttpResponseMessage response = await _http.SendAsync(request, cancellationToken);
+            response.EnsureSuccessStatusCode();
+            var payload = await response.Content.ReadFromJsonAsync<InputEventsResponse>(cancellationToken: cancellationToken);
+            foreach (InputEvent item in payload?.Events ?? [])
+            {
+                sequence = Math.Max(sequence, item.Sequence);
+                if (_controlEnabled) RemoteInput.Apply(item.Event);
+            }
+            await Task.Delay(90, cancellationToken);
         }
     }
 
@@ -202,6 +257,8 @@ internal sealed class RemoteSupportClient : IAsyncDisposable
         public DateTimeOffset ExpiresAt { get; set; }
     }
     private sealed class SessionState { public string Status { get; set; } = ""; }
+    private sealed class InputEventsResponse { public List<InputEvent> Events { get; set; } = []; }
+    private sealed class InputEvent { public long Sequence { get; set; } public JsonElement Event { get; set; } }
 }
 
 internal static class RemoteInput

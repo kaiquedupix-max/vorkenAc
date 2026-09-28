@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import express from "express";
 import { WebSocketServer, WebSocket } from "ws";
 
 const ACCESS_TTL_MS = 12 * 60 * 60 * 1000;
@@ -10,6 +11,10 @@ const presence = new Map();
 const agentSockets = new Map();
 const adminSockets = new Map();
 const loginAttempts = new Map();
+const sessionRuntime = new Map();
+const latestFrames = new Map();
+const inputQueues = new Map();
+const sessionObservers = new Map();
 
 function clean(value, max = 120) {
   return String(value ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, max);
@@ -121,6 +126,91 @@ export function installRemoteSupport(app, { pool, getAnalysisByToken, validToken
     next();
   }
 
+  async function runtimeSession(sessionId) {
+    const cached = sessionRuntime.get(sessionId);
+    if (cached) return cached;
+    const result = await pool.query(
+      `SELECT analysis_id, admin_id, mode, status, agent_secret_hash, expires_at
+       FROM remote_support_sessions WHERE id=$1`,
+      [sessionId]
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    const runtime = {
+      analysisId: Number(row.analysis_id),
+      adminId: Number(row.admin_id),
+      mode: row.mode,
+      status: row.status,
+      agentSecretHash: row.agent_secret_hash,
+      expiresAt: new Date(row.expires_at).getTime(),
+      agentToken: null,
+    };
+    sessionRuntime.set(sessionId, runtime);
+    return runtime;
+  }
+
+  function clearRelay(sessionId) {
+    latestFrames.delete(sessionId);
+    inputQueues.delete(sessionId);
+    sessionObservers.delete(sessionId);
+  }
+
+  function storeFrame(sessionId, data) {
+    const previous = latestFrames.get(sessionId);
+    const sequence = (previous?.sequence || 0) + 1;
+    latestFrames.set(sessionId, { sequence, data: Buffer.from(data), createdAt: Date.now() });
+    return sequence;
+  }
+
+  function queueInput(sessionId, event) {
+    const current = inputQueues.get(sessionId) || { sequence: 0, events: [] };
+    current.sequence += 1;
+    current.events.push({ sequence: current.sequence, event });
+    if (current.events.length > 200) current.events.splice(0, current.events.length - 200);
+    inputQueues.set(sessionId, current);
+    return current.sequence;
+  }
+
+  async function authorizeAgentRelay(req, res) {
+    if (!validToken(req.params.token)) {
+      res.status(404).end();
+      return null;
+    }
+    const runtime = await runtimeSession(req.params.id);
+    if (!runtime || runtime.status !== "accepted" || runtime.expiresAt <= Date.now()) {
+      res.status(409).json({ error: "session_unavailable" });
+      return null;
+    }
+    if (runtime.agentSecretHash !== hashSecret(req.headers["x-vorken-session-secret"] || "")) {
+      res.status(401).json({ error: "unauthorized" });
+      return null;
+    }
+    if (runtime.agentToken && runtime.agentToken !== req.params.token) {
+      res.status(401).json({ error: "unauthorized" });
+      return null;
+    }
+    if (!runtime.agentToken) {
+      const analysis = await getAnalysisByToken(req.params.token);
+      if (!analysis || Number(analysis.id) !== runtime.analysisId) {
+        res.status(401).json({ error: "unauthorized" });
+        return null;
+      }
+      runtime.agentToken = req.params.token;
+    }
+    return runtime;
+  }
+
+  async function authorizeAdminRelay(req, res) {
+    const runtime = await runtimeSession(req.params.id);
+    const observer = sessionObservers.get(req.params.id)?.has(req.remoteAdmin.adminId) === true;
+    if (!runtime || (runtime.adminId !== req.remoteAdmin.adminId && !observer) ||
+        runtime.status !== "accepted" || runtime.expiresAt <= Date.now()) {
+      res.status(409).json({ error: "session_unavailable" });
+      return null;
+    }
+    return runtime;
+  }
+
   app.get("/api/admin/remote-admins", requireSiteAdmin, async (_req, res) => {
     const result = await pool.query(
       `SELECT id, username, display_name, enabled, created_at
@@ -213,7 +303,11 @@ export function installRemoteSupport(app, { pool, getAnalysisByToken, validToken
        WHERE admin_id=$1 AND status IN ('pending','accepted') RETURNING id`,
       [adminId]
     );
-    for (const row of sessions.rows) closeSessionSockets(row.id, reason);
+    for (const row of sessions.rows) {
+      const runtime = sessionRuntime.get(row.id);
+      if (runtime) runtime.status = "ended";
+      closeSessionSockets(row.id, reason);
+    }
   }
 
   app.post("/api/remote/admin/login", async (req, res) => {
@@ -264,20 +358,41 @@ export function installRemoteSupport(app, { pool, getAnalysisByToken, validToken
 
   app.get("/api/remote/admin/requests", requireRemoteAdmin, async (req, res) => {
     const result = await pool.query(
-      `SELECT s.id, s.mode, s.status, s.created_at, s.expires_at,
-              a.label, a.machine_name
+      `SELECT s.id, s.mode, s.status, s.created_at AS "createdAt", s.expires_at AS "expiresAt",
+              s.admin_id AS "ownerId", a.label, a.machine_name AS "machineName",
+              ra.display_name AS "ownerDisplayName"
        FROM remote_support_sessions s
        JOIN analyses a ON a.id=s.analysis_id
-       WHERE s.admin_id=$1 AND s.status IN ('pending','accepted') AND s.expires_at>NOW()
+       JOIN remote_admins ra ON ra.id=s.admin_id
+       WHERE ((s.admin_id=$1 AND s.status='pending') OR s.status='accepted')
+         AND s.expires_at>NOW()
        ORDER BY s.created_at DESC LIMIT 20`,
       [req.remoteAdmin.adminId]
     );
-    res.json({ requests: result.rows });
+    res.json({ requests: result.rows.map((row) => ({
+      ...row,
+      canObserve: row.status === "accepted" && Number(row.ownerId) !== req.remoteAdmin.adminId,
+    })) });
   });
 
-  app.post("/api/remote/admin/sessions/:id/:decision", requireRemoteAdmin, async (req, res) => {
+  app.post("/api/remote/admin/sessions/:id/watch", requireRemoteAdmin, async (req, res) => {
+    const runtime = await runtimeSession(req.params.id);
+    if (!runtime || runtime.status !== "accepted" || runtime.expiresAt <= Date.now()) {
+      return res.status(409).json({ error: "session_unavailable" });
+    }
+    let observers = sessionObservers.get(req.params.id);
+    if (!observers) {
+      observers = new Set();
+      sessionObservers.set(req.params.id, observers);
+    }
+    observers.add(req.remoteAdmin.adminId);
+    await audit(pool, req.params.id, "admin_observer", "watching", { adminId: req.remoteAdmin.adminId });
+    res.json({ id: req.params.id, mode: "view", status: "accepted" });
+  });
+
+  app.post("/api/remote/admin/sessions/:id/:decision", requireRemoteAdmin, async (req, res, next) => {
     const decision = req.params.decision;
-    if (!['accept', 'reject', 'end'].includes(decision)) return res.status(404).end();
+    if (!['accept', 'reject', 'end'].includes(decision)) return next();
     const nextStatus = decision === 'accept' ? 'accepted' : decision === 'reject' ? 'rejected' : 'ended';
     const result = await pool.query(
       `UPDATE remote_support_sessions SET status=$1,
@@ -289,6 +404,8 @@ export function installRemoteSupport(app, { pool, getAnalysisByToken, validToken
       [nextStatus, req.params.id, req.remoteAdmin.adminId]
     );
     if (!result.rows[0]) return res.status(409).json({ error: "session_unavailable" });
+    const runtime = await runtimeSession(req.params.id);
+    if (runtime) runtime.status = nextStatus;
     await audit(pool, req.params.id, "admin", nextStatus);
     if (nextStatus !== 'accepted') closeSessionSockets(req.params.id, "Sessão encerrada pelo administrador.");
     res.json(result.rows[0]);
@@ -317,11 +434,20 @@ export function installRemoteSupport(app, { pool, getAnalysisByToken, validToken
     const sessionId = crypto.randomUUID();
     const agentSecret = crypto.randomBytes(32).toString("base64url");
     const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
-    await pool.query(
+    const inserted = await pool.query(
       `INSERT INTO remote_support_sessions(id, analysis_id, admin_id, mode, agent_secret_hash, expires_at)
        SELECT $1,$2,id,$3,$4,$5 FROM remote_admins WHERE id=$6 AND enabled=TRUE`,
       [sessionId, analysis.id, mode, hashSecret(agentSecret), expiresAt, adminId]
     );
+    if (!inserted.rowCount) {
+      presence.delete(adminId);
+      return res.status(409).json({ error: "admin_offline" });
+    }
+    sessionRuntime.set(sessionId, {
+      analysisId: Number(analysis.id), adminId, mode, status: "pending",
+      agentSecretHash: hashSecret(agentSecret), expiresAt: expiresAt.getTime(),
+      agentToken: req.params.token,
+    });
     await audit(pool, sessionId, "agent", "requested", { mode });
     res.status(201).json({
       sessionId, agentSecret, status: "pending", expiresAt,
@@ -350,10 +476,76 @@ export function installRemoteSupport(app, { pool, getAnalysisByToken, validToken
       [req.params.id, analysis.id]
     );
     if (result.rows[0]) {
+      const runtime = await runtimeSession(req.params.id);
+      if (runtime) runtime.status = "ended";
       await audit(pool, req.params.id, "agent", "ended");
       closeSessionSockets(req.params.id, "Sessão encerrada pelo jogador.");
     }
     res.status(204).end();
+  });
+
+  // HTTPS relay used automatically when a reverse proxy does not forward
+  // WebSocket Upgrade headers. Secrets and session ownership are checked on
+  // every endpoint while frames remain ephemeral and only in memory.
+  app.post(
+    "/api/agent/:token/remote/sessions/:id/frame",
+    express.raw({ type: "image/jpeg", limit: MAX_FRAME_BYTES }),
+    async (req, res) => {
+      const runtime = await authorizeAgentRelay(req, res);
+      if (!runtime) return;
+      if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+        return res.status(400).json({ error: "invalid_frame" });
+      }
+      const sequence = storeFrame(req.params.id, req.body);
+      const target = adminSockets.get(req.params.id);
+      if (target?.readyState === WebSocket.OPEN) target.send(req.body, { binary: true });
+      res.set("Cache-Control", "no-store").json({ sequence });
+    }
+  );
+
+  app.get("/api/remote/admin/sessions/:id/frame", requireRemoteAdmin, async (req, res) => {
+    const runtime = await authorizeAdminRelay(req, res);
+    if (!runtime) return;
+    const after = Math.max(0, Number(req.query.after) || 0);
+    const frame = latestFrames.get(req.params.id);
+    if (!frame || frame.sequence <= after || Date.now() - frame.createdAt > 15_000) {
+      return res.status(204).end();
+    }
+    res.set({
+      "Cache-Control": "no-store, max-age=0",
+      "Content-Type": "image/jpeg",
+      "X-Frame-Sequence": String(frame.sequence),
+    });
+    res.send(frame.data);
+  });
+
+  app.post("/api/remote/admin/sessions/:id/input", requireRemoteAdmin, async (req, res) => {
+    const runtime = await authorizeAdminRelay(req, res);
+    if (!runtime) return;
+    if (runtime.mode !== "control" || runtime.adminId !== req.remoteAdmin.adminId) {
+      return res.status(403).json({ error: "view_only" });
+    }
+    const type = req.body?.type;
+    if (type !== "pointer" && type !== "key") return res.status(400).json({ error: "invalid_input" });
+    if (JSON.stringify(req.body).length > 16_384) return res.status(413).json({ error: "input_too_large" });
+    const target = agentSockets.get(req.params.id);
+    if (target?.readyState === WebSocket.OPEN) {
+      target.send(JSON.stringify(req.body));
+      return res.status(202).json({ sequence: 0, relayed: true });
+    }
+    const sequence = queueInput(req.params.id, req.body);
+    res.status(202).json({ sequence });
+  });
+
+  app.get("/api/agent/:token/remote/sessions/:id/input", async (req, res) => {
+    const runtime = await authorizeAgentRelay(req, res);
+    if (!runtime) return;
+    if (runtime.mode !== "control") return res.json({ events: [] });
+    const after = Math.max(0, Number(req.query.after) || 0);
+    const queue = inputQueues.get(req.params.id);
+    const events = queue?.events.filter((item) => item.sequence > after).slice(0, 50) || [];
+    if (queue && after > 0) queue.events = queue.events.filter((item) => item.sequence > after);
+    res.set("Cache-Control", "no-store").json({ events });
   });
 
   function closeSessionSockets(sessionId, reason) {
@@ -362,6 +554,7 @@ export function installRemoteSupport(app, { pool, getAnalysisByToken, validToken
     }
     agentSockets.delete(sessionId);
     adminSockets.delete(sessionId);
+    clearRelay(sessionId);
   }
 
   async function authenticateSocket(ws, auth) {
@@ -409,11 +602,15 @@ export function installRemoteSupport(app, { pool, getAnalysisByToken, validToken
             return;
           }
           if (identity.role === "agent" && isBinary) {
+            storeFrame(identity.sessionId, data);
             const target = adminSockets.get(identity.sessionId);
             if (target?.readyState === WebSocket.OPEN) target.send(data, { binary: true });
           } else if (identity.role === "admin" && !isBinary && identity.mode === "control") {
             const target = agentSockets.get(identity.sessionId);
             if (target?.readyState === WebSocket.OPEN) target.send(data.toString());
+            else {
+              try { queueInput(identity.sessionId, JSON.parse(data.toString())); } catch { }
+            }
           }
         });
         ws.on("close", () => {
