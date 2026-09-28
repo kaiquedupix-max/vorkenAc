@@ -15,6 +15,7 @@ const sessionRuntime = new Map();
 const latestFrames = new Map();
 const inputQueues = new Map();
 const sessionObservers = new Map();
+const sessionMonitors = new Map();
 
 function clean(value, max = 120) {
   return String(value ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, max);
@@ -153,6 +154,7 @@ export function installRemoteSupport(app, { pool, getAnalysisByToken, validToken
     latestFrames.delete(sessionId);
     inputQueues.delete(sessionId);
     sessionObservers.delete(sessionId);
+    sessionMonitors.delete(sessionId);
   }
 
   function storeFrame(sessionId, data) {
@@ -519,14 +521,49 @@ export function installRemoteSupport(app, { pool, getAnalysisByToken, validToken
     res.send(frame.data);
   });
 
+  app.post("/api/agent/:token/remote/sessions/:id/monitors", async (req, res) => {
+    const runtime = await authorizeAgentRelay(req, res);
+    if (!runtime) return;
+    const monitors = Array.isArray(req.body?.monitors)
+      ? req.body.monitors.slice(0, 16).map((item, index) => ({
+          index: Number.isInteger(Number(item?.index)) ? Number(item.index) : index,
+          name: clean(item?.name || `Monitor ${index + 1}`, 120),
+          width: Math.max(1, Math.min(16384, Number(item?.width) || 1)),
+          height: Math.max(1, Math.min(16384, Number(item?.height) || 1)),
+          primary: item?.primary === true,
+        }))
+      : [];
+    sessionMonitors.set(req.params.id, {
+      monitors,
+      selectedIndex: Math.max(0, Number(req.body?.selectedIndex) || 0),
+      elevated: req.body?.elevated === true,
+      updatedAt: Date.now(),
+    });
+    res.json({ ok: true });
+  });
+
+  app.get("/api/remote/admin/sessions/:id/monitors", requireRemoteAdmin, async (req, res) => {
+    const runtime = await authorizeAdminRelay(req, res);
+    if (!runtime) return;
+    const state = sessionMonitors.get(req.params.id) || {
+      monitors: [], selectedIndex: 0, elevated: false,
+    };
+    res.set("Cache-Control", "no-store").json(state);
+  });
+
   app.post("/api/remote/admin/sessions/:id/input", requireRemoteAdmin, async (req, res) => {
     const runtime = await authorizeAdminRelay(req, res);
     if (!runtime) return;
-    if (runtime.mode !== "control" || runtime.adminId !== req.remoteAdmin.adminId) {
+    const type = req.body?.type;
+    const isOwner = runtime.adminId === req.remoteAdmin.adminId;
+    if (!isOwner || (type !== "monitor" && runtime.mode !== "control")) {
       return res.status(403).json({ error: "view_only" });
     }
-    const type = req.body?.type;
-    if (type !== "pointer" && type !== "key") return res.status(400).json({ error: "invalid_input" });
+    if (!["pointer", "key", "monitor"].includes(type)) return res.status(400).json({ error: "invalid_input" });
+    if (type === "monitor") {
+      const state = sessionMonitors.get(req.params.id);
+      if (state) state.selectedIndex = Math.max(0, Number(req.body?.index) || 0);
+    }
     if (JSON.stringify(req.body).length > 16_384) return res.status(413).json({ error: "input_too_large" });
     const target = agentSockets.get(req.params.id);
     if (target?.readyState === WebSocket.OPEN) {
@@ -605,12 +642,20 @@ export function installRemoteSupport(app, { pool, getAnalysisByToken, validToken
             storeFrame(identity.sessionId, data);
             const target = adminSockets.get(identity.sessionId);
             if (target?.readyState === WebSocket.OPEN) target.send(data, { binary: true });
-          } else if (identity.role === "admin" && !isBinary && identity.mode === "control") {
-            const target = agentSockets.get(identity.sessionId);
-            if (target?.readyState === WebSocket.OPEN) target.send(data.toString());
-            else {
-              try { queueInput(identity.sessionId, JSON.parse(data.toString())); } catch { }
-            }
+          } else if (identity.role === "admin" && !isBinary) {
+            try {
+              const event = JSON.parse(data.toString());
+              const allowed = event?.type === "monitor" ||
+                (identity.mode === "control" && ["pointer", "key"].includes(event?.type));
+              if (!allowed) return;
+              if (event.type === "monitor") {
+                const state = sessionMonitors.get(identity.sessionId);
+                if (state) state.selectedIndex = Math.max(0, Number(event.index) || 0);
+              }
+              const target = agentSockets.get(identity.sessionId);
+              if (target?.readyState === WebSocket.OPEN) target.send(JSON.stringify(event));
+              else queueInput(identity.sessionId, event);
+            } catch { }
           }
         });
         ws.on("close", () => {

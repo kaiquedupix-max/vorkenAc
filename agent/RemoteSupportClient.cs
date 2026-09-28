@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Net.WebSockets;
 using System.Runtime.InteropServices;
+using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 
@@ -21,6 +22,7 @@ internal sealed class RemoteSupportClient : IAsyncDisposable
     private ClientWebSocket? _socket;
     private string? _sessionId;
     private bool _controlEnabled;
+    private volatile int _selectedMonitorIndex;
 
     public bool IsActive { get; private set; }
 
@@ -71,6 +73,7 @@ internal sealed class RemoteSupportClient : IAsyncDisposable
         IsActive = true;
         try
         {
+            await PublishMonitorInfoAsync(created, linked.Token);
             try
             {
                 _socket = new ClientWebSocket();
@@ -172,15 +175,19 @@ internal sealed class RemoteSupportClient : IAsyncDisposable
             foreach (InputEvent item in payload?.Events ?? [])
             {
                 sequence = Math.Max(sequence, item.Sequence);
-                if (_controlEnabled) RemoteInput.Apply(item.Event);
+                ApplyRemoteEvent(item.Event);
             }
             await Task.Delay(90, cancellationToken);
         }
     }
 
-    private static byte[] CaptureJpeg()
+    private byte[] CaptureJpeg()
     {
-        Rectangle screen = SystemInformation.VirtualScreen;
+        Screen[] screens = Screen.AllScreens;
+        int index = Math.Clamp(_selectedMonitorIndex, 0, Math.Max(0, screens.Length - 1));
+        Rectangle screen = screens.Length > 0
+            ? screens[index].Bounds
+            : SystemInformation.VirtualScreen;
         const int maxWidth = 1280;
         int width = Math.Min(maxWidth, screen.Width);
         int height = Math.Max(1, (int)Math.Round(screen.Height * (width / (double)screen.Width)));
@@ -218,11 +225,11 @@ internal sealed class RemoteSupportClient : IAsyncDisposable
         {
             WebSocketReceiveResult result = await _socket.ReceiveAsync(buffer, cancellationToken);
             if (result.MessageType == WebSocketMessageType.Close) break;
-            if (result.MessageType != WebSocketMessageType.Text || !_controlEnabled) continue;
+            if (result.MessageType != WebSocketMessageType.Text) continue;
             try
             {
                 using JsonDocument document = JsonDocument.Parse(buffer.AsMemory(0, result.Count));
-                RemoteInput.Apply(document.RootElement);
+                ApplyRemoteEvent(document.RootElement);
             }
             catch { }
         }
@@ -230,6 +237,69 @@ internal sealed class RemoteSupportClient : IAsyncDisposable
 
     private Task SendTextAsync(string text, CancellationToken cancellationToken) =>
         _socket!.SendAsync(Encoding.UTF8.GetBytes(text), WebSocketMessageType.Text, true, cancellationToken);
+
+    private void ApplyRemoteEvent(JsonElement message)
+    {
+        string type = message.TryGetProperty("type", out var typeValue)
+            ? typeValue.GetString() ?? ""
+            : "";
+
+        if (type == "monitor" && message.TryGetProperty("index", out var indexValue))
+        {
+            Screen[] screens = Screen.AllScreens;
+            _selectedMonitorIndex = Math.Clamp(
+                indexValue.GetInt32(),
+                0,
+                Math.Max(0, screens.Length - 1));
+            return;
+        }
+
+        if (_controlEnabled)
+            RemoteInput.Apply(message, _selectedMonitorIndex);
+    }
+
+    private async Task PublishMonitorInfoAsync(
+        CreateSessionResponse session,
+        CancellationToken cancellationToken)
+    {
+        Screen[] screens = Screen.AllScreens;
+        var monitors = screens.Select((screen, index) => new
+        {
+            index,
+            name = string.IsNullOrWhiteSpace(screen.DeviceName)
+                ? $"Monitor {index + 1}"
+                : screen.DeviceName,
+            width = screen.Bounds.Width,
+            height = screen.Bounds.Height,
+            primary = screen.Primary,
+        }).ToArray();
+
+        bool elevated;
+        try
+        {
+            using WindowsIdentity identity = WindowsIdentity.GetCurrent();
+            elevated = new WindowsPrincipal(identity)
+                .IsInRole(WindowsBuiltInRole.Administrator);
+        }
+        catch
+        {
+            elevated = false;
+        }
+
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"api/agent/{Uri.EscapeDataString(_config.Token)}/remote/sessions/{Uri.EscapeDataString(session.SessionId)}/monitors");
+        request.Headers.Add("X-Vorken-Session-Secret", session.AgentSecret);
+        request.Content = JsonContent.Create(new
+        {
+            monitors,
+            selectedIndex = _selectedMonitorIndex,
+            elevated,
+        });
+        using HttpResponseMessage response =
+            await _http.SendAsync(request, cancellationToken);
+        response.EnsureSuccessStatusCode();
+    }
 
     [DllImport("user32.dll")] private static extern IntPtr GetDC(IntPtr window);
     [DllImport("user32.dll")] private static extern int ReleaseDC(IntPtr window, IntPtr deviceContext);
@@ -274,14 +344,28 @@ internal static class RemoteInput
     private const uint MouseRightUp = 0x0010;
     private const uint KeyUp = 0x0002;
 
-    public static void Apply(JsonElement message)
+    public static void Apply(JsonElement message, int monitorIndex = 0)
     {
         string type = message.TryGetProperty("type", out var typeValue) ? typeValue.GetString() ?? "" : "";
         if (type == "pointer")
         {
             double x = Math.Clamp(message.GetProperty("x").GetDouble(), 0, 1);
             double y = Math.Clamp(message.GetProperty("y").GetDouble(), 0, 1);
-            SendMouse((int)(x * 65535), (int)(y * 65535), MouseMove | MouseAbsolute | MouseVirtualDesktop);
+            Screen[] screens = Screen.AllScreens;
+            Rectangle virtualScreen = SystemInformation.VirtualScreen;
+            Rectangle selectedScreen = screens.Length > 0
+                ? screens[Math.Clamp(monitorIndex, 0, screens.Length - 1)].Bounds
+                : virtualScreen;
+            double absoluteX =
+                (selectedScreen.Left - virtualScreen.Left + x * selectedScreen.Width) /
+                Math.Max(1d, virtualScreen.Width);
+            double absoluteY =
+                (selectedScreen.Top - virtualScreen.Top + y * selectedScreen.Height) /
+                Math.Max(1d, virtualScreen.Height);
+            SendMouse(
+                (int)Math.Clamp(Math.Round(absoluteX * 65535), 0, 65535),
+                (int)Math.Clamp(Math.Round(absoluteY * 65535), 0, 65535),
+                MouseMove | MouseAbsolute | MouseVirtualDesktop);
             string action = message.TryGetProperty("action", out var a) ? a.GetString() ?? "" : "";
             uint flags = action switch
             {

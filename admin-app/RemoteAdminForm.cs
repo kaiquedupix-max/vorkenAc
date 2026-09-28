@@ -30,6 +30,12 @@ internal sealed class RemoteAdminForm : Form
     private ListBox? _requestList;
     private Label? _status;
     private PictureBox? _viewer;
+    private AdminCard? _viewerPanel;
+    private ComboBox? _monitorSelector;
+    private Label? _administratorAccessStatus;
+    private Button? _fullScreenButton;
+    private Form? _fullScreenWindow;
+    private bool _updatingMonitorSelector;
     private ClientWebSocket? _socket;
     private CancellationTokenSource? _sessionCancellation;
     private readonly SemaphoreSlim _sendLock = new(1, 1);
@@ -221,8 +227,25 @@ internal sealed class RemoteAdminForm : Form
         _content.Controls.Add(left);
 
         var viewerPanel = new AdminCard { Bounds = new Rectangle(410, 155, 835, 530), BackColor = Color.FromArgb(3, 12, 17) };
+        _viewerPanel = viewerPanel;
         viewerPanel.Controls.Add(LabelAt("SESSÃO AO VIVO", 22, 17, 260, 28, 10.5F, TextPrimary, FontStyle.Bold));
         viewerPanel.Controls.Add(LabelAt("A tela aparecerá após o aceite dos dois lados", 22, 44, 420, 22, 8.2F, TextSecondary));
+        _administratorAccessStatus = LabelAt("ADMIN: verificando...", 350, 28, 155, 25, 7.4F, TextSecondary, FontStyle.Bold);
+        _administratorAccessStatus.TextAlign = ContentAlignment.MiddleCenter;
+        viewerPanel.Controls.Add(_administratorAccessStatus);
+        _monitorSelector = new ComboBox
+        {
+            Bounds = new Rectangle(510, 24, 150, 34),
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            BackColor = Color.FromArgb(5, 25, 32),
+            ForeColor = TextPrimary,
+            FlatStyle = FlatStyle.Flat,
+            Font = new Font("Segoe UI", 8.5F, FontStyle.Bold),
+            Enabled = false
+        };
+        viewerPanel.Controls.Add(_monitorSelector);
+        _fullScreenButton = Button("⛶  TELA CHEIA", 665, 22, 145, 40, Color.FromArgb(12, 67, 72));
+        viewerPanel.Controls.Add(_fullScreenButton);
         _viewer = new PictureBox { Bounds = new Rectangle(18, 82, 799, 430), BackColor = Color.Black, SizeMode = PictureBoxSizeMode.Zoom, TabStop = true };
         _viewer.Paint += (_, e) =>
         {
@@ -232,11 +255,22 @@ internal sealed class RemoteAdminForm : Form
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
         };
         viewerPanel.Controls.Add(_viewer);
-        var end = Button("■  ENCERRAR SESSÃO", 615, 22, 200, 40, Danger);
+        var end = Button("■  ENCERRAR", 815, 22, 145, 40, Danger);
         end.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         end.BringToFront();
         viewerPanel.Controls.Add(end);
         _content.Controls.Add(viewerPanel);
+
+        void LayoutViewerPanel()
+        {
+            _viewer.Width = viewerPanel.ClientSize.Width - 36;
+            _viewer.Height = viewerPanel.ClientSize.Height - 100;
+            end.Left = viewerPanel.ClientSize.Width - end.Width - 20;
+            _fullScreenButton.Left = end.Left - _fullScreenButton.Width - 10;
+            _monitorSelector.Left = _fullScreenButton.Left - _monitorSelector.Width - 10;
+            _administratorAccessStatus.Left = _monitorSelector.Left - _administratorAccessStatus.Width - 10;
+            _administratorAccessStatus.Visible = viewerPanel.ClientSize.Width >= 760;
+        }
 
         void LayoutDashboard()
         {
@@ -245,11 +279,10 @@ internal sealed class RemoteAdminForm : Form
             viewerPanel.Left = left.Right + 22;
             viewerPanel.Width = Math.Max(520, _content.ClientSize.Width - viewerPanel.Left - 38);
             viewerPanel.Height = left.Height;
-            _viewer.Width = viewerPanel.ClientSize.Width - 36;
-            _viewer.Height = viewerPanel.ClientSize.Height - 100;
-            end.Left = viewerPanel.ClientSize.Width - end.Width - 20;
+            LayoutViewerPanel();
         }
         _content.Resize += (_, _) => LayoutDashboard();
+        viewerPanel.Resize += (_, _) => LayoutViewerPanel();
         LayoutDashboard();
 
         available.CheckedChanged += async (_, _) =>
@@ -267,6 +300,13 @@ internal sealed class RemoteAdminForm : Form
             reject.Enabled = !live || !selected.Request.CanObserve;
         };
         end.Click += async (_, _) => await EndViewerAsync(true);
+        _fullScreenButton.Click += (_, _) => ToggleFullScreenViewer();
+        _monitorSelector.SelectedIndexChanged += async (_, _) =>
+        {
+            if (_updatingMonitorSelector || _monitorSelector.SelectedItem is not MonitorOption option)
+                return;
+            await SelectMonitorAsync(option.Index);
+        };
         _viewer.MouseMove += async (_, e) => await SendPointerAsync(e, "move");
         _viewer.MouseDown += async (_, e) => await SendPointerAsync(e, e.Button == MouseButtons.Left ? "leftDown" : "rightDown");
         _viewer.MouseUp += async (_, e) => await SendPointerAsync(e, e.Button == MouseButtons.Left ? "leftUp" : "rightUp");
@@ -300,6 +340,8 @@ internal sealed class RemoteAdminForm : Form
             }
             if (_status is not null && _activeRequest is null)
                 _status.Text = _requests.Count == 0 ? "Disponível · nenhuma solicitação pendente." : $"{_requests.Count} solicitação(ões) aguardando.";
+            if (_activeRequest is not null)
+                await RefreshMonitorsAsync();
         }
         catch (Exception ex) { if (_status is not null) _status.Text = "Falha de conexão: " + ex.Message; }
     }
@@ -366,7 +408,124 @@ internal sealed class RemoteAdminForm : Form
                     : "Sessão ativa · SOMENTE TELA · HTTPS COMPATÍVEL";
             _ = PollFramesHttpAsync(_sessionCancellation.Token);
         }
+        await RefreshMonitorsAsync();
         _viewer?.Focus();
+    }
+
+    private async Task RefreshMonitorsAsync()
+    {
+        if (_http is null || _activeRequest is null || _monitorSelector is null)
+            return;
+
+        try
+        {
+            string id = Uri.EscapeDataString(_activeRequest.Id);
+            var state = await _http.GetFromJsonAsync<MonitorState>(
+                $"api/remote/admin/sessions/{id}/monitors");
+            if (state is null)
+                return;
+
+            _updatingMonitorSelector = true;
+            int previous = (_monitorSelector.SelectedItem as MonitorOption)?.Index ?? -1;
+            _monitorSelector.Items.Clear();
+            foreach (MonitorInfo monitor in state.Monitors)
+                _monitorSelector.Items.Add(new MonitorOption(monitor));
+
+            int wanted = previous >= 0 ? previous : state.SelectedIndex;
+            int selected = state.Monitors.FindIndex(item => item.Index == wanted);
+            if (_monitorSelector.Items.Count > 0)
+                _monitorSelector.SelectedIndex = selected >= 0 ? selected : 0;
+            _monitorSelector.Enabled = !_observerMode && _monitorSelector.Items.Count > 1;
+            _updatingMonitorSelector = false;
+
+            if (_administratorAccessStatus is not null)
+            {
+                _administratorAccessStatus.Text = state.Elevated
+                    ? "● ADMIN ATIVO"
+                    : "○ SEM ELEVAÇÃO";
+                _administratorAccessStatus.ForeColor = state.Elevated ? Accent : Danger;
+            }
+        }
+        catch
+        {
+            _updatingMonitorSelector = false;
+        }
+    }
+
+    private async Task SelectMonitorAsync(int index)
+    {
+        if (_http is null || _activeRequest is null || _observerMode)
+            return;
+        string id = Uri.EscapeDataString(_activeRequest.Id);
+        using var response = await _http.PostAsJsonAsync(
+            $"api/remote/admin/sessions/{id}/input",
+            new { type = "monitor", index });
+        if (!response.IsSuccessStatusCode && _status is not null)
+            _status.Text = "Não foi possível trocar o monitor remoto.";
+    }
+
+    private void ToggleFullScreenViewer()
+    {
+        if (_viewerPanel is null || _viewer is null)
+            return;
+
+        if (_fullScreenWindow is not null)
+        {
+            _fullScreenWindow.Close();
+            return;
+        }
+
+        Control? originalParent = _viewerPanel.Parent;
+        Rectangle originalBounds = _viewerPanel.Bounds;
+        DockStyle originalDock = _viewerPanel.Dock;
+        var window = new Form
+        {
+            Text = "Vorken · Sessão remota",
+            Icon = Icon,
+            BackColor = Color.Black,
+            FormBorderStyle = FormBorderStyle.None,
+            WindowState = FormWindowState.Maximized,
+            KeyPreview = true,
+            StartPosition = FormStartPosition.Manual,
+            Bounds = Screen.FromControl(this).Bounds
+        };
+        _fullScreenWindow = window;
+        _viewerPanel.Parent = window;
+        _viewerPanel.Dock = DockStyle.Fill;
+        _fullScreenButton!.Text = "⤢  SAIR DA TELA CHEIA";
+
+        void Restore()
+        {
+            if (_viewerPanel is null || originalParent is null)
+                return;
+            _viewerPanel.Parent = originalParent;
+            _viewerPanel.Dock = originalDock;
+            _viewerPanel.Bounds = originalBounds;
+            _fullScreenWindow = null;
+            if (_fullScreenButton is not null)
+                _fullScreenButton.Text = "⛶  TELA CHEIA";
+        }
+
+        window.FormClosed += (_, _) => Restore();
+        window.KeyDown += (_, e) =>
+        {
+            if (e.KeyCode == Keys.Escape || e.KeyCode == Keys.F11)
+            {
+                window.Close();
+                e.Handled = true;
+            }
+            else
+            {
+                _ = SendKeyAsync(e.KeyValue, false);
+            }
+        };
+        window.KeyUp += (_, e) =>
+        {
+            if (e.KeyCode != Keys.Escape && e.KeyCode != Keys.F11)
+                _ = SendKeyAsync(e.KeyValue, true);
+        };
+        window.Show(this);
+        _viewer.Focus();
     }
 
     private async Task ReceiveFramesAsync(CancellationToken cancellationToken)
@@ -509,6 +668,18 @@ internal sealed class RemoteAdminForm : Form
             try { await _http.PostAsync($"api/remote/admin/sessions/{active.Id}/end", null); } catch { }
         if (_viewer is not null) { Image? old = _viewer.Image; _viewer.Image = null; old?.Dispose(); }
         if (_status is not null) _status.Text = "Sessão encerrada.";
+        if (_fullScreenWindow is not null)
+            _fullScreenWindow.Close();
+        if (_monitorSelector is not null)
+        {
+            _monitorSelector.Items.Clear();
+            _monitorSelector.Enabled = false;
+        }
+        if (_administratorAccessStatus is not null)
+        {
+            _administratorAccessStatus.Text = "ADMIN: aguardando";
+            _administratorAccessStatus.ForeColor = TextSecondary;
+        }
     }
 
     private void DrawRequestItem(object? sender, DrawItemEventArgs e)
@@ -608,6 +779,13 @@ internal sealed class RemoteAdminForm : Form
 
     private sealed class LoginResponse { public string AccessToken { get; set; } = ""; public string DisplayName { get; set; } = ""; }
     private sealed class RequestsResponse { public List<SupportRequest> Requests { get; set; } = []; }
+    private sealed class MonitorState { public List<MonitorInfo> Monitors { get; set; } = []; public int SelectedIndex { get; set; } public bool Elevated { get; set; } }
+    private sealed class MonitorInfo { public int Index { get; set; } public string Name { get; set; } = ""; public int Width { get; set; } public int Height { get; set; } public bool Primary { get; set; } }
+    private sealed record MonitorOption(MonitorInfo Monitor)
+    {
+        public int Index => Monitor.Index;
+        public override string ToString() => $"Monitor {Monitor.Index + 1} · {Monitor.Width}×{Monitor.Height}{(Monitor.Primary ? " · Principal" : "")}";
+    }
     private sealed class SupportRequest { public string Id { get; set; } = ""; public string Mode { get; set; } = "view"; public string Status { get; set; } = ""; public string Label { get; set; } = ""; public string? MachineName { get; set; } public bool CanObserve { get; set; } public string OwnerDisplayName { get; set; } = ""; }
     private sealed record RequestListItem(SupportRequest Request) { public override string ToString() => $"{Request.Label}  ·  {(Request.Mode == "control" ? "CONTROLE" : "TELA")}"; }
 }

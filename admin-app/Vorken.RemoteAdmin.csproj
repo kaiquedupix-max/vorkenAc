@@ -8,16 +8,16 @@
     <Nullable>enable</Nullable>
     <AssemblyName>Vorken.RemoteAdmin</AssemblyName>
     <RootNamespace>Vorken.RemoteAdmin</RootNamespace>
-    <Version>1.0.1</Version>
+    <Version>1.0.2</Version>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <Title>Vorken Administração Remota</Title>
     <Product>Vorken Remote Support</Product>
     <Company>Vorken</Company>
-    <AssemblyVersion>1.0.1.0</AssemblyVersion>
-    <FileVersion>1.0.1.0</FileVersion>
-    <InformationalVersion>1.0.1</InformationalVersion>
+    <AssemblyVersion>1.0.2.0</AssemblyVersion>
+    <FileVersion>1.0.2.0</FileVersion>
+    <InformationalVersion>1.0.2</InformationalVersion>
     <ApplicationIcon>..\agent\assets\vorken.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
