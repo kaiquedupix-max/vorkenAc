@@ -723,7 +723,7 @@ internal static class Program
         Console.ResetColor();
     }
 
-    private static AgentConfig LoadConfig(string[] args)
+    internal static AgentConfig LoadConfig(string[] args)
     {
         string? token = null;
         string? server = null;

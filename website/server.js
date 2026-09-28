@@ -2,18 +2,23 @@ import express from "express";
 import compression from "compression";
 import cookieParser from "cookie-parser";
 import crypto from "node:crypto";
+import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync, gunzipSync } from "node:zlib";
 import pg from "pg";
 import { runDetectionEngineV4 } from "./echoInspiredFilterV3.js";
-import { projectReportPayloadForAdmin } from "./reportPayloadProjection.js";
+import {
+  projectFindingEvidenceForAdmin,
+  projectReportPayloadForAdmin,
+} from "./reportPayloadProjection.js";
 import {
   canApplyLearnedArtifactTrust,
   catalogWebTargetMatch,
   isArtifactProtectedFromLearning,
 } from "./detectionPolicyV4.js";
+import { initRemoteSupportDb, installRemoteSupport } from "./remoteSupport.js";
 
 const { Pool } = pg;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -9299,7 +9304,7 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
     report: reportResult.rows[0] || null,
     findings: findingsResult.rows.map((finding) => ({
       ...finding,
-      evidence: compactAdminFindingEvidence(finding.evidence),
+      evidence: projectFindingEvidenceForAdmin(finding.evidence),
     })),
     filteredFindings: aiFilteredResult.rows,
     reviewState: {
@@ -10600,6 +10605,14 @@ ${cards || '<div class="finding">Nenhuma evidência publicada.</div>'}
 </main></body></html>`);
 });
 
+const remoteSupport = installRemoteSupport(app, {
+  pool,
+  getAnalysisByToken,
+  validToken,
+  publicUrl,
+  requireSiteAdmin: requireAdmin,
+});
+
 app.get("/admin", (_req, res) => {
   res.sendFile(path.join(__dirname, "public", "admin.html"));
 });
@@ -10614,10 +10627,13 @@ app.get("*", (_req, res) => {
 
 initDb()
   .then(async () => {
+    await initRemoteSupportDb(pool);
     await disableLearnedArtifactsNowInCatalog();
     await backfillPreviouslyApprovedAnalyses();
 
-    app.listen(port, "0.0.0.0", () => {
+    const server = http.createServer(app);
+    remoteSupport.attach(server);
+    server.listen(port, "0.0.0.0", () => {
       console.log("Vorken web ouvindo na porta " + port);
     });
   })

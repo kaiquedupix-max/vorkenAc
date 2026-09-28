@@ -41,6 +41,9 @@ Ao aceitar, você declara que leu este texto, compreendeu o escopo da análise e
 7. TRANSPARÊNCIA DURANTE A SESSÃO
 O aplicativo exibirá o andamento da coleta e permanecerá aberto até a conclusão. Não feche a janela durante o processo, pois isso pode interromper a análise e gerar um resultado incompleto.
 
+7.1 SUPORTE REMOTO OPCIONAL
+O suporte remoto não começa junto com a análise. Cada sessão exige que você escolha um administrador, selecione entre somente tela ou tela com controle e confirme novamente a autorização. A tela pode exibir conteúdo pessoal que esteja aberto no computador; feche-o antes de transmitir. O Vorken não habilita transferência de arquivos, área de transferência ou acesso após o encerramento, e exibe um botão visível para parar a sessão imediatamente.
+
 8. RESPONSABILIDADE E CONTESTAÇÃO
 A decisão administrativa deve considerar o conjunto das evidências e o contexto da sessão. Caso você discorde do resultado, solicite à administração a revisão do relatório e das evidências utilizadas.
 
@@ -77,6 +80,8 @@ FIM DOS TERMOS
     private readonly List<string> _activityLines = new();
     private readonly List<AgentFindingSnapshot> _visibleFindings = new();
     private readonly HashSet<Button> _enhancedButtons = new();
+    private RemoteSupportClient? _remoteSupport;
+    private Label? _remoteStatusLabel;
 
     private Panel? _evidenceDetailPanel;
     private DateTime _scanStartedAt;
@@ -297,8 +302,8 @@ FIM DOS TERMOS
             BackColor = Color.Transparent
         };
 
-        _nav.Location = new Point(360, 20);
-        _nav.Size = new Size(600, 58);
+        _nav.Location = new Point(300, 20);
+        _nav.Size = new Size(680, 58);
         _nav.BackColor = Color.Transparent;
         _nav.Visible = false;
 
@@ -312,6 +317,7 @@ FIM DOS TERMOS
         AddNavButton("◷", "Histórico", 3, ShowHistoryView);
         AddNavButton("⊞", "Análise Manual", 4, ShowManualAnalysisView);
         AddNavButton("⚙", "Configurações", 5, ShowSettingsView);
+        AddNavButton("◉", "Suporte", 6, ShowRemoteSupportView);
 
         _headerStatus.Text = "●  READY";
         _headerStatus.AutoSize = false;
@@ -322,6 +328,12 @@ FIM DOS TERMOS
         _headerStatus.ForeColor = Accent;
         _headerStatus.BackColor = Color.FromArgb(6, 31, 36);
         AttachRoundedRegion(_headerStatus, 8);
+        _headerStatus.Cursor = Cursors.Default;
+        _headerStatus.Click += async (_, _) =>
+        {
+            if (_remoteSupport is not null)
+                await StopRemoteSupportAsync();
+        };
 
         var minButton = MakeWindowButton("—", 1162);
         minButton.Click += (_, _) => WindowState = FormWindowState.Minimized;
@@ -394,8 +406,8 @@ FIM DOS TERMOS
         {
             Text = icon + Environment.NewLine + text,
             Tag = index,
-            Location = new Point(index * 98, 0),
-            Size = new Size(94, 58),
+            Location = new Point(index * 96, 0),
+            Size = new Size(92, 58),
             FlatStyle = FlatStyle.Flat,
             BackColor = Color.Transparent,
             ForeColor = TextSecondary,
@@ -2427,6 +2439,197 @@ FIM DOS TERMOS
         }
     }
 
+    private void ShowRemoteSupportView()
+    {
+        _surface.Controls.Clear();
+        _surface.Mode = AnimatedSurfaceMode.Idle;
+        _nav.Visible = true;
+        SetActiveNav(6);
+
+        var badge = MakeBadge("SUPORTE REMOTO   ·   CONSENTIMENTO EM TEMPO REAL");
+        badge.Location = new Point(44, 32);
+        _surface.Controls.Add(badge);
+        _surface.Controls.Add(MakeLabel(
+            "Compartilhar esta tela com a administração",
+            new Rectangle(44, 78, 880, 52), 28F, TextPrimary, FontStyle.Bold));
+        _surface.Controls.Add(MakeLabel(
+            "Você escolhe quem poderá acessar, define o nível de permissão e pode encerrar imediatamente.",
+            new Rectangle(47, 132, 980, 28), 10.2F, TextSecondary));
+
+        var setup = MakeCard(new Rectangle(44, 185, 770, 490));
+        setup.Controls.Add(MakeSectionTitle("INICIAR UMA SESSÃO", 22, 18));
+        setup.Controls.Add(MakeLabel("Administrador disponível", new Rectangle(24, 64, 360, 24), 9.5F, TextSecondary, FontStyle.Bold));
+
+        var admins = new ComboBox
+        {
+            Bounds = new Rectangle(24, 92, 470, 40),
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            BackColor = SurfaceAlt,
+            ForeColor = TextPrimary,
+            FlatStyle = FlatStyle.Flat,
+            Font = new Font("Segoe UI", 10F)
+        };
+        setup.Controls.Add(admins);
+
+        var refresh = new Button { Text = "Atualizar", Bounds = new Rectangle(512, 91, 120, 42) };
+        StyleGhostButton(refresh);
+        setup.Controls.Add(refresh);
+
+        var viewOnly = new RadioButton
+        {
+            Text = "Somente visualizar a tela",
+            Bounds = new Rectangle(24, 164, 330, 34),
+            Checked = true,
+            ForeColor = TextPrimary,
+            BackColor = Color.Transparent,
+            Font = new Font("Segoe UI", 10.5F, FontStyle.Bold)
+        };
+        var control = new RadioButton
+        {
+            Text = "Tela + controle de mouse e teclado",
+            Bounds = new Rectangle(24, 206, 420, 34),
+            ForeColor = Warning,
+            BackColor = Color.Transparent,
+            Font = new Font("Segoe UI", 10.5F, FontStyle.Bold)
+        };
+        setup.Controls.Add(viewOnly);
+        setup.Controls.Add(control);
+        setup.Controls.Add(MakeLabel(
+            "O modo de controle permite cliques e digitação enquanto a sessão estiver visível.\nNão inclui arquivos, área de transferência, senhas salvas ou acesso após o encerramento.",
+            new Rectangle(47, 246, 650, 58), 9.3F, TextSecondary));
+
+        var consent = new CheckBox
+        {
+            Text = "Eu entendo o nível selecionado e autorizo esta sessão.",
+            Bounds = new Rectangle(24, 322, 620, 38),
+            ForeColor = TextPrimary,
+            BackColor = Color.Transparent,
+            Font = new Font("Segoe UI", 9.8F)
+        };
+        setup.Controls.Add(consent);
+
+        var start = new Button { Text = "SOLICITAR CONEXÃO", Bounds = new Rectangle(24, 385, 250, 48) };
+        StylePrimaryButton(start);
+        var stop = new Button { Text = "PARAR AGORA", Bounds = new Rectangle(290, 385, 190, 48), Enabled = _remoteSupport?.IsActive == true };
+        StyleGhostButton(stop);
+        stop.ForeColor = Danger;
+        setup.Controls.Add(start);
+        setup.Controls.Add(stop);
+
+        _remoteStatusLabel = MakeLabel(
+            _remoteSupport?.IsActive == true ? "Sessão ativa." : "Nenhuma transmissão ativa.",
+            new Rectangle(24, 445, 690, 25), 9.2F,
+            _remoteSupport?.IsActive == true ? Warning : TextDim, FontStyle.Bold);
+        setup.Controls.Add(_remoteStatusLabel);
+        _surface.Controls.Add(setup);
+
+        var safety = MakeCard(new Rectangle(842, 185, 350, 330));
+        safety.Controls.Add(MakeSectionTitle("PROTEÇÕES DA SESSÃO", 20, 18));
+        safety.Controls.Add(MakeLabel(
+            "● Aceite dos dois lados\n\n● Indicador visível durante todo o acesso\n\n● Expiração automática\n\n● Interrupção imediata pelo jogador\n\n● Registro de início, aceite e término",
+            new Rectangle(24, 66, 300, 230), 10F, TextSecondary));
+        _surface.Controls.Add(safety);
+
+        async Task LoadAdminsAsync()
+        {
+            refresh.Enabled = false;
+            try
+            {
+                await using var client = new RemoteSupportClient(Program.LoadConfig(_args));
+                List<RemoteAdministrator> available = await client.GetAvailableAdminsAsync();
+                admins.Items.Clear();
+                foreach (RemoteAdministrator admin in available) admins.Items.Add(admin);
+                if (admins.Items.Count > 0) admins.SelectedIndex = 0;
+                UpdateRemoteStatus(available.Count == 0
+                    ? "Nenhum administrador está disponível neste momento."
+                    : $"{available.Count} administrador(es) disponível(is).", false);
+            }
+            catch (Exception ex)
+            {
+                UpdateRemoteStatus("Não foi possível consultar administradores: " + ex.Message, false);
+            }
+            finally { if (!refresh.IsDisposed) refresh.Enabled = true; }
+        }
+
+        refresh.Click += async (_, _) => await LoadAdminsAsync();
+        stop.Click += async (_, _) => await StopRemoteSupportAsync();
+        start.Click += async (_, _) =>
+        {
+            if (_remoteSupport?.IsActive == true) return;
+            if (admins.SelectedItem is not RemoteAdministrator admin)
+            {
+                MessageBox.Show(this, "Selecione um administrador disponível.", "Suporte Vorken", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            if (!consent.Checked)
+            {
+                MessageBox.Show(this, "Marque o consentimento antes de solicitar a conexão.", "Suporte Vorken", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            string mode = control.Checked ? "control" : "view";
+            string permission = control.Checked ? "ver a tela e controlar mouse/teclado" : "somente ver a tela";
+            if (MessageBox.Show(this,
+                $"Autorizar {admin.DisplayName} a {permission}?\n\nVocê poderá parar a sessão pelo botão vermelho no topo do Vorken.",
+                "Confirmar suporte remoto", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+                return;
+
+            start.Enabled = false;
+            _remoteSupport = new RemoteSupportClient(Program.LoadConfig(_args));
+            RemoteSupportClient runningClient = _remoteSupport;
+            stop.Enabled = true;
+            UpdateRemoteStatus("Preparando solicitação segura...", true);
+            try
+            {
+                await runningClient.RunAsync(admin.Id, mode, message => UpdateRemoteStatus(message, runningClient.IsActive));
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                UpdateRemoteStatus("Sessão não iniciada: " + ex.Message, false);
+            }
+            finally
+            {
+                if (ReferenceEquals(_remoteSupport, runningClient))
+                {
+                    await runningClient.DisposeAsync();
+                    _remoteSupport = null;
+                }
+                if (!start.IsDisposed) start.Enabled = true;
+                if (!stop.IsDisposed) stop.Enabled = false;
+                UpdateRemoteStatus("Transmissão encerrada.", false);
+            }
+        };
+
+        _ = LoadAdminsAsync();
+    }
+
+    private void UpdateRemoteStatus(string message, bool active)
+    {
+        if (InvokeRequired)
+        {
+            BeginInvoke(() => UpdateRemoteStatus(message, active));
+            return;
+        }
+        if (_remoteStatusLabel is { IsDisposed: false })
+        {
+            _remoteStatusLabel.Text = message;
+            _remoteStatusLabel.ForeColor = active ? Warning : TextDim;
+        }
+        bool sessionOpen = active || _remoteSupport is not null;
+        _headerStatus.Text = sessionOpen ? "■  PARAR SUPORTE" : "●  READY";
+        _headerStatus.ForeColor = sessionOpen ? Color.White : Accent;
+        _headerStatus.BackColor = sessionOpen ? Danger : Color.FromArgb(6, 31, 36);
+        _headerStatus.Cursor = sessionOpen ? Cursors.Hand : Cursors.Default;
+    }
+
+    private async Task StopRemoteSupportAsync()
+    {
+        RemoteSupportClient? client = _remoteSupport;
+        if (client is null) return;
+        UpdateRemoteStatus("Encerrando transmissão...", false);
+        await client.StopAsync();
+    }
+
     private void ShowSettingsView()
     {
         _surface.Controls.Clear();
@@ -2967,6 +3170,8 @@ FIM DOS TERMOS
     private void OnFormClosing(object? sender, FormClosingEventArgs e)
     {
         _clientResultPollTimer.Stop();
+        if (_remoteSupport is not null)
+            _remoteSupport.StopAsync().GetAwaiter().GetResult();
         if (!_running)
             return;
 

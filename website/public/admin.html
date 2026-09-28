@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#061018">
   <title>Vorken Anti-Cheat</title>
   <link rel="icon" type="image/svg+xml" href="/vorken-logo.svg">
-  <link rel="stylesheet" href="/styles.css?v=20260926-stream-v7">
+  <link rel="stylesheet" href="/styles.css?v=20260927-remote-admin-v1">
 </head>
 <body class="vorken-admin">
   <header class="vorken-shell-header">
@@ -22,6 +22,7 @@
       <button class="vorken-nav-button" data-admin-tab="home">⌂<span>Início</span></button>
       <button class="vorken-nav-button active" data-admin-tab="sessions">☷<span>Sessões</span></button>
       <button class="vorken-nav-button" data-admin-tab="scanner">◉<span>Scanner</span></button>
+      <button class="vorken-nav-button" data-admin-tab="admins">♙<span>Administradores</span></button>
       <button class="vorken-nav-button" data-admin-tab="settings">⚙<span>Configurações</span></button>
     </nav>
 
@@ -473,8 +474,73 @@
           </article>
         </div>
       </section>
+
+      <section id="remoteAdminsPanel" class="vorken-tab-panel hidden settings-panel">
+        <div class="panel-heading">
+          <div class="eyebrow">SUPORTE REMOTO</div>
+          <h1>Administradores do aplicativo</h1>
+          <p>Crie contas individuais para quem poderá receber solicitações de tela e controle.</p>
+        </div>
+
+        <div class="settings-grid remote-admin-settings-grid">
+          <article class="card remote-admin-create-card">
+            <div class="eyebrow">NOVA CONTA</div>
+            <h2>Criar administrador</h2>
+            <p class="muted">O usuário poderá entrar no aplicativo Vorken Remote Admin. Não existe senha padrão.</p>
+            <form id="remoteAdminForm">
+              <label>Nome exibido
+                <input id="remoteAdminDisplayName" maxlength="100" placeholder="Ex.: Kaique · Moderação" required>
+              </label>
+              <label>Usuário
+                <input id="remoteAdminUsername" maxlength="40" pattern="[A-Za-z0-9._-]{3,40}" placeholder="Ex.: kaique.admin" autocomplete="off" required>
+              </label>
+              <label>Senha inicial
+                <input id="remoteAdminPassword" type="password" minlength="12" maxlength="200" autocomplete="new-password" placeholder="Mínimo de 12 caracteres" required>
+              </label>
+              <label>Confirmar senha
+                <input id="remoteAdminPasswordConfirm" type="password" minlength="12" maxlength="200" autocomplete="new-password" required>
+              </label>
+              <button class="button primary" type="submit">Criar administrador</button>
+            </form>
+            <div id="remoteAdminMessage" class="message hidden"></div>
+          </article>
+
+          <article class="card remote-admin-list-card">
+            <div class="remote-admin-list-heading">
+              <div>
+                <div class="eyebrow">CONTAS CADASTRADAS</div>
+                <h2>Equipe disponível</h2>
+              </div>
+              <button id="refreshRemoteAdminsBtn" class="button ghost" type="button">↻ Atualizar</button>
+            </div>
+            <div id="remoteAdminsList" class="remote-admin-list">
+              <div class="message">Carregando administradores...</div>
+            </div>
+          </article>
+        </div>
+      </section>
     </section>
   </main>
+
+  <dialog id="remotePasswordDialog" class="gf-ban-dialog">
+    <form id="remotePasswordForm" class="gf-ban-dialog-card">
+      <div class="eyebrow">CREDENCIAL ADMINISTRATIVA</div>
+      <h2>Redefinir senha</h2>
+      <p id="remotePasswordTarget" class="muted"></p>
+      <input id="remotePasswordAdminId" type="hidden">
+      <label>Nova senha
+        <input id="remotePasswordNew" type="password" minlength="12" maxlength="200" autocomplete="new-password" required>
+      </label>
+      <label>Confirmar nova senha
+        <input id="remotePasswordConfirm" type="password" minlength="12" maxlength="200" autocomplete="new-password" required>
+      </label>
+      <div id="remotePasswordMessage" class="message hidden"></div>
+      <div class="gf-ban-dialog-actions">
+        <button id="remotePasswordCancel" class="button ghost" type="button">Cancelar</button>
+        <button class="button primary" type="submit">Salvar nova senha</button>
+      </div>
+    </form>
+  </dialog>
 
   <dialog id="banReasonDialog" class="gf-ban-dialog">
     <form method="dialog" class="gf-ban-dialog-card">
@@ -508,7 +574,7 @@
     </form>
   </dialog>
 
-  <script src="/ui-polish.js?v=20260926-stream-v7"></script>
-  <script src="/admin.js?v=20260926-stream-v7"></script>
+  <script src="/ui-polish.js?v=20260927-remote-admin-v1"></script>
+  <script src="/admin.js?v=20260927-remote-admin-v1"></script>
 </body>
 </html>

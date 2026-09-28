@@ -45,6 +45,17 @@ PORT=3000
 VIRUSTOTAL_API_KEY=
 ```
 
+## Suporte remoto
+
+O agente possui uma aba **Suporte** com dois modos autorizados pelo jogador: somente transmissão da tela ou tela com controle temporário de mouse e teclado. O aplicativo administrativo separado fica em `admin-app/`:
+
+```bash
+cd admin-app
+dotnet publish -c Release -r win-x64 --self-contained true
+```
+
+Cada administrador entra com seu próprio usuário e só aparece para o jogador enquanto estiver marcado como disponível. Não há acesso não assistido, transferência de arquivos, área de transferência ou persistência após o encerramento. Veja a configuração e as proteções em [docs/REMOTE_SUPPORT.md](docs/REMOTE_SUPPORT.md).
+
 ### Revisão por Gemini
 
 O Vorken usa o filtro técnico normal como primeira camada e pode usar o **Gemini** como segunda camada para reduzir falsos positivos. A integração usa a Gemini Developer API diretamente por HTTPS, sem SDK adicional.

@@ -1358,6 +1358,61 @@ pre.raw{max-height:420px;overflow:auto;background:#05080a;border:1px solid #1620
 }
 .vorken-admin .button.ghost:hover { border-color: #2bf0c9; color: #2bf0c9; }
 
+.remote-admin-settings-grid {
+  grid-template-columns: minmax(330px, .78fr) minmax(500px, 1.22fr);
+}
+.remote-admin-create-card form { display: grid; gap: 13px; margin-top: 18px; }
+.remote-admin-list-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 18px;
+}
+.remote-admin-list-heading h2 { margin: 7px 0 0; }
+.remote-admin-list { display: grid; gap: 10px; }
+.remote-admin-row {
+  display: grid;
+  grid-template-columns: minmax(190px, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  min-height: 84px;
+  padding: 14px 16px;
+  border: 1px solid #174653;
+  border-radius: 14px;
+  background: #05151c;
+  transition: border-color .18s ease, transform .18s ease, opacity .18s ease;
+}
+.remote-admin-row:hover { border-color: #267789; transform: translateY(-1px); }
+.remote-admin-row.is-disabled { opacity: .62; }
+.remote-admin-identity { min-width: 0; }
+.remote-admin-identity strong {
+  display: block;
+  color: #eff8f8;
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.remote-admin-identity code { color: #78a2ad; font-size: 11px; }
+.remote-admin-meta { display: flex; align-items: center; gap: 7px; margin-top: 9px; flex-wrap: wrap; }
+.remote-admin-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid #1b5361;
+  color: #8eabb3;
+  background: #071c24;
+  font: 700 9px/1 Consolas, monospace;
+}
+.remote-admin-status.online { border-color: #238f7a; color: #2bf0c9; background: #062822; }
+.remote-admin-status.disabled { border-color: #60404a; color: #db8d99; background: #251116; }
+.remote-admin-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.remote-admin-actions .button { padding: 8px 11px; font-size: 10px; }
+.remote-admin-empty { padding: 34px 20px; text-align: center; color: #78909a; border: 1px dashed #1a4956; border-radius: 14px; }
+
 @media (max-width: 1180px) {
   .vorken-shell-header { grid-template-columns: 290px 1fr 190px; padding: 0 18px; }
   .vorken-main-nav { justify-self: start; }
@@ -1377,6 +1432,8 @@ pre.raw{max-height:420px;overflow:auto;background:#05080a;border:1px solid #1620
   .report-workspace-head { display: block; }
   .report-head-actions { justify-content: flex-start; margin-top: 12px; }
   .settings-grid { grid-template-columns: 1fr; }
+  .remote-admin-row { grid-template-columns: 1fr; }
+  .remote-admin-actions { justify-content: flex-start; }
 }
 
 

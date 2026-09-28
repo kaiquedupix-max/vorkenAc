@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { projectReportPayloadForAdmin } from "../reportPayloadProjection.js";
+import {
+  projectFindingEvidenceForAdmin,
+  projectReportPayloadForAdmin,
+} from "../reportPayloadProjection.js";
 
 test("large forensic collections are projected for the admin UI", () => {
   const payload = {
@@ -12,18 +15,18 @@ test("large forensic collections are projected for the admin UI", () => {
 
   const projected = projectReportPayloadForAdmin(payload);
 
-  assert.equal(projected.peInspections.length, 120);
-  assert.equal(projected.files.length, 180);
+  assert.equal(projected.peInspections.length, 0);
+  assert.equal(projected.files.length, 0);
   assert.equal(projected.steamAccounts.length, 1);
   assert.equal(projected.uiCollectionCounts.peInspections, 12788);
   assert.equal(projected.uiCollectionCounts.files, 240);
   assert.equal(projected.uiProjection.originalItems, 13029);
-  assert.equal(projected.uiProjection.projectedItems, 301);
+  assert.equal(projected.uiProjection.projectedItems, 1);
   assert.equal(projected.uiProjection.truncated, true);
-  assert.deepEqual(projected.machine, payload.machine);
+  assert.equal(projected.machine, undefined);
 });
 
-test("small reports remain complete", () => {
+test("non-interactive technical arrays stay on the server", () => {
   const payload = {
     files: [{ name: "one.exe" }],
     defenderDetections: [{ threatName: "Example" }],
@@ -31,9 +34,10 @@ test("small reports remain complete", () => {
 
   const projected = projectReportPayloadForAdmin(payload);
 
-  assert.equal(projected.files.length, 1);
-  assert.equal(projected.defenderDetections.length, 1);
-  assert.equal(projected.uiProjection.truncated, false);
+  assert.equal(projected.files.length, 0);
+  assert.equal(projected.defenderDetections.length, 0);
+  assert.equal(projected.uiCollectionCounts.files, 1);
+  assert.equal(projected.uiProjection.truncated, true);
 });
 
 test("invalid payload becomes an empty projection", () => {
@@ -42,3 +46,14 @@ test("invalid payload becomes an empty projection", () => {
   assert.equal(projected.uiProjection.originalItems, 0);
 });
 
+test("finding evidence is bounded before reaching the browser", () => {
+  const projected = projectFindingEvidenceForAdmin({
+    note: "visible",
+    matches: Array.from({ length: 5000 }, (_, index) => ({ index })),
+    raw: "x".repeat(10000),
+  });
+
+  assert.equal(projected.note, "visible");
+  assert.equal(projected.matches.length, 20);
+  assert.ok(projected.raw.length < 2100);
+});
