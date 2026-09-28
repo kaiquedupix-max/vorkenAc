@@ -46,12 +46,12 @@ internal static class Program
         Action<string>? status = null)
     {
         _statusSink = status;
-        ReportStatus("Preparando a análise...");
+        ReportStatus(AgentLocalization.Pick("Preparando a análise...", "Preparando el análisis...", "Preparing analysis..."));
 
         try
         {
             AgentConfig config = LoadConfig(args);
-            ReportStatus("Conectando ao servidor do Vorken...");
+            ReportStatus(AgentLocalization.Pick("Conectando ao servidor do Vorken...", "Conectando al servidor de Vorken...", "Connecting to the Vorken server..."));
 
             using var http = new HttpClient
             {
@@ -62,7 +62,7 @@ internal static class Program
             RulesResponse rulesPayload =
                 await LoadRulesAsync(http, config.Token);
 
-            ReportStatus("Configuração recebida. Iniciando coleta segura...");
+            ReportStatus(AgentLocalization.Pick("Configuração recebida. Iniciando coleta segura...", "Configuración recibida. Iniciando recopilación segura...", "Configuration received. Starting secure collection..."));
             var rules = rulesPayload.Rules;
 
             string machineFingerprint =
@@ -79,7 +79,7 @@ internal static class Program
                     machineFingerprint
                 });
 
-            ReportStatus("Coletando evidências técnicas do computador...");
+            ReportStatus(AgentLocalization.Pick("Coletando evidências técnicas do computador...", "Recopilando evidencias técnicas del equipo...", "Collecting technical evidence from the computer..."));
 
             var errors = new List<string>();
 
@@ -483,7 +483,7 @@ internal static class Program
                 Errors = errors
             };
 
-            ReportStatus("Preparando o relatório completo para envio...");
+            ReportStatus(AgentLocalization.Pick("Preparando o relatório completo para envio...", "Preparando el informe completo para envío...", "Preparing the complete report for upload..."));
 
             string reportRoute =
                 $"api/agent/{Uri.EscapeDataString(config.Token)}/report";
@@ -535,7 +535,7 @@ internal static class Program
                 }
             }
 
-            ReportStatus("Dados enviados. Aguardando o processamento final do relatório...");
+            ReportStatus(AgentLocalization.Pick("Dados enviados. Aguardando o processamento final do relatório...", "Datos enviados. Esperando el procesamiento final del informe...", "Data uploaded. Waiting for final report processing..."));
 
             AgentResultSnapshot? finalResult = null;
 
@@ -552,7 +552,7 @@ internal static class Program
                     ex.Message);
             }
 
-            ReportStatus("Dados enviados para análise com sucesso.");
+            ReportStatus(AgentLocalization.Pick("Dados enviados para análise com sucesso.", "Datos enviados para análisis correctamente.", "Data successfully submitted for analysis."));
 
             return new AgentRunResult
             {
@@ -562,7 +562,7 @@ internal static class Program
         }
         catch (Exception ex)
         {
-            ReportStatus("Falha no Vorken: " + ex.Message);
+            ReportStatus(AgentLocalization.Pick("Falha no Vorken: ", "Error de Vorken: ", "Vorken failure: ") + ex.Message);
 
             return new AgentRunResult
             {
@@ -642,15 +642,17 @@ internal static class Program
                     "completed",
                     StringComparison.OrdinalIgnoreCase))
             {
-                ReportStatus("Processamento final concluído.");
+                ReportStatus(AgentLocalization.Pick("Processamento final concluído.", "Procesamiento final completado.", "Final processing completed."));
                 return snapshot;
             }
 
             await Task.Delay(TimeSpan.FromSeconds(2));
         }
 
-        ReportStatus(
-            "O relatório foi enviado e continuará sendo processado no servidor.");
+        ReportStatus(AgentLocalization.Pick(
+            "O relatório foi enviado e continuará sendo processado no servidor.",
+            "El informe fue enviado y seguirá procesándose en el servidor.",
+            "The report was uploaded and will continue processing on the server."));
 
         return null;
     }
@@ -859,8 +861,10 @@ internal static class Program
         double compressedMb =
             compressed.Length / 1024d / 1024d;
 
-        ReportStatus(
-            $"Enviando relatório: {sourceMb:F1} MB -> {compressedMb:F1} MB compactado.");
+        ReportStatus(AgentLocalization.Pick(
+            $"Enviando relatório: {sourceMb:F1} MB -> {compressedMb:F1} MB compactado.",
+            $"Enviando informe: {sourceMb:F1} MB -> {compressedMb:F1} MB comprimido.",
+            $"Uploading report: {sourceMb:F1} MB -> {compressedMb:F1} MB compressed."));
 
         var request =
             new HttpRequestMessage(
@@ -906,7 +910,7 @@ internal static class Program
         catch (Exception ex)
         {
             errors.Add($"{moduleName}: {ex.Message}");
-            ReportStatus($"! {moduleName}: indisponível");
+            ReportStatus($"! {moduleName}: " + AgentLocalization.Pick("indisponível", "no disponible", "unavailable"));
             return new List<T>();
         }
     }

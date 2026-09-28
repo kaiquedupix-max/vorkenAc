@@ -229,7 +229,7 @@ FIM DOS TERMOS
         Opacity = 0d;
 
         BuildShell();
-        ShowTermsGate();
+        ShowLanguageGate();
 
         _motionTimer.Interval = 24;
         _motionTimer.Tick += MotionTimer_Tick;
@@ -307,17 +307,17 @@ FIM DOS TERMOS
         _nav.BackColor = Color.Transparent;
         _nav.Visible = false;
 
-        AddNavButton("⌂", "Início", 0, () => ShowCompletionHome());
-        AddNavButton("⚙", "Análise", 1, ShowAnalysisSummaryView);
-        AddNavButton("≡", "Resultados", 2, () =>
+        AddNavButton("⌂", L("Início", "Inicio", "Home"), 0, () => ShowCompletionHome());
+        AddNavButton("⚙", L("Análise", "Análisis", "Analysis"), 1, ShowAnalysisSummaryView);
+        AddNavButton("≡", L("Resultados", "Resultados", "Results"), 2, () =>
         {
             if (_lastRun is not null)
                 ShowResultsView(_lastRun);
         });
-        AddNavButton("◷", "Histórico", 3, ShowHistoryView);
-        AddNavButton("⊞", "Análise Manual", 4, ShowManualAnalysisView);
-        AddNavButton("⚙", "Configurações", 5, ShowSettingsView);
-        AddNavButton("◉", "Suporte", 6, ShowRemoteSupportView);
+        AddNavButton("◷", L("Histórico", "Historial", "History"), 3, ShowHistoryView);
+        AddNavButton("⊞", L("Análise Manual", "Análisis Manual", "Manual Analysis"), 4, ShowManualAnalysisView);
+        AddNavButton("⚙", L("Configurações", "Configuración", "Settings"), 5, ShowSettingsView);
+        AddNavButton("◉", L("Suporte", "Soporte", "Support"), 6, ShowRemoteSupportView);
 
         _headerStatus.Text = "●  READY";
         _headerStatus.AutoSize = false;
@@ -443,6 +443,142 @@ FIM DOS TERMOS
         }
     }
 
+    private static string L(string portuguese, string spanish, string english) =>
+        AgentLocalization.Pick(portuguese, spanish, english);
+
+    private void UpdateNavLanguage()
+    {
+        string[] icons = { "⌂", "⚙", "≡", "◷", "⊞", "⚙", "◉" };
+        string[] labels =
+        {
+            L("Início", "Inicio", "Home"),
+            L("Análise", "Análisis", "Analysis"),
+            L("Resultados", "Resultados", "Results"),
+            L("Histórico", "Historial", "History"),
+            L("Análise Manual", "Análisis Manual", "Manual Analysis"),
+            L("Configurações", "Configuración", "Settings"),
+            L("Suporte", "Soporte", "Support")
+        };
+
+        foreach (Control control in _nav.Controls)
+        {
+            if (control is Button button && button.Tag is int index &&
+                index >= 0 && index < labels.Length)
+            {
+                button.Text = icons[index] + Environment.NewLine + labels[index];
+            }
+        }
+    }
+
+    private void ShowLanguageGate()
+    {
+        _surface.Controls.Clear();
+        _surface.Mode = AnimatedSurfaceMode.Idle;
+        _nav.Visible = false;
+        _termsAccepted = false;
+        _finished = false;
+
+        var badge = MakeBadge("LANGUAGE   ·   IDIOMA");
+        badge.Location = new Point(44, 36);
+        _surface.Controls.Add(badge);
+        _surface.Controls.Add(MakeLabel(
+            "Escolha seu idioma  ·  Elige tu idioma  ·  Choose your language",
+            new Rectangle(44, 88, 1160, 58),
+            27F,
+            TextPrimary,
+            FontStyle.Bold));
+        _surface.Controls.Add(MakeLabel(
+            "A escolha será salva neste computador e poderá ser alterada nas configurações.",
+            new Rectangle(47, 148, 1080, 30),
+            10F,
+            TextSecondary));
+
+        var card = MakeCard(new Rectangle(44, 210, 1180, 500));
+        card.CornerRadius = 20;
+        card.Controls.Add(MakeSectionTitle("◉   VORKEN ANTI-CHEAT", 28, 24));
+
+        AddLanguageChoice(
+            card,
+            AgentLanguage.Portuguese,
+            "PT-BR",
+            "Português",
+            "Continuar em português",
+            28);
+        AddLanguageChoice(
+            card,
+            AgentLanguage.Spanish,
+            "ES",
+            "Español",
+            "Continuar en español",
+            402);
+        AddLanguageChoice(
+            card,
+            AgentLanguage.English,
+            "EN",
+            "English",
+            "Continue in English",
+            776);
+
+        _surface.Controls.Add(card);
+        SetHeaderState("LANGUAGE", Accent);
+    }
+
+    private void AddLanguageChoice(
+        Control parent,
+        AgentLanguage language,
+        string code,
+        string title,
+        string action,
+        int x)
+    {
+        bool selected = AgentLocalization.Current == language;
+        var panel = new BorderedPanel
+        {
+            Bounds = new Rectangle(x, 90, 346, 340),
+            BackColor = selected ? Color.FromArgb(7, 38, 42) : Color.FromArgb(5, 20, 26),
+            BorderColor = selected ? AccentSoft : Border,
+            CornerRadius = 18
+        };
+        panel.Controls.Add(MakeLabel(
+            code,
+            new Rectangle(24, 28, 290, 28),
+            9F,
+            Accent,
+            FontStyle.Bold,
+            "Consolas"));
+        panel.Controls.Add(MakeLabel(
+            title,
+            new Rectangle(24, 78, 290, 52),
+            25F,
+            TextPrimary,
+            FontStyle.Bold));
+        panel.Controls.Add(MakeLabel(
+            language switch
+            {
+                AgentLanguage.Spanish => "Términos, consentimiento y navegación en español.",
+                AgentLanguage.English => "Terms, consent and navigation in English.",
+                _ => "Termos, consentimento e navegação em português."
+            },
+            new Rectangle(24, 145, 290, 62),
+            9.5F,
+            TextSecondary));
+
+        var button = new Button
+        {
+            Text = action + "  →",
+            Bounds = new Rectangle(24, 245, 298, 58)
+        };
+        StylePrimaryButton(button);
+        button.Click += (_, _) =>
+        {
+            AgentLocalization.Select(language);
+            UpdateNavLanguage();
+            ShowTermsGate();
+        };
+        panel.Controls.Add(button);
+        parent.Controls.Add(panel);
+    }
+
     private void ShowTermsGate()
     {
         _surface.Controls.Clear();
@@ -450,25 +586,34 @@ FIM DOS TERMOS
         _nav.Visible = false;
         _finished = false;
 
-        var badge = MakeBadge("ETAPA OBRIGATÓRIA   ·   CONSENTIMENTO");
+        var badge = MakeBadge(L(
+            "ETAPA OBRIGATÓRIA   ·   CONSENTIMENTO",
+            "PASO OBLIGATORIO   ·   CONSENTIMIENTO",
+            "REQUIRED STEP   ·   CONSENT"));
         badge.Location = new Point(44, 28);
 
         _surface.Controls.Add(badge);
         _surface.Controls.Add(MakeLabel(
-            "Antes de começar, leia os termos.",
+            L("Antes de começar, leia os termos.", "Antes de comenzar, lea los términos.", "Read the terms before you begin."),
             new Rectangle(44, 72, 850, 52),
             29F,
             TextPrimary,
             FontStyle.Bold));
         _surface.Controls.Add(MakeLabel(
-            "Role o documento até o final. O aceite libera o aplicativo e nenhuma análise começa automaticamente.",
+            L(
+                "Role o documento até o final. O aceite libera o aplicativo e nenhuma análise começa automaticamente.",
+                "Desplácese hasta el final. La aceptación habilita la aplicación y ningún análisis comienza automáticamente.",
+                "Scroll to the end. Acceptance unlocks the application and no analysis starts automatically."),
             new Rectangle(47, 126, 960, 30),
             10.2F,
             TextSecondary));
 
         var termsCard = MakeCard(new Rectangle(44, 174, 820, 608));
         termsCard.CornerRadius = 18;
-        termsCard.Controls.Add(MakeSectionTitle("▤   TERMOS DE USO E CONSENTIMENTO", 22, 18));
+        termsCard.Controls.Add(MakeSectionTitle(L(
+            "▤   TERMOS DE USO E CONSENTIMENTO",
+            "▤   TÉRMINOS DE USO Y CONSENTIMIENTO",
+            "▤   TERMS OF USE AND CONSENT"), 22, 18));
 
         var termsBox = new RichTextBox
         {
@@ -481,7 +626,7 @@ FIM DOS TERMOS
             BackColor = Color.FromArgb(3, 13, 19),
             ForeColor = Color.FromArgb(194, 210, 214),
             Font = new Font("Segoe UI", 9.8F),
-            Text = TermsContent,
+            Text = AgentLocalization.Terms,
             TabStop = true
         };
         AttachRoundedRegion(termsBox, 14);
@@ -504,7 +649,7 @@ FIM DOS TERMOS
         termsCard.Controls.Add(scrollTrack);
 
         var scrollHint = MakeLabel(
-            "↓  Role para continuar   ·   0%",
+            L("↓  Role para continuar   ·   0%", "↓  Desplácese para continuar   ·   0%", "↓  Scroll to continue   ·   0%"),
             new Rectangle(548, 528, 250, 26),
             8F,
             Warning,
@@ -515,7 +660,7 @@ FIM DOS TERMOS
 
         var officialTerms = new Button
         {
-            Text = "Termos oficiais ↗",
+            Text = L("Termos oficiais ↗", "Términos oficiales ↗", "Official terms ↗"),
             Bounds = new Rectangle(22, 562, 170, 34)
         };
         StyleGhostButton(officialTerms);
@@ -524,7 +669,7 @@ FIM DOS TERMOS
 
         var privacy = new Button
         {
-            Text = "Privacidade ↗",
+            Text = L("Privacidade ↗", "Privacidad ↗", "Privacy ↗"),
             Bounds = new Rectangle(204, 562, 154, 34)
         };
         StyleGhostButton(privacy);
@@ -534,30 +679,50 @@ FIM DOS TERMOS
         var actionCard = MakeCard(new Rectangle(890, 174, 334, 608));
         actionCard.CornerRadius = 18;
         actionCard.Controls.Add(MakeLabel(
-            "CONSENTIMENTO",
+            L("CONSENTIMENTO", "CONSENTIMIENTO", "CONSENT"),
             new Rectangle(24, 28, 240, 20),
             8.2F,
             Accent,
             FontStyle.Bold,
             "Consolas"));
         actionCard.Controls.Add(MakeLabel(
-            "Leitura clara.\nAceite consciente.",
+            L("Leitura clara.\nAceite consciente.", "Lectura clara.\nAceptación consciente.", "Clear reading.\nInformed consent."),
             new Rectangle(24, 66, 280, 76),
             19F,
             TextPrimary,
             FontStyle.Bold));
         actionCard.Controls.Add(MakeLabel(
-            "O Vorken só será liberado após você chegar ao fim dos termos.",
+            L(
+                "O Vorken só será liberado após você chegar ao fim dos termos.",
+                "Vorken solo se habilitará después de llegar al final de los términos.",
+                "Vorken will only unlock after you reach the end of the terms."),
             new Rectangle(25, 158, 280, 58),
             9.5F,
             TextSecondary));
 
-        string[] protections =
+        string[] protections = AgentLocalization.Current switch
         {
-            "✓  Nenhuma análise inicia sozinha",
-            "✓  Escopo técnico apresentado antes",
-            "✓  Revisão humana dos alertas",
-            "✓  Privacidade acessível a qualquer momento"
+            AgentLanguage.Spanish =>
+            [
+                "✓  Ningún análisis comienza solo",
+                "✓  Alcance técnico presentado antes",
+                "✓  Revisión humana de las alertas",
+                "✓  Privacidad accesible en todo momento"
+            ],
+            AgentLanguage.English =>
+            [
+                "✓  No analysis starts by itself",
+                "✓  Technical scope shown beforehand",
+                "✓  Human review of alerts",
+                "✓  Privacy available at any time"
+            ],
+            _ =>
+            [
+                "✓  Nenhuma análise inicia sozinha",
+                "✓  Escopo técnico apresentado antes",
+                "✓  Revisão humana dos alertas",
+                "✓  Privacidade acessível a qualquer momento"
+            ]
         };
 
         for (int i = 0; i < protections.Length; i++)
@@ -580,7 +745,7 @@ FIM DOS TERMOS
 
         var acceptButton = new Button
         {
-            Text = "Role até o final para liberar",
+            Text = L("Role até o final para liberar", "Desplácese hasta el final", "Scroll to the end to unlock"),
             Bounds = new Rectangle(24, 488, 286, 62),
             Enabled = false
         };
@@ -596,7 +761,10 @@ FIM DOS TERMOS
         };
         actionCard.Controls.Add(acceptButton);
         actionCard.Controls.Add(MakeLabel(
-            "O aceite vale para esta execução do aplicativo.",
+            L(
+                "O aceite vale para esta execução do aplicativo.",
+                "La aceptación es válida para esta ejecución de la aplicación.",
+                "Acceptance applies to this application session."),
             new Rectangle(32, 562, 270, 20),
             7.1F,
             TextDim));
@@ -659,8 +827,8 @@ FIM DOS TERMOS
                 10,
                 scrollTrack.Width * percent / 100);
             scrollHint.Text = reachedBottom
-                ? "✓  Leitura concluída   ·   100%"
-                : $"↓  Role para continuar   ·   {percent}%";
+                ? L("✓  Leitura concluída   ·   100%", "✓  Lectura completada   ·   100%", "✓  Reading complete   ·   100%")
+                : L($"↓  Role para continuar   ·   {percent}%", $"↓  Desplácese para continuar   ·   {percent}%", $"↓  Scroll to continue   ·   {percent}%");
             scrollHint.ForeColor = reachedBottom
                 ? Accent
                 : Warning;
@@ -669,12 +837,12 @@ FIM DOS TERMOS
 
             if (reachedBottom)
             {
-                acceptButton.Text = "✓  Li e aceito os termos   →";
+                acceptButton.Text = L("✓  Li e aceito os termos   →", "✓  He leído y acepto los términos   →", "✓  I have read and accept the terms   →");
                 acceptButton.BackColor = Accent;
             }
             else
             {
-                acceptButton.Text = "Role até o final para liberar";
+                acceptButton.Text = L("Role até o final para liberar", "Desplácese hasta el final", "Scroll to the end to unlock");
                 acceptButton.BackColor = Color.FromArgb(31, 73, 72);
             }
         }
@@ -696,7 +864,7 @@ FIM DOS TERMOS
         _surface.Controls.Add(termsCard);
         _surface.Controls.Add(actionCard);
 
-        SetHeaderState("TERMOS", Warning);
+        SetHeaderState(L("TERMOS", "TÉRMINOS", "TERMS"), Warning);
         termsBox.Focus();
     }
 
@@ -711,7 +879,7 @@ FIM DOS TERMOS
         badge.Location = new Point(46, 32);
 
         var title = MakeLabel(
-            "Análise técnica\ncom evidência real.",
+            L("Análise técnica\ncom evidência real.", "Análisis técnico\ncon evidencia real.", "Technical analysis\nwith real evidence."),
             new Rectangle(46, 78, 700, 120),
             35F,
             TextPrimary,
@@ -720,7 +888,7 @@ FIM DOS TERMOS
 
         var accentTitle = new Label
         {
-            Text = "com evidência real.",
+            Text = L("com evidência real.", "con evidencia real.", "with real evidence."),
             AutoSize = true,
             Location = new Point(46, 133),
             Font = new Font("Segoe UI", 35F, FontStyle.Bold),
@@ -728,27 +896,49 @@ FIM DOS TERMOS
             BackColor = Color.Transparent
         };
 
-        title.Text = "Análise técnica";
+        title.Text = L("Análise técnica", "Análisis técnico", "Technical analysis");
 
         var description = MakeLabel(
-            "O Vorken realiza uma análise técnica e forense para revisar\n" +
-            "indícios de trapaça em seu ambiente de forma segura e objetiva.\n" +
-            "Menos ruído. Mais evidência real.",
+            L(
+                "O Vorken realiza uma análise técnica e forense para revisar\nindícios de trapaça em seu ambiente de forma segura e objetiva.\nMenos ruído. Mais evidência real.",
+                "Vorken realiza un análisis técnico y forense para revisar\nindicios de trampas de forma segura y objetiva.\nMenos ruido. Más evidencia real.",
+                "Vorken performs a technical forensic analysis to review\ncheating indicators safely and objectively.\nLess noise. More real evidence."),
             new Rectangle(48, 196, 700, 88),
             11.4F,
             TextSecondary);
 
         var analysisCard = MakeCard(new Rectangle(44, 286, 710, 365));
-        analysisCard.Controls.Add(MakeSectionTitle("☷   O QUE SERÁ ANALISADO", 20, 18));
+        analysisCard.Controls.Add(MakeSectionTitle(L("☷   O QUE SERÁ ANALISADO", "☷   QUÉ SE ANALIZARÁ", "☷   WHAT WILL BE ANALYZED"), 20, 18));
 
-        string[] items =
+        string[] items = AgentLocalization.Current switch
         {
-            "USB, dispositivos seriais e hardware relacionado|Histórico de conexão, dispositivos e drivers.",
-            "Prefetch, BAM e cache do sistema|Execução de arquivos, atividade recente e rastros no sistema.",
-            "Downloads e origem de arquivos|Arquivos obtidos, assinaturas digitais e integridade.",
-            "Processos, serviços e módulos|Processos em execução, módulos carregados e injeções.",
-            "Execução correlacionada|Linha do tempo e correlação de eventos relevantes.",
-            "Integridade do ambiente|Verificação de modificações, hooks e ambiente de execução."
+            AgentLanguage.Spanish =>
+            [
+                "USB, dispositivos seriales y hardware|Historial de conexión, dispositivos y controladores.",
+                "Prefetch, BAM y caché del sistema|Ejecución de archivos, actividad reciente y rastros.",
+                "Descargas y origen de archivos|Archivos obtenidos, firmas digitales e integridad.",
+                "Procesos, servicios y módulos|Procesos activos, módulos cargados e inyecciones.",
+                "Ejecución correlacionada|Línea de tiempo y correlación de eventos relevantes.",
+                "Integridad del entorno|Modificaciones, hooks y entorno de ejecución."
+            ],
+            AgentLanguage.English =>
+            [
+                "USB, serial devices and related hardware|Connection history, devices and drivers.",
+                "Prefetch, BAM and system cache|File execution, recent activity and system traces.",
+                "Downloads and file origins|Downloaded files, digital signatures and integrity.",
+                "Processes, services and modules|Running processes, loaded modules and injections.",
+                "Correlated execution|Timeline and correlation of relevant events.",
+                "Environment integrity|Changes, hooks and execution environment checks."
+            ],
+            _ =>
+            [
+                "USB, dispositivos seriais e hardware relacionado|Histórico de conexão, dispositivos e drivers.",
+                "Prefetch, BAM e cache do sistema|Execução de arquivos, atividade recente e rastros no sistema.",
+                "Downloads e origem de arquivos|Arquivos obtidos, assinaturas digitais e integridade.",
+                "Processos, serviços e módulos|Processos em execução, módulos carregados e injeções.",
+                "Execução correlacionada|Linha do tempo e correlação de eventos relevantes.",
+                "Integridade do ambiente|Verificação de modificações, hooks e ambiente de execução."
+            ]
         };
 
         string[] icons = { "↕", "▤", "⇩", "⚙", "⌘", "◆" };
@@ -774,14 +964,16 @@ FIM DOS TERMOS
             BackColor = Color.Transparent
         });
         privacy.Controls.Add(MakeLabel(
-            "PRIVACIDADE E SEUS DADOS",
+            L("PRIVACIDADE E SEUS DADOS", "PRIVACIDAD Y SUS DATOS", "PRIVACY AND YOUR DATA"),
             new Rectangle(55, 12, 300, 20),
             8.3F,
             Warning,
             FontStyle.Bold));
         privacy.Controls.Add(MakeLabel(
-            "Não coletamos senhas, cookies, mensagens, fotos ou documentos pessoais.\n" +
-            "A análise é focada exclusivamente em evidências técnicas relacionadas à trapaça.",
+            L(
+                "Não coletamos senhas, cookies, mensagens, fotos ou documentos pessoais.\nA análise é focada exclusivamente em evidências técnicas relacionadas à trapaça.",
+                "No recopilamos contraseñas, cookies, mensajes, fotos ni documentos personales.\nEl análisis se centra exclusivamente en evidencias técnicas relacionadas con trampas.",
+                "We do not collect passwords, cookies, messages, photos or personal documents.\nThe analysis focuses exclusively on technical evidence related to cheating."),
             new Rectangle(55, 34, 620, 40),
             8.8F,
             TextSecondary));
@@ -794,20 +986,23 @@ FIM DOS TERMOS
             CornerRadius = 14
         };
         consentPanel.Controls.Add(MakeLabel(
-            "✓  TERMOS ACEITOS",
+            L("✓  TERMOS ACEITOS", "✓  TÉRMINOS ACEPTADOS", "✓  TERMS ACCEPTED"),
             new Rectangle(18, 9, 210, 18),
             8.1F,
             Accent,
             FontStyle.Bold,
             "Consolas"));
         consentPanel.Controls.Add(MakeLabel(
-            "A análise continua sob demanda e só começa quando você clicar em iniciar.",
+            L(
+                "A análise continua sob demanda e só começa quando você clicar em iniciar.",
+                "El análisis sigue siendo bajo demanda y solo comienza al pulsar iniciar.",
+                "The analysis remains on demand and only starts when you click start."),
             new Rectangle(18, 29, 470, 18),
             7.5F,
             TextSecondary));
 
-        var privacyLink = MakeLink("Privacidade ↗", 518, 8, () => OpenUrl(PrivacyUrl));
-        var termsLink = MakeLink("Rever termos ↗", 518, 29, ShowTermsGate);
+        var privacyLink = MakeLink(L("Privacidade ↗", "Privacidad ↗", "Privacy ↗"), 518, 8, () => OpenUrl(PrivacyUrl));
+        var termsLink = MakeLink(L("Rever termos ↗", "Revisar términos ↗", "Review terms ↗"), 518, 29, ShowTermsGate);
         consentPanel.Controls.Add(privacyLink);
         consentPanel.Controls.Add(termsLink);
 
@@ -826,12 +1021,15 @@ FIM DOS TERMOS
             TextPrimary,
             FontStyle.Bold));
         scannerCard.Controls.Add(MakeLabel(
-            "Scanner sob demanda.",
+            L("Scanner sob demanda.", "Escáner bajo demanda.", "On-demand scanner."),
             new Rectangle(26, 96, 330, 24),
             11F,
             TextPrimary));
         scannerCard.Controls.Add(MakeLabel(
-            "Coleta e análise de evidências técnicas\npara uma revisão baseada em evidências.",
+            L(
+                "Coleta e análise de evidências técnicas\npara uma revisão baseada em evidências.",
+                "Recopilación y análisis de evidencias técnicas\npara una revisión basada en evidencias.",
+                "Technical evidence collection and analysis\nfor an evidence-based review."),
             new Rectangle(26, 132, 360, 56),
             10.2F,
             TextSecondary));
@@ -849,7 +1047,7 @@ FIM DOS TERMOS
         scannerCard.Controls.Add(MakeMiniStatus("MODE", "◈   ON DEMAND", "ANÁLISE SOB DEMANDA", 26, 480, 188));
         scannerCard.Controls.Add(MakeMiniStatus("EXECUTION", "▣   USER MODE", "AMBIENTE ATUAL", 226, 480, 188));
 
-        _startButton.Text = "▶  Iniciar análise   →";
+        _startButton.Text = L("▶  Iniciar análise   →", "▶  Iniciar análisis   →", "▶  Start analysis   →");
         _startButton.Bounds = new Rectangle(26, 590, 388, 64);
         StylePrimaryButton(_startButton);
         _startButton.Enabled = _termsAccepted;
@@ -930,31 +1128,36 @@ FIM DOS TERMOS
         _nav.Visible = false;
         _stepStateLabels.Clear();
 
-        var badge = MakeBadge("SCAN EM ANDAMENTO   ·   EVIDÊNCIAS EM TEMPO REAL");
+        var badge = MakeBadge(L(
+            "SCAN EM ANDAMENTO   ·   EVIDÊNCIAS EM TEMPO REAL",
+            "ANÁLISIS EN CURSO   ·   EVIDENCIAS EN TIEMPO REAL",
+            "SCAN IN PROGRESS   ·   REAL-TIME EVIDENCE"));
         badge.Location = new Point(48, 30);
 
         _surface.Controls.Add(badge);
         _surface.Controls.Add(MakeLabel(
-            "Coleta técnica",
+            L("Coleta técnica", "Recopilación técnica", "Technical collection"),
             new Rectangle(48, 75, 680, 58),
             35F,
             TextPrimary,
             FontStyle.Bold));
         _surface.Controls.Add(MakeLabel(
-            "em andamento.",
+            L("em andamento.", "en curso.", "in progress."),
             new Rectangle(48, 126, 680, 58),
             35F,
             Accent,
             FontStyle.Bold));
         _surface.Controls.Add(MakeLabel(
-            "O Vorken está coletando e correlacionando evidências técnicas\n" +
-            "do seu sistema. Mantenha esta janela aberta até a conclusão.",
+            L(
+                "O Vorken está coletando e correlacionando evidências técnicas\ndo seu sistema. Mantenha esta janela aberta até a conclusão.",
+                "Vorken está recopilando y correlacionando evidencias técnicas\nde su sistema. Mantenga esta ventana abierta hasta finalizar.",
+                "Vorken is collecting and correlating technical evidence\nfrom your system. Keep this window open until completion."),
             new Rectangle(50, 189, 760, 58),
             11.4F,
             TextSecondary));
 
         var progressCard = MakeCard(new Rectangle(44, 262, 790, 104));
-        progressCard.Controls.Add(MakeSectionTitle("PROGRESSO DA ANÁLISE", 20, 14));
+        progressCard.Controls.Add(MakeSectionTitle(L("PROGRESSO DA ANÁLISE", "PROGRESO DEL ANÁLISIS", "ANALYSIS PROGRESS"), 20, 14));
 
         _progressTrack.Bounds = new Rectangle(20, 48, 655, 18);
         _progressTrack.BackColor = Color.FromArgb(9, 41, 48);
@@ -973,7 +1176,7 @@ FIM DOS TERMOS
         _progressPercentLabel.TextAlign = ContentAlignment.MiddleRight;
         _progressPercentLabel.BackColor = Color.Transparent;
 
-        _progressEtaLabel.Text = "Correlacionando evidências do sistema...";
+        _progressEtaLabel.Text = L("Correlacionando evidências do sistema...", "Correlacionando evidencias del sistema...", "Correlating system evidence...");
         _progressEtaLabel.Bounds = new Rectangle(20, 72, 700, 22);
         _progressEtaLabel.Font = new Font("Segoe UI", 8.5F);
         _progressEtaLabel.ForeColor = TextSecondary;
@@ -985,18 +1188,43 @@ FIM DOS TERMOS
         _surface.Controls.Add(progressCard);
 
         var stagesCard = MakeCard(new Rectangle(44, 380, 400, 360));
-        stagesCard.Controls.Add(MakeSectionTitle("☷   ETAPAS DA ANÁLISE", 18, 15));
+        stagesCard.Controls.Add(MakeSectionTitle(L("☷   ETAPAS DA ANÁLISE", "☷   ETAPAS DEL ANÁLISIS", "☷   ANALYSIS STAGES"), 18, 15));
 
-        string[] stages =
+        string[] stages = AgentLocalization.Current switch
         {
-            "Sessão validada|Verificação de integridade da sessão e ambiente.",
-            "Integridade do ambiente|Análise de processos, drivers e hooks.",
-            "Histórico de execução|Prefetch, BAM, eventos e registros.",
-            "Dispositivos USB|Dispositivos seriais e histórico de conexão.",
-            "Downloads e origem|Arquivos obtidos, cache e navegador.",
-            "Processos e módulos|Processos em execução, módulos carregados.",
-            "Correlação de evidências|Cruzamento de dados e detecção de padrões.",
-            "Preparando relatório|Geração do relatório técnico."
+            AgentLanguage.Spanish =>
+            [
+                "Sesión validada|Verificación de integridad de sesión y entorno.",
+                "Integridad del entorno|Análisis de procesos, controladores y hooks.",
+                "Historial de ejecución|Prefetch, BAM, eventos y registros.",
+                "Dispositivos USB|Dispositivos seriales e historial de conexión.",
+                "Descargas y origen|Archivos obtenidos, caché y navegador.",
+                "Procesos y módulos|Procesos activos y módulos cargados.",
+                "Correlación de evidencias|Cruce de datos y detección de patrones.",
+                "Preparando informe|Generación del informe técnico."
+            ],
+            AgentLanguage.English =>
+            [
+                "Session validated|Session and environment integrity check.",
+                "Environment integrity|Processes, drivers and hooks analysis.",
+                "Execution history|Prefetch, BAM, events and registry data.",
+                "USB devices|Serial devices and connection history.",
+                "Downloads and origin|Downloaded files, cache and browser data.",
+                "Processes and modules|Running processes and loaded modules.",
+                "Evidence correlation|Cross-checking data and detecting patterns.",
+                "Preparing report|Generating the technical report."
+            ],
+            _ =>
+            [
+                "Sessão validada|Verificação de integridade da sessão e ambiente.",
+                "Integridade do ambiente|Análise de processos, drivers e hooks.",
+                "Histórico de execução|Prefetch, BAM, eventos e registros.",
+                "Dispositivos USB|Dispositivos seriais e histórico de conexão.",
+                "Downloads e origem|Arquivos obtidos, cache e navegador.",
+                "Processos e módulos|Processos em execução, módulos carregados.",
+                "Correlação de evidências|Cruzamento de dados e detecção de padrões.",
+                "Preparando relatório|Geração do relatório técnico."
+            ]
         };
 
         for (int i = 0; i < stages.Length; i++)
@@ -1007,10 +1235,10 @@ FIM DOS TERMOS
         }
 
         var streamCard = MakeCard(new Rectangle(456, 380, 378, 360));
-        streamCard.Controls.Add(MakeSectionTitle("▤   FLUXO DE EVIDÊNCIAS (TEMPO REAL)", 16, 15));
+        streamCard.Controls.Add(MakeSectionTitle(L("▤   FLUXO DE EVIDÊNCIAS (TEMPO REAL)", "▤   FLUJO DE EVIDENCIAS (EN VIVO)", "▤   EVIDENCE STREAM (LIVE)"), 16, 15));
         var liveBadge = new Label
         {
-            Text = "● AO VIVO",
+            Text = L("● AO VIVO", "● EN VIVO", "● LIVE"),
             Bounds = new Rectangle(286, 12, 76, 24),
             TextAlign = ContentAlignment.MiddleCenter,
             BackColor = Color.FromArgb(4, 45, 48),
@@ -1040,7 +1268,7 @@ FIM DOS TERMOS
 
         var scannerCard = MakeCard(new Rectangle(858, 32, 366, 708));
         scannerCard.Controls.Add(MakeLabel(
-            "SESSÃO SEGURA",
+            L("SESSÃO SEGURA", "SESIÓN SEGURA", "SECURE SESSION"),
             new Rectangle(22, 26, 180, 20),
             8.3F,
             Accent,
@@ -1053,12 +1281,15 @@ FIM DOS TERMOS
             TextPrimary,
             FontStyle.Bold));
         scannerCard.Controls.Add(MakeLabel(
-            "Análise técnica em andamento.",
+            L("Análise técnica em andamento.", "Análisis técnico en curso.", "Technical analysis in progress."),
             new Rectangle(22, 95, 300, 24),
             10.8F,
             TextPrimary));
         scannerCard.Controls.Add(MakeLabel(
-            "Coletando, analisando e correlacionando\nevidências para gerar um relatório seguro\ne confiável.",
+            L(
+                "Coletando, analisando e correlacionando\nevidências para gerar um relatório seguro\ne confiável.",
+                "Recopilando, analizando y correlacionando\nevidencias para generar un informe seguro\ny confiable.",
+                "Collecting, analyzing and correlating\nevidence to generate a secure and\nreliable report."),
             new Rectangle(22, 130, 310, 64),
             9.4F,
             TextSecondary));
@@ -1069,18 +1300,18 @@ FIM DOS TERMOS
             Size = new Size(322, 250),
             BackColor = Color.FromArgb(4, 17, 23),
             Scanning = true,
-            Caption = "ESCANEANDO SISTEMA"
+            Caption = L("ESCANEANDO SISTEMA", "ESCANEANDO EL SISTEMA", "SCANNING SYSTEM")
         };
         scannerCard.Controls.Add(radar);
 
         _elapsedLabel.Text = "00 min 00 s";
-        _artifactCountLabel.Text = "0 itens";
-        _deviceCountLabel.Text = "0 dispositivos";
+        _artifactCountLabel.Text = L("0 itens", "0 elementos", "0 items");
+        _deviceCountLabel.Text = L("0 dispositivos", "0 dispositivos", "0 devices");
 
-        scannerCard.Controls.Add(MakeStatBox("◷", "TEMPO DECORRIDO", _elapsedLabel, 22, 474));
-        scannerCard.Controls.Add(MakeStatBox("▤", "ARQUIVOS ANALISADOS", _artifactCountLabel, 188, 474));
-        scannerCard.Controls.Add(MakeStatBox("↕", "DISPOSITIVOS REVISADOS", _deviceCountLabel, 22, 548));
-        scannerCard.Controls.Add(MakeStaticStatBox("◈", "MODO DE ANÁLISE", "ON DEMAND", "SOB DEMANDA", 188, 548));
+        scannerCard.Controls.Add(MakeStatBox("◷", L("TEMPO DECORRIDO", "TIEMPO TRANSCURRIDO", "ELAPSED TIME"), _elapsedLabel, 22, 474));
+        scannerCard.Controls.Add(MakeStatBox("▤", L("ARQUIVOS ANALISADOS", "ARCHIVOS ANALIZADOS", "FILES ANALYZED"), _artifactCountLabel, 188, 474));
+        scannerCard.Controls.Add(MakeStatBox("↕", L("DISPOSITIVOS REVISADOS", "DISPOSITIVOS REVISADOS", "DEVICES REVIEWED"), _deviceCountLabel, 22, 548));
+        scannerCard.Controls.Add(MakeStaticStatBox("◈", L("MODO DE ANÁLISE", "MODO DE ANÁLISIS", "ANALYSIS MODE"), "ON DEMAND", L("SOB DEMANDA", "BAJO DEMANDA", "ON DEMAND"), 188, 548));
 
         var keepOpen = new BorderedPanel
         {
@@ -1090,13 +1321,16 @@ FIM DOS TERMOS
         };
         keepOpen.Controls.Add(MakeLabel("●", new Rectangle(15, 16, 22, 22), 12F, Warning, FontStyle.Bold));
         keepOpen.Controls.Add(MakeLabel(
-            "Mantenha esta janela aberta",
+            L("Mantenha esta janela aberta", "Mantenga esta ventana abierta", "Keep this window open"),
             new Rectangle(44, 10, 250, 23),
             8.7F,
             Warning,
             FontStyle.Bold));
         keepOpen.Controls.Add(MakeLabel(
-            "A análise continuará em segundo plano e o\nrelatório será preparado automaticamente.",
+            L(
+                "A análise continuará em segundo plano e o\nrelatório será preparado automaticamente.",
+                "El análisis continuará en segundo plano y el\ninforme se preparará automáticamente.",
+                "The analysis will continue in the background and\nthe report will be prepared automatically."),
             new Rectangle(44, 34, 258, 42),
             8.1F,
             TextSecondary));
@@ -1111,13 +1345,13 @@ FIM DOS TERMOS
             BorderColor = Border,
             CornerRadius = 10
         };
-        footer.Controls.Add(MakeFooterItem("◆", "SCANNER ATIVO", "Coleta e análise de evidências em tempo real.", 12));
-        footer.Controls.Add(MakeFooterItem("▣", "SESSÃO SEGURA", "Dados protegidos", 415));
-        footer.Controls.Add(MakeFooterItem("▣", "SEM IMPACTO", "Uso otimizado de recursos", 705));
+        footer.Controls.Add(MakeFooterItem("◆", L("SCANNER ATIVO", "ESCÁNER ACTIVO", "SCANNER ACTIVE"), L("Coleta e análise de evidências em tempo real.", "Recopilación y análisis de evidencias en vivo.", "Real-time evidence collection and analysis."), 12));
+        footer.Controls.Add(MakeFooterItem("▣", L("SESSÃO SEGURA", "SESIÓN SEGURA", "SECURE SESSION"), L("Dados protegidos", "Datos protegidos", "Protected data"), 415));
+        footer.Controls.Add(MakeFooterItem("▣", L("SEM IMPACTO", "SIN IMPACTO", "LOW IMPACT"), L("Uso otimizado de recursos", "Uso optimizado de recursos", "Optimized resource usage"), 705));
 
         var cancel = new Button
         {
-            Text = "■  Cancelar análise",
+            Text = L("■  Cancelar análise", "■  Cancelar análisis", "■  Cancel analysis"),
             Bounds = new Rectangle(1000, 8, 166, 30)
         };
         StyleGhostButton(cancel);
@@ -1125,7 +1359,10 @@ FIM DOS TERMOS
         {
             MessageBox.Show(
                 this,
-                "Para preservar a integridade da coleta, feche a janela e confirme a interrupção caso realmente deseje cancelar.",
+                L(
+                    "Para preservar a integridade da coleta, feche a janela e confirme a interrupção caso realmente deseje cancelar.",
+                    "Para preservar la integridad de la recopilación, cierre la ventana y confirme la interrupción si realmente desea cancelar.",
+                    "To preserve collection integrity, close the window and confirm the interruption if you really want to cancel."),
                 "Vorken",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Information);
@@ -1133,7 +1370,7 @@ FIM DOS TERMOS
         footer.Controls.Add(cancel);
         _surface.Controls.Add(footer);
 
-        SetHeaderState("ANALISANDO", Accent);
+        SetHeaderState(L("ANALISANDO", "ANALIZANDO", "ANALYZING"), Accent);
         UpdateStageStates(0);
         UpdateProgressUi();
     }
@@ -1443,29 +1680,29 @@ FIM DOS TERMOS
 
         string resultHeadline =
             !success
-                ? "Análise interrompida."
+                ? L("Análise interrompida.", "Análisis interrumpido.", "Analysis interrupted.")
                 : filterError
-                    ? "Falha parcial nos filtros."
+                    ? L("Falha parcial nos filtros.", "Fallo parcial en los filtros.", "Partial filter failure.")
                     : hasCritical
-                        ? "Possível trapaceiro detectado."
+                        ? L("Possível trapaceiro detectado.", "Posible tramposo detectado.", "Possible cheater detected.")
                         : hasReview
-                            ? "Atividades incomuns localizadas."
+                            ? L("Atividades incomuns localizadas.", "Actividades inusuales encontradas.", "Unusual activity found.")
                             : autoApproved
-                                ? "Verificação aprovada."
-                                : "Análise limpa.";
+                                ? L("Verificação aprovada.", "Verificación aprobada.", "Verification approved.")
+                                : L("Análise limpa.", "Análisis limpio.", "Clean analysis.");
 
         string resultSubheadline =
             !success
-                ? "Não foi possível concluir."
+                ? L("Não foi possível concluir.", "No fue posible finalizar.", "Could not complete.")
                 : filterError
-                    ? "Aguarde a verificação administrativa."
+                    ? L("Aguarde a verificação administrativa.", "Espere la verificación administrativa.", "Wait for administrative verification.")
                     : hasCritical
-                        ? "Aguarde a análise administrativa."
+                        ? L("Aguarde a análise administrativa.", "Espere el análisis administrativo.", "Wait for administrative review.")
                         : hasReview
-                            ? "Revisão necessária."
+                            ? L("Revisão necessária.", "Revisión necesaria.", "Review required.")
                             : autoApproved
-                                ? "Liberação automática concluída."
-                                : "Nenhum item suspeito encontrado.";
+                                ? L("Liberação automática concluída.", "Aprobación automática completada.", "Automatic approval completed.")
+                                : L("Nenhum item suspeito encontrado.", "No se encontraron elementos sospechosos.", "No suspicious items found.");
 
         Color resultAccent =
             filterError
@@ -1485,7 +1722,7 @@ FIM DOS TERMOS
         else
             _clientResultPollTimer.Stop();
 
-        var badge = MakeBadge("RESULTADOS   ·   RELATÓRIO DE ANÁLISE");
+        var badge = MakeBadge(L("RESULTADOS   ·   RELATÓRIO DE ANÁLISE", "RESULTADOS   ·   INFORME DE ANÁLISIS", "RESULTS   ·   ANALYSIS REPORT"));
         badge.Location = new Point(44, 24);
         _surface.Controls.Add(badge);
 
@@ -1521,7 +1758,7 @@ FIM DOS TERMOS
 
         var statusCard = MakeCard(new Rectangle(674, 38, 552, 182));
         statusCard.Controls.Add(MakeLabel(
-            "STATUS DA ANÁLISE",
+            L("STATUS DA ANÁLISE", "ESTADO DEL ANÁLISIS", "ANALYSIS STATUS"),
             new Rectangle(22, 18, 210, 22),
             8.4F,
             Accent,
@@ -1542,8 +1779,8 @@ FIM DOS TERMOS
             success ? resultAccent : Danger,
             FontStyle.Bold));
         statusCard.Controls.Add(MakeLabel(
-            $"Duração da análise: {FormatDuration(DateTime.Now - _scanStartedAt)}\n" +
-            $"Concluído em: {DateTime.Now:dd/MM/yyyy HH:mm}",
+            L("Duração da análise: ", "Duración del análisis: ", "Analysis duration: ") + FormatDuration(DateTime.Now - _scanStartedAt) + "\n" +
+            L("Concluído em: ", "Completado: ", "Completed: ") + $"{DateTime.Now:dd/MM/yyyy HH:mm}",
             new Rectangle(96, 108, 240, 52),
             8.8F,
             TextSecondary));
@@ -2446,19 +2683,22 @@ FIM DOS TERMOS
         _nav.Visible = true;
         SetActiveNav(6);
 
-        var badge = MakeBadge("SUPORTE REMOTO   ·   CONSENTIMENTO EM TEMPO REAL");
+        var badge = MakeBadge(L("SUPORTE REMOTO   ·   CONSENTIMENTO EM TEMPO REAL", "SOPORTE REMOTO   ·   CONSENTIMIENTO EN TIEMPO REAL", "REMOTE SUPPORT   ·   REAL-TIME CONSENT"));
         badge.Location = new Point(44, 32);
         _surface.Controls.Add(badge);
         _surface.Controls.Add(MakeLabel(
-            "Compartilhar esta tela com a administração",
+            L("Compartilhar esta tela com a administração", "Compartir esta pantalla con la administración", "Share this screen with the administration"),
             new Rectangle(44, 78, 880, 52), 28F, TextPrimary, FontStyle.Bold));
         _surface.Controls.Add(MakeLabel(
-            "Você escolhe quem poderá acessar, define o nível de permissão e pode encerrar imediatamente.",
+            L(
+                "Você escolhe quem poderá acessar, define o nível de permissão e pode encerrar imediatamente.",
+                "Usted elige quién puede acceder, define el nivel de permiso y puede finalizar inmediatamente.",
+                "You choose who may access, set the permission level and can stop it immediately."),
             new Rectangle(47, 132, 980, 28), 10.2F, TextSecondary));
 
         var setup = MakeCard(new Rectangle(44, 185, 770, 490));
-        setup.Controls.Add(MakeSectionTitle("INICIAR UMA SESSÃO", 22, 18));
-        setup.Controls.Add(MakeLabel("Administrador disponível", new Rectangle(24, 64, 360, 24), 9.5F, TextSecondary, FontStyle.Bold));
+        setup.Controls.Add(MakeSectionTitle(L("INICIAR UMA SESSÃO", "INICIAR UNA SESIÓN", "START A SESSION"), 22, 18));
+        setup.Controls.Add(MakeLabel(L("Administrador disponível", "Administrador disponible", "Available administrator"), new Rectangle(24, 64, 360, 24), 9.5F, TextSecondary, FontStyle.Bold));
 
         var admins = new ComboBox
         {
@@ -2471,13 +2711,13 @@ FIM DOS TERMOS
         };
         setup.Controls.Add(admins);
 
-        var refresh = new Button { Text = "Atualizar", Bounds = new Rectangle(512, 91, 120, 42) };
+        var refresh = new Button { Text = L("Atualizar", "Actualizar", "Refresh"), Bounds = new Rectangle(512, 91, 120, 42) };
         StyleGhostButton(refresh);
         setup.Controls.Add(refresh);
 
         var viewOnly = new RadioButton
         {
-            Text = "Somente visualizar a tela",
+            Text = L("Somente visualizar a tela", "Solo visualizar la pantalla", "View screen only"),
             Bounds = new Rectangle(24, 164, 330, 34),
             Checked = true,
             ForeColor = TextPrimary,
@@ -2486,7 +2726,7 @@ FIM DOS TERMOS
         };
         var control = new RadioButton
         {
-            Text = "Tela + controle de mouse e teclado",
+            Text = L("Tela + controle de mouse e teclado", "Pantalla + control de ratón y teclado", "Screen + mouse and keyboard control"),
             Bounds = new Rectangle(24, 206, 420, 34),
             ForeColor = Warning,
             BackColor = Color.Transparent,
@@ -2495,12 +2735,15 @@ FIM DOS TERMOS
         setup.Controls.Add(viewOnly);
         setup.Controls.Add(control);
         setup.Controls.Add(MakeLabel(
-            "O modo de controle permite cliques e digitação enquanto a sessão estiver visível.\nNão inclui arquivos, área de transferência, senhas salvas ou acesso após o encerramento.",
+            L(
+                "O modo de controle permite cliques e digitação enquanto a sessão estiver visível.\nNão inclui arquivos, área de transferência, senhas salvas ou acesso após o encerramento.",
+                "El modo de control permite clics y escritura mientras la sesión esté visible.\nNo incluye archivos, portapapeles, contraseñas guardadas ni acceso posterior.",
+                "Control mode allows clicking and typing while the session is visible.\nIt does not include files, clipboard, saved passwords or access after it ends."),
             new Rectangle(47, 246, 650, 58), 9.3F, TextSecondary));
 
         var consent = new CheckBox
         {
-            Text = "Eu entendo o nível selecionado e autorizo esta sessão.",
+            Text = L("Eu entendo o nível selecionado e autorizo esta sessão.", "Entiendo el nivel seleccionado y autorizo esta sesión.", "I understand the selected access level and authorize this session."),
             Bounds = new Rectangle(24, 322, 620, 38),
             ForeColor = TextPrimary,
             BackColor = Color.Transparent,
@@ -2508,25 +2751,30 @@ FIM DOS TERMOS
         };
         setup.Controls.Add(consent);
 
-        var start = new Button { Text = "SOLICITAR CONEXÃO", Bounds = new Rectangle(24, 385, 250, 48) };
+        var start = new Button { Text = L("SOLICITAR CONEXÃO", "SOLICITAR CONEXIÓN", "REQUEST CONNECTION"), Bounds = new Rectangle(24, 385, 250, 48) };
         StylePrimaryButton(start);
-        var stop = new Button { Text = "PARAR AGORA", Bounds = new Rectangle(290, 385, 190, 48), Enabled = _remoteSupport?.IsActive == true };
+        var stop = new Button { Text = L("PARAR AGORA", "DETENER AHORA", "STOP NOW"), Bounds = new Rectangle(290, 385, 190, 48), Enabled = _remoteSupport?.IsActive == true };
         StyleGhostButton(stop);
         stop.ForeColor = Danger;
         setup.Controls.Add(start);
         setup.Controls.Add(stop);
 
         _remoteStatusLabel = MakeLabel(
-            _remoteSupport?.IsActive == true ? "Sessão ativa." : "Nenhuma transmissão ativa.",
+            _remoteSupport?.IsActive == true
+                ? L("Sessão ativa.", "Sesión activa.", "Session active.")
+                : L("Nenhuma transmissão ativa.", "No hay transmisión activa.", "No active screen sharing."),
             new Rectangle(24, 445, 690, 25), 9.2F,
             _remoteSupport?.IsActive == true ? Warning : TextDim, FontStyle.Bold);
         setup.Controls.Add(_remoteStatusLabel);
         _surface.Controls.Add(setup);
 
         var safety = MakeCard(new Rectangle(842, 185, 350, 330));
-        safety.Controls.Add(MakeSectionTitle("PROTEÇÕES DA SESSÃO", 20, 18));
+        safety.Controls.Add(MakeSectionTitle(L("PROTEÇÕES DA SESSÃO", "PROTECCIONES DE LA SESIÓN", "SESSION PROTECTIONS"), 20, 18));
         safety.Controls.Add(MakeLabel(
-            "● Aceite dos dois lados\n\n● Indicador visível durante todo o acesso\n\n● Expiração automática\n\n● Interrupção imediata pelo jogador\n\n● Registro de início, aceite e término",
+            L(
+                "● Aceite dos dois lados\n\n● Indicador visível durante todo o acesso\n\n● Expiração automática\n\n● Interrupção imediata pelo jogador\n\n● Registro de início, aceite e término",
+                "● Aceptación de ambas partes\n\n● Indicador visible durante el acceso\n\n● Expiración automática\n\n● Interrupción inmediata por el jugador\n\n● Registro de inicio, aceptación y final",
+                "● Acceptance by both sides\n\n● Visible indicator throughout access\n\n● Automatic expiration\n\n● Immediate stop by the player\n\n● Start, acceptance and end log"),
             new Rectangle(24, 66, 300, 230), 10F, TextSecondary));
         _surface.Controls.Add(safety);
 
@@ -2637,29 +2885,30 @@ FIM DOS TERMOS
         _nav.Visible = true;
         SetActiveNav(5);
 
-        var settingsBadge = MakeBadge("CONFIGURAÇÕES   ·   VORKEN");
+        var settingsBadge = MakeBadge(L("CONFIGURAÇÕES   ·   VORKEN", "CONFIGURACIÓN   ·   VORKEN", "SETTINGS   ·   VORKEN"));
         settingsBadge.Location = new Point(44, 34);
         _surface.Controls.Add(settingsBadge);
         _surface.Controls.Add(MakeLabel(
-            "Configurações",
+            L("Configurações", "Configuración", "Settings"),
             new Rectangle(44, 80, 600, 56),
             31F,
             TextPrimary,
             FontStyle.Bold));
 
         var card = MakeCard(new Rectangle(44, 180, 780, 405));
-        card.Controls.Add(MakeSectionTitle("SESSÃO E PRIVACIDADE", 20, 20));
+        card.Controls.Add(MakeSectionTitle(L("SESSÃO E PRIVACIDADE", "SESIÓN Y PRIVACIDAD", "SESSION AND PRIVACY"), 20, 20));
         card.Controls.Add(MakeLabel(
-            "Modo de análise\nON DEMAND · USER MODE\n\n" +
-            "O scanner só executa após consentimento explícito.\n" +
-            "Senhas, cookies, mensagens, fotos e documentos pessoais não fazem parte da coleta.",
+            L(
+                "Modo de análise\nON DEMAND · USER MODE\n\nO scanner só executa após consentimento explícito.\nSenhas, cookies, mensagens, fotos e documentos pessoais não fazem parte da coleta.",
+                "Modo de análisis\nON DEMAND · USER MODE\n\nEl escáner solo se ejecuta después del consentimiento explícito.\nContraseñas, cookies, mensajes, fotos y documentos personales no se recopilan.",
+                "Analysis mode\nON DEMAND · USER MODE\n\nThe scanner only runs after explicit consent.\nPasswords, cookies, messages, photos and personal documents are not collected."),
             new Rectangle(24, 65, 710, 170),
             10.2F,
             TextSecondary));
 
         var privacy = new Button
         {
-            Text = "Política de Privacidade ↗",
+            Text = L("Política de Privacidade ↗", "Política de Privacidad ↗", "Privacy Policy ↗"),
             Bounds = new Rectangle(24, 252, 220, 44)
         };
         StyleGhostButton(privacy);
@@ -2668,18 +2917,27 @@ FIM DOS TERMOS
 
         var terms = new Button
         {
-            Text = "Rever termos no app",
+            Text = L("Rever termos no app", "Revisar términos", "Review terms"),
             Bounds = new Rectangle(260, 252, 190, 44)
         };
         StyleGhostButton(terms);
         terms.Click += (_, _) => ShowTermsGate();
         card.Controls.Add(terms);
 
+        var language = new Button
+        {
+            Text = L("🌐  Alterar idioma", "🌐  Cambiar idioma", "🌐  Change language"),
+            Bounds = new Rectangle(466, 252, 190, 44)
+        };
+        StyleGhostButton(language);
+        language.Click += (_, _) => ShowLanguageGate();
+        card.Controls.Add(language);
+
         var sound = new Button
         {
             Text = _soundEnabled
-                ? "🔊  Sons da interface: ligados"
-                : "🔇  Sons da interface: desligados",
+                ? L("🔊  Sons da interface: ligados", "🔊  Sonidos: activados", "🔊  Interface sounds: on")
+                : L("🔇  Sons da interface: desligados", "🔇  Sonidos: desactivados", "🔇  Interface sounds: off"),
             Bounds = new Rectangle(24, 316, 260, 46)
         };
         StyleGhostButton(sound);
@@ -2687,8 +2945,8 @@ FIM DOS TERMOS
         {
             _soundEnabled = !_soundEnabled;
             sound.Text = _soundEnabled
-                ? "🔊  Sons da interface: ligados"
-                : "🔇  Sons da interface: desligados";
+                ? L("🔊  Sons da interface: ligados", "🔊  Sonidos: activados", "🔊  Interface sounds: on")
+                : L("🔇  Sons da interface: desligados", "🔇  Sonidos: desactivados", "🔇  Interface sounds: off");
 
             if (_soundEnabled)
                 PlayUiClick();
@@ -2696,7 +2954,10 @@ FIM DOS TERMOS
         card.Controls.Add(sound);
 
         card.Controls.Add(MakeLabel(
-            "Os sons são discretos e podem ser desativados a qualquer momento.",
+            L(
+                "Os sons são discretos e podem ser desativados a qualquer momento.",
+                "Los sonidos son discretos y pueden desactivarse en cualquier momento.",
+                "Sounds are subtle and can be disabled at any time."),
             new Rectangle(302, 328, 430, 24),
             8F,
             TextDim));
