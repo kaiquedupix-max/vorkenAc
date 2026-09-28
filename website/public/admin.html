@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#061018">
   <title>Vorken Anti-Cheat</title>
   <link rel="icon" type="image/svg+xml" href="/vorken-logo.svg">
-  <link rel="stylesheet" href="/styles.css?v=20260927-remote-admin-v1">
+  <link rel="stylesheet" href="/styles.css?v=20260928-learning-v2">
 </head>
 <body class="vorken-admin">
   <header class="vorken-shell-header">
@@ -112,6 +112,7 @@
               <div class="report-head-actions">
                 <div id="gfIntegrationActions" class="gf-integration-actions hidden">
                   <span id="gfDecisionBadge" class="gf-decision-badge">GUERRA FRIA</span>
+                  <button id="gfTrustAllBtn" class="button ghost" type="button">Desmarcar confiança</button>
                   <button id="gfReleaseBtn" class="button gf-release-button" type="button">✓ Liberar jogador</button>
                   <button id="gfBanBtn" class="button gf-ban-button" type="button">⚠ Banir jogador</button>
                 </div>
@@ -148,6 +149,7 @@
             </div>
 
             <div id="analysisProcessingBanner" class="message hidden"></div>
+            <div id="usbSuspiciousBanner" class="message usb-suspicious-alert hidden"></div>
 
             <section id="reportOverview" class="report-overview-grid">
               <div class="report-center-column">
@@ -478,6 +480,18 @@
           <p>Crie contas individuais para quem poderá receber solicitações de tela e controle.</p>
         </div>
 
+        <article class="card remote-admin-download-card">
+          <div class="remote-admin-app-identity">
+            <span class="remote-admin-app-logo"><img src="/vorken-logo.svg" alt="Logo Vorken"></span>
+            <div>
+              <div class="eyebrow">APLICATIVO OFICIAL</div>
+              <h2>Vorken Remote Admin</h2>
+              <p class="muted">Aplicativo Windows para receber transmissões, assistir análises e controlar sessões autorizadas.</p>
+            </div>
+          </div>
+          <a class="button primary remote-admin-download-button" href="/api/admin/remote-admin/download">⇩ Baixar Vorken Admin</a>
+        </article>
+
         <div class="settings-grid remote-admin-settings-grid">
           <article class="card remote-admin-create-card">
             <div class="eyebrow">NOVA CONTA</div>
@@ -571,6 +585,6 @@
   </dialog>
 
   <script src="/ui-polish.js?v=20260927-remote-admin-v1"></script>
-  <script src="/admin.js?v=20260927-usb-storage-v2"></script>
+  <script src="/admin.js?v=20260928-learning-v2"></script>
 </body>
 </html>

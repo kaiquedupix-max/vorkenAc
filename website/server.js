@@ -32,6 +32,10 @@ const agentBinaryUrl = String(
   process.env.AGENT_BINARY_URL ||
   "https://github.com/kaiquedupix-max/vorkenAc/releases/download/agent-latest/Vorken.Agent.exe"
 ).trim();
+const remoteAdminBinaryUrl = String(
+  process.env.REMOTE_ADMIN_BINARY_URL ||
+  "https://github.com/kaiquedupix-max/vorkenAc/releases/download/agent-latest/Vorken.RemoteAdmin.exe"
+).trim();
 const agentBinaryCacheMs = Math.max(
   15000,
   Number(process.env.AGENT_BINARY_CACHE_MS || 60000)
@@ -4297,6 +4301,46 @@ function learnedArtifactSha256(
   return "";
 }
 
+function normalizedLearnedIdentity(value) {
+  return String(value || "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .slice(0, 180);
+}
+
+function learnedSignedPublisher(evidence = {}) {
+  const candidates = [
+    evidence,
+    ...safeArray(evidence?.executionSources)
+      .map((item) => item?.raw)
+      .filter(Boolean),
+    ...safeArray(evidence?.fileEvidence),
+  ];
+
+  for (const item of candidates) {
+    const signed =
+      item?.signed === true ||
+      item?.signatureValid === true;
+
+    if (!signed)
+      continue;
+
+    const publisher = normalizedLearnedIdentity(
+      item?.signerSubject ||
+      item?.publisher ||
+      item?.companyName
+    );
+
+    if (publisher.length >= 4)
+      return publisher;
+  }
+
+  return "";
+}
+
 function isCatalogProtectedArtifact(
   artifactType,
   artifactValue,
@@ -4343,7 +4387,8 @@ function isCatalogProtectedArtifact(
 function learnedArtifactSignatures(
   artifactType,
   artifactValue,
-  evidence = {}
+  evidence = {},
+  { forLearning = false } = {}
 ) {
   // Evidência correlacionada/realmente executada e histórico do Defender
   // nunca podem ser neutralizados pelo auto-aprendizado. A mera presença de
@@ -4394,12 +4439,22 @@ function learnedArtifactSignatures(
   const sha256 =
     learnedArtifactSha256(evidence);
 
+  const signedPublisher =
+    learnedSignedPublisher(evidence);
+
   const signatures = [];
 
   if (sha256)
     signatures.push("sha256:" + sha256);
 
-  signatures.push("name:" + fileName);
+  if (signedPublisher)
+    signatures.push("signed-publisher:" + signedPublisher);
+
+  // Nome é apenas a identidade de último recurso. Quando há hash ou editor
+  // verificado, confiar só no nome permitiria que outro binário herdasse a
+  // confiança após ser renomeado.
+  if (!forLearning || (!sha256 && !signedPublisher))
+    signatures.push("name:" + fileName);
 
   return [
     ...new Set(signatures),
@@ -4472,10 +4527,24 @@ async function isLearnedTrustedArtifact(
   );
 }
 
-async function learnReleasedAnalysisArtifacts(
+async function learnAnalysisArtifacts(
   analysisId,
-  reason
+  reason,
+  {
+    includeIds = null,
+    excludeIds = [],
+  } = {}
 ) {
+  const included = Array.isArray(includeIds)
+    ? [...new Set(includeIds.map(Number).filter(Number.isInteger))]
+    : null;
+  const excluded = [...new Set(
+    safeArray(excludeIds).map(Number).filter(Number.isInteger)
+  )];
+
+  if (included && included.length === 0)
+    return 0;
+
   const result =
     await pool.query(
       `SELECT
@@ -4487,8 +4556,10 @@ async function learnReleasedAnalysisArtifacts(
        FROM scan_findings
        WHERE analysis_id=$1
          AND severity IN ('critical','high','medium')
+         AND ($2::bigint[] IS NULL OR id = ANY($2::bigint[]))
+         AND NOT (id = ANY($3::bigint[]))
        ORDER BY id ASC`,
-      [analysisId]
+      [analysisId, included, excluded]
     );
 
   let learned = 0;
@@ -4504,7 +4575,8 @@ async function learnReleasedAnalysisArtifacts(
       learnedArtifactSignatures(
         finding.artifact_type,
         finding.artifact_value,
-        evidence
+        evidence,
+        { forLearning: true }
       );
 
     if (!signatures.length)
@@ -4552,7 +4624,9 @@ async function learnReleasedAnalysisArtifacts(
           signature,
           signature.startsWith("sha256:")
             ? "sha256"
-            : "file_name",
+            : signature.startsWith("signed-publisher:")
+              ? "signed_publisher"
+              : "file_name",
           fileName,
           sha256,
           String(finding.artifact_type || ""),
@@ -4570,6 +4644,54 @@ async function learnReleasedAnalysisArtifacts(
     invalidateLearnedTrustedArtifacts();
 
   return learned;
+}
+
+async function revokeLearnedTrustForFindings(
+  analysisId,
+  findingIds
+) {
+  const ids = [...new Set(
+    safeArray(findingIds).map(Number).filter(Number.isInteger)
+  )];
+
+  if (!ids.length)
+    return 0;
+
+  const result = await pool.query(
+    `SELECT artifact_type, artifact_value, evidence
+     FROM scan_findings
+     WHERE analysis_id=$1
+       AND id = ANY($2::bigint[])`,
+    [analysisId, ids]
+  );
+
+  const signatures = [...new Set(
+    result.rows.flatMap((finding) =>
+      learnedArtifactSignatures(
+        finding.artifact_type,
+        finding.artifact_value,
+        finding.evidence || {}
+      )
+    )
+  )];
+
+  if (!signatures.length)
+    return 0;
+
+  const disabled = await pool.query(
+    `UPDATE learned_trusted_artifacts
+     SET enabled=FALSE,
+         updated_at=NOW()
+     WHERE signature = ANY($1::text[])
+       AND enabled=TRUE
+     RETURNING id`,
+    [signatures]
+  );
+
+  if (disabled.rows.length > 0)
+    invalidateLearnedTrustedArtifacts();
+
+  return disabled.rows.length;
 }
 
 async function disableLearnedArtifactsNowInCatalog() {
@@ -4660,7 +4782,7 @@ async function backfillPreviouslyApprovedAnalyses() {
   for (const row of approved.rows) {
     try {
       const learned =
-        await learnReleasedAnalysisArtifacts(
+        await learnAnalysisArtifacts(
           Number(row.id),
           "Backfill automático: análise já liberada anteriormente pela administração."
         );
@@ -8333,6 +8455,10 @@ app.get("/api/admin/me", requireAdmin, (_req, res) => {
   res.json({ authenticated: true });
 });
 
+app.get("/api/admin/remote-admin/download", requireAdmin, (_req, res) => {
+  res.redirect(302, remoteAdminBinaryUrl);
+});
+
 
 function integrationSecretMatches(req) {
   const configured =
@@ -9421,6 +9547,16 @@ app.post(
       )
     ].slice(0, 80);
 
+    const trustedEvidenceIds = [
+      ...new Set(
+        (Array.isArray(req.body?.trustedEvidenceIds)
+          ? req.body.trustedEvidenceIds
+          : [])
+          .map(Number)
+          .filter(value => Number.isInteger(value) && value > 0)
+      )
+    ].slice(0, 500);
+
     if (decision === "deny" && evidenceIds.length === 0) {
       return res.status(400).json({
         error: "evidence_required",
@@ -9634,17 +9770,42 @@ app.post(
     );
 
     let learnedArtifacts = 0;
+    let revokedArtifacts = 0;
 
     if (decision === "approve") {
       try {
         learnedArtifacts =
-          await learnReleasedAnalysisArtifacts(
+          await learnAnalysisArtifacts(
             id,
-            reason
+            reason,
+            { includeIds: trustedEvidenceIds }
           );
       } catch (learnError) {
         console.error(
           "Falha ao aprender falsos positivos da análise liberada:",
+          {
+            analysisId: id,
+            message: learnError?.message,
+            code: learnError?.code,
+          }
+        );
+      }
+    } else {
+      try {
+        revokedArtifacts =
+          await revokeLearnedTrustForFindings(
+            id,
+            evidenceIds
+          );
+        learnedArtifacts =
+          await learnAnalysisArtifacts(
+            id,
+            "Não selecionado como prova no banimento: " + reason,
+            { excludeIds: evidenceIds }
+          );
+      } catch (learnError) {
+        console.error(
+          "Falha ao aprender itens não usados como prova do banimento:",
           {
             analysisId: id,
             message: learnError?.message,
@@ -9659,7 +9820,8 @@ app.post(
       decision,
       result: body?.result || "Decisão confirmada.",
       evidenceUrl: evidenceUrl || null,
-      learnedArtifacts
+      learnedArtifacts,
+      revokedArtifacts
     });
   }
 );

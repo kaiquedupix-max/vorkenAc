@@ -207,6 +207,48 @@ function timestampIso(ms) {
   }
 }
 
+const RECENT_DELETION_WINDOW_MS =
+  15 * 24 * 60 * 60 * 1000;
+
+function deletionTimestamp(entry) {
+  const raw = entry?.raw || {};
+
+  return (
+    validDateMs(raw?.timestampUtc) ||
+    validDateMs(raw?.deletedAtUtc) ||
+    validDateMs(raw?.deletionTimeUtc) ||
+    validDateMs(raw?.timeCreatedUtc) ||
+    validDateMs(raw?.lastWriteUtc)
+  );
+}
+
+function recentDeletionEvidence(
+  deleted,
+  referenceMs
+) {
+  const recent = safeArray(deleted)
+    .map((entry) => ({
+      entry,
+      timestampMs: deletionTimestamp(entry)
+    }))
+    .filter(({ timestampMs }) => {
+      const age = referenceMs - timestampMs;
+      return (
+        timestampMs > 0 &&
+        age >= 0 &&
+        age <= RECENT_DELETION_WINDOW_MS
+      );
+    })
+    .sort((a, b) => b.timestampMs - a.timestampMs);
+
+  return {
+    confirmed: recent.length > 0,
+    entries: recent.map(({ entry }) => entry),
+    newestTimestampMs:
+      recent[0]?.timestampMs || 0
+  };
+}
+
 function suspiciousUserPath(value) {
   const p = normalizePath(value);
   return (
@@ -990,6 +1032,10 @@ export async function runCalibratedFilterV2({
   const rustSession =
     rustSessionWindow(report);
 
+  const reportReferenceMs =
+    validDateMs(report?.collectedAtUtc) ||
+    Date.now();
+
   const executionIndex =
     buildExecutionIndex(report);
 
@@ -1088,6 +1134,12 @@ export async function runCalibratedFilterV2({
       pe?.signed === false ||
       fileEvidence.some(
         (item) => item?.signed === false
+      );
+
+    const recentDeletion =
+      recentDeletionEvidence(
+        deleted,
+        reportReferenceMs
       );
 
     const suspiciousPath =
@@ -1274,6 +1326,15 @@ export async function runCalibratedFilterV2({
       reason =
         "O executável foi rodado a partir de uma saída Debug/Release dentro de projeto explicitamente associado ao jogo e depois deixou de estar presente. A combinação é tratada como evidência crítica.";
     } else if (
+      recentDeletion.confirmed &&
+      unsigned
+    ) {
+      severity = "critical";
+      title =
+        "PRIORIDADE MÁXIMA: EXE sem assinatura apagado recentemente";
+      reason =
+        "O executável não pertence à lista de confiança, não possui assinatura digital válida e há registro confirmado de exclusão nos últimos 15 dias. Essa combinação é crítica independentemente do nome do arquivo.";
+    } else if (
       executed &&
       deletedOrMissing &&
       !genericInstaller &&
@@ -1356,11 +1417,11 @@ export async function runCalibratedFilterV2({
     } else if (
       strongInjection
     ) {
-      severity = "info";
+      severity = "medium";
       title =
-        "Capacidade de injeção sem execução comprovada (inventário)";
+        "Executável não confiável com capacidade de injeção";
       reason =
-        "Foram encontradas múltiplas APIs de injeção, mas sem execução comprovada isso permanece apenas como inventário técnico.";
+        "Foram encontradas múltiplas APIs de injeção em um executável fora da lista de confiança. Mesmo sem execução comprovada, o sinal técnico exige revisão administrativa.";
     } else if (
       inputSignal &&
       executed
@@ -1380,6 +1441,29 @@ export async function runCalibratedFilterV2({
         "Executável de nome randômico executado em pasta gravável";
       reason =
         "O nome e o local justificam revisão, mas faltam evidências técnicas independentes para classificar o item como crítico.";
+    } else if (
+      !executed &&
+      unsigned &&
+      (
+        highRiskName ||
+        packedOrHighEntropy ||
+        inputSignal ||
+        (randomLoaderName && suspiciousPath)
+      )
+    ) {
+      severity = "medium";
+      title =
+        "EXE suspeito e não confiável encontrado";
+      reason =
+        "O executável está fora da lista de confiança, não possui assinatura digital válida e apresenta sinal técnico suspeito. Sem execução comprovada ele permanece laranja para revisão, não vermelho automático.";
+    } else if (
+      recentDeletion.confirmed
+    ) {
+      severity = "medium";
+      title =
+        "EXE não confiável apagado nos últimos 15 dias";
+      reason =
+        "Há registro confirmado de exclusão recente e o executável não pertence à lista de confiança. Como a ausência impede confirmar uma assinatura digital válida, o item exige revisão administrativa.";
     } else if (
       executed &&
       deletedOrMissing
@@ -1430,6 +1514,17 @@ export async function runCalibratedFilterV2({
           timestampIso(rustSession.endMs),
         deletedEvidence:
           deleted,
+        recentDeletionConfirmed:
+          recentDeletion.confirmed,
+        recentDeletionWindowDays: 15,
+        recentDeletionTimestampUtc:
+          recentDeletion.newestTimestampMs
+            ? timestampIso(
+                recentDeletion.newestTimestampMs
+              )
+            : "",
+        recentDeletionEvidence:
+          recentDeletion.entries,
         deletedOrMissing,
         usbExecution: usb,
         usbContext:
@@ -1459,7 +1554,29 @@ export async function runCalibratedFilterV2({
               }
             : null,
         signed:
-          pe?.signed,
+          pe?.signed ??
+          fileEvidence.find(
+            (item) => typeof item?.signed === "boolean"
+          )?.signed,
+        signatureValid:
+          pe?.signatureValid ??
+          fileEvidence.find(
+            (item) => typeof item?.signatureValid === "boolean"
+          )?.signatureValid,
+        signerSubject:
+          pe?.signerSubject ||
+          fileEvidence.find((item) => item?.signerSubject)?.signerSubject ||
+          "",
+        companyName:
+          pe?.companyName ||
+          fileEvidence.find((item) => item?.companyName)?.companyName ||
+          "",
+        productName:
+          pe?.productName ||
+          fileEvidence.find((item) => item?.productName)?.productName ||
+          "",
+        unsignedConfirmed:
+          unsigned,
         suspiciousPath,
         genericInstaller,
         gameTargetedDevelopmentOutput:

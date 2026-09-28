@@ -11,6 +11,7 @@ let currentClientReportReleased = false;
 let currentGuerraFriaLinked = false;
 let currentIntegrationDecision = null;
 let selectedBanEvidenceIds = new Set();
+let selectedTrustedEvidenceIds = new Set();
 let dashboardPollTimer = null;
 let lastOpenReportProcessing = null;
 let lastAnalysesRefreshAt = 0;
@@ -893,6 +894,7 @@ document.getElementById("closeReportBtn").addEventListener("click", () => {
   currentGuerraFriaLinked = false;
   currentIntegrationDecision = null;
   selectedBanEvidenceIds.clear();
+  selectedTrustedEvidenceIds.clear();
   showTechnicalResult = false;
   lastOpenReportProcessing = null;
 });
@@ -921,6 +923,9 @@ async function queueGuerraFriaDecision(action) {
   }
 
   const evidenceIds = isBan ? [...selectedBanEvidenceIds] : [];
+  const trustedEvidenceIds = isBan
+    ? []
+    : [...selectedTrustedEvidenceIds];
 
   if (isBan && evidenceIds.length === 0) {
     alert("Selecione pelo menos uma evidência que justifique o banimento.");
@@ -931,7 +936,7 @@ async function queueGuerraFriaDecision(action) {
     window.confirm(
       isBan
         ? "Confirmar BANIMENTO PERMANENTE com " + evidenceIds.length + " evidência(s) selecionada(s)?"
-        : "Confirmar LIBERAÇÃO deste jogador no servidor?"
+        : "Confirmar LIBERAÇÃO e ensinar " + trustedEvidenceIds.length + " item(ns) selecionado(s) como confiáveis?"
     );
 
   if (!confirmed)
@@ -959,23 +964,22 @@ async function queueGuerraFriaDecision(action) {
               : "approve",
           reason,
           evidenceIds,
+          trustedEvidenceIds,
         }),
       }
     );
 
     alert(
-      isBan
+      (isBan
         ? "Banimento confirmado pelo Guerra Fria."
-        : (
-            "Liberação confirmada pelo Guerra Fria." +
-            (
-              Number(data?.learnedArtifacts || 0) > 0
-                ? "\n\nVorken aprendeu " +
-                  String(data.learnedArtifacts) +
-                  " assinatura(s) de arquivo como falso positivo confiável."
-                : ""
-            )
-          )
+        : "Liberação confirmada pelo Guerra Fria.") +
+      (
+        Number(data?.learnedArtifacts || 0) > 0
+          ? "\n\nVorken aprendeu " +
+            String(data.learnedArtifacts) +
+            " identidade(s) de arquivo como confiáveis."
+          : ""
+      )
     );
 
     lastReportCache = null;
@@ -1223,8 +1227,13 @@ async function loadAnalyses() {
 }
 
 async function openReport(id, options = {}) {
-  if (String(currentReportId || "") !== String(id || ""))
+  const reportChanged =
+    String(currentReportId || "") !== String(id || "");
+
+  if (reportChanged) {
     selectedBanEvidenceIds.clear();
+    selectedTrustedEvidenceIds.clear();
+  }
 
   currentReportId = id;
   document.querySelector('[data-report-filter="overview"]')?.click();
@@ -1382,6 +1391,11 @@ async function openReport(id, options = {}) {
   if (gfReleaseBtn)
     gfReleaseBtn.disabled = decisionLocked;
 
+  const gfTrustAllBtn =
+    document.getElementById("gfTrustAllBtn");
+  if (gfTrustAllBtn)
+    gfTrustAllBtn.disabled = decisionLocked;
+
   const clientToggle = document.getElementById("clientReportToggleBtn");
   if (clientToggle) {
     clientToggle.textContent = currentClientReportReleased
@@ -1513,6 +1527,71 @@ async function openReport(id, options = {}) {
         );
       });
 
+  if (reportChanged) {
+    for (const finding of [...criticalFindings, ...mediumFindings]) {
+      const findingId = Number(finding?.id);
+      if (Number.isInteger(findingId))
+        selectedTrustedEvidenceIds.add(findingId);
+    }
+  }
+
+  const updateTrustSelectionUi = () => {
+    document
+      .querySelectorAll(".trust-evidence-checkbox")
+      .forEach((checkbox) => {
+        const findingId = Number(checkbox.dataset.findingId);
+        checkbox.checked = selectedTrustedEvidenceIds.has(findingId);
+      });
+
+    const releaseButton = document.getElementById("gfReleaseBtn");
+    if (releaseButton && !releaseButton.disabled) {
+      releaseButton.textContent =
+        "✓ Liberar jogador · " +
+        selectedTrustedEvidenceIds.size +
+        " confiável(is)";
+    }
+  };
+
+  const trustAllButton = document.getElementById("gfTrustAllBtn");
+  if (trustAllButton) {
+    trustAllButton.onclick = () => {
+      const allIds = [...criticalFindings, ...mediumFindings]
+        .map((finding) => Number(finding?.id))
+        .filter(Number.isInteger);
+      const allSelected = allIds.length > 0 &&
+        allIds.every((findingId) => selectedTrustedEvidenceIds.has(findingId));
+
+      selectedTrustedEvidenceIds = allSelected
+        ? new Set()
+        : new Set(allIds);
+      updateTrustSelectionUi();
+      trustAllButton.textContent = allSelected
+        ? "Marcar todos confiáveis"
+        : "Desmarcar confiança";
+    };
+  }
+
+  const hasSuspiciousUsbExecution =
+    usbExecutedExes.length > 0 ||
+    findings.some((item) =>
+      item?.evidence?.usbExecution === true &&
+      item?.evidence?.executionConfirmed === true
+    );
+
+  const usbSuspiciousBanner =
+    document.getElementById("usbSuspiciousBanner");
+
+  if (usbSuspiciousBanner) {
+    usbSuspiciousBanner.classList.toggle(
+      "hidden",
+      !hasSuspiciousUsbExecution
+    );
+    usbSuspiciousBanner.textContent =
+      hasSuspiciousUsbExecution
+        ? "⚠ PENDRIVE SUSPEITO — VERIFICAR: foi detectado um executável iniciado em mídia removível. Revise a seção Pendrives / USB antes de concluir a análise."
+        : "";
+  }
+
   const infoFindings =
     findings.filter(
       (item) =>
@@ -1628,6 +1707,8 @@ async function openReport(id, options = {}) {
     sideRecommendationLabel.textContent =
       hasFilterError
         ? "Reprocessamento necessário"
+        : hasSuspiciousUsbExecution
+          ? "Pendrive suspeito — verificar"
         : criticalFindings.length > 0
           ? "Análise administrativa urgente"
           : mediumFindings.length > 0
@@ -1639,6 +1720,8 @@ async function openReport(id, options = {}) {
     sideRecommendationText.textContent =
       hasFilterError
         ? "A classificação não terminou corretamente. Esta sessão não é considerada limpa e não pode ser liberada automaticamente. Reprocesse ou revise a análise."
+        : hasSuspiciousUsbExecution
+          ? "Foi detectado EXE executado em mídia removível. Abra Pendrives / USB e confira o arquivo antes de concluir a verificação."
         : criticalFindings.length > 0
           ? "Há evidência crítica. Possível trapaceiro detectado; revise antes de aplicar qualquer punição."
           : mediumFindings.length > 0
@@ -2081,7 +2164,7 @@ async function openReport(id, options = {}) {
         ["critical", "high", "medium"].includes(displaySeverity) &&
         Number.isInteger(Number(finding.id));
       const selectionBlock = selectable
-        ? `<label class="ban-evidence-select"><input type="checkbox" class="ban-evidence-checkbox" data-finding-id="${escapeHtml(finding.id)}" ${selectedBanEvidenceIds.has(Number(finding.id)) ? "checked" : ""}><span>Usar como prova do banimento</span></label>`
+        ? `<div class="finding-learning-actions"><label class="ban-evidence-select"><input type="checkbox" class="ban-evidence-checkbox" data-finding-id="${escapeHtml(finding.id)}" ${selectedBanEvidenceIds.has(Number(finding.id)) ? "checked" : ""}><span>Usar como prova do banimento</span></label><label class="ban-evidence-select trust-evidence-select"><input type="checkbox" class="trust-evidence-checkbox" data-finding-id="${escapeHtml(finding.id)}" ${selectedTrustedEvidenceIds.has(Number(finding.id)) ? "checked" : ""}><span>Confiar ao liberar</span></label></div>`
         : "";
       element.innerHTML = `
         <div class="finding-head"><h4>${escapeHtml(finding.title)}</h4><span class="tag ${escapeHtml(displaySeverity)}">${escapeHtml(severityLabel(displaySeverity))}</span></div>
@@ -2109,6 +2192,16 @@ async function openReport(id, options = {}) {
             : "⚠ Banir jogador";
         }
       });
+      const trustCheckbox = element.querySelector(".trust-evidence-checkbox");
+      trustCheckbox?.addEventListener("change", () => {
+        const findingId = Number(trustCheckbox.dataset.findingId);
+        if (!Number.isInteger(findingId)) return;
+        if (trustCheckbox.checked)
+          selectedTrustedEvidenceIds.add(findingId);
+        else
+          selectedTrustedEvidenceIds.delete(findingId);
+        updateTrustSelectionUi();
+      });
       target.appendChild(element);
     }
   };
@@ -2118,6 +2211,8 @@ async function openReport(id, options = {}) {
     criticalFindings,
     "Nenhum achado crítico."
   );
+
+  updateTrustSelectionUi();
 
   renderFindings(
     "mediumFindingsList",

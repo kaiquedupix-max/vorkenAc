@@ -198,6 +198,7 @@ test("heuristic-only unexecuted filename does not become a false critical", asyn
     item.artifactType === "correlated_executable_v2" &&
     item.severity === "critical"
   ), false);
+
 });
 
 test("missing executable without an independent risk signal is inventory only", async () => {
@@ -218,7 +219,7 @@ test("missing executable without an independent risk signal is inventory only", 
   assert.equal(executable.severity, "info");
 });
 
-test("injection APIs without execution are inventory only", async () => {
+test("untrusted injection-capable executable is at least review", async () => {
   const findings = await collect({
     collectedAtUtc: "2026-09-26T12:00:00Z",
     peInspections: [{
@@ -237,7 +238,130 @@ test("injection APIs without execution are inventory only", async () => {
   );
 
   assert.ok(executable);
-  assert.equal(executable.severity, "info");
+  assert.equal(executable.severity, "medium");
+});
+
+test("recently deleted unsigned untrusted EXE is critical regardless of name", async () => {
+  const findings = await collectFinal({
+    collectedAtUtc: "2026-09-26T12:00:00Z",
+    deletedUsnRecords: [{
+      fileName: "EveryRunGetsANewName.exe",
+      timestampUtc: "2026-09-20T09:30:00Z",
+      reason: "FILE_DELETE"
+    }],
+    peInspections: [{
+      path: "C:\\Users\\Player\\Desktop\\EveryRunGetsANewName.exe",
+      signed: false
+    }]
+  });
+
+  const executable = findings.find((item) =>
+    item.artifactType === "correlated_executable_v2"
+  );
+
+  assert.ok(executable);
+  assert.equal(executable.severity, "critical");
+  assert.equal(executable.evidence.recentDeletionConfirmed, true);
+  assert.equal(executable.evidence.recentDeletionWindowDays, 15);
+  assert.equal(executable.evidence.unsignedConfirmed, true);
+  assert.match(executable.title, /sem assinatura apagado recentemente/i);
+});
+
+test("recent unsigned deletion remains critical when execution is out of session", async () => {
+  const findings = await collectFinal({
+    collectedAtUtc: "2026-09-26T12:00:00Z",
+    processes: [{
+      name: "RustClient.exe",
+      startTimeUtc: "2026-09-26T11:30:00Z"
+    }],
+    prefetchExecutions: [{
+      executableName: "DifferentEveryTime.exe",
+      resolvedExecutablePath: "C:\\Users\\Player\\Desktop\\DifferentEveryTime.exe",
+      executablePresent: false,
+      lastRunUtc: "2026-09-20T08:00:00Z"
+    }],
+    deletedUsnRecords: [{
+      fileName: "DifferentEveryTime.exe",
+      timestampUtc: "2026-09-20T08:05:00Z",
+      reason: "FILE_DELETE"
+    }],
+    peInspections: [{
+      path: "C:\\Users\\Player\\Desktop\\DifferentEveryTime.exe",
+      signed: false
+    }]
+  });
+
+  const executable = findings.find((item) =>
+    item.artifactType === "correlated_executable_v2"
+  );
+
+  assert.ok(executable);
+  assert.equal(executable.severity, "critical");
+  assert.equal(executable.evidence.sessionRelation, "out_of_instance");
+});
+
+test("recently deleted untrusted EXE with unknown signature is review", async () => {
+  const findings = await collectFinal({
+    collectedAtUtc: "2026-09-26T12:00:00Z",
+    deletedUsnRecords: [{
+      fileName: "RenamedUnknown.exe",
+      timestampUtc: "2026-09-18T15:00:00Z",
+      reason: "FILE_DELETE"
+    }]
+  });
+
+  const executable = findings.find((item) =>
+    item.artifactType === "correlated_executable_v2"
+  );
+
+  assert.ok(executable);
+  assert.equal(executable.severity, "medium");
+  assert.equal(executable.evidence.recentDeletionConfirmed, true);
+});
+
+test("deletion older than 15 days does not trigger recent-deletion policy", async () => {
+  const findings = await collectFinal({
+    collectedAtUtc: "2026-09-26T12:00:00Z",
+    deletedUsnRecords: [{
+      fileName: "OldUnknown.exe",
+      timestampUtc: "2026-08-01T15:00:00Z",
+      reason: "FILE_DELETE"
+    }],
+    peInspections: [{
+      path: "C:\\Users\\Player\\Desktop\\OldUnknown.exe",
+      signed: false
+    }]
+  });
+
+  const executable = findings.find((item) =>
+    item.artifactType === "correlated_executable_v2"
+  );
+
+  assert.ok(executable);
+  assert.notEqual(executable.severity, "critical");
+  assert.equal(executable.evidence.recentDeletionConfirmed, false);
+});
+
+test("trusted executable is not raised by recent-deletion policy", async () => {
+  const findings = await collectFinal({
+    collectedAtUtc: "2026-09-26T12:00:00Z",
+    deletedUsnRecords: [{
+      fileName: "TrustedTool.exe",
+      timestampUtc: "2026-09-25T15:00:00Z",
+      reason: "FILE_DELETE"
+    }],
+    peInspections: [{
+      path: "C:\\Program Files\\Trusted\\TrustedTool.exe",
+      signed: false
+    }]
+  }, {
+    isTrustedPortableExecutableName: (name) =>
+      name.toLowerCase() === "trustedtool.exe"
+  });
+
+  assert.equal(findings.some((item) =>
+    item.artifactType === "correlated_executable_v2"
+  ), false);
 });
 
 test("Defender malware detections remain review findings", async () => {

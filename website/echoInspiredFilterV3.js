@@ -323,12 +323,17 @@ function adjustExecutableSeverity(
     evidence?.randomLoaderName === true &&
     Number(evidence?.randomLoaderScore || 0) >= 4;
 
+  const recentUnsignedDeletion =
+    evidence?.recentDeletionConfirmed === true &&
+    evidence?.unsignedConfirmed === true;
+
   const protectedExecutedThreat =
     evidence?.executionConfirmed === true &&
     (
       knownCheatExecutable ||
       explicitCheatExecutable ||
       behavioralUnknownLoader ||
+      recentUnsignedDeletion ||
       evidence?.usbExecution === true ||
       evidence?.gameTargetedDevelopmentOutput === true
     );
@@ -341,6 +346,8 @@ function adjustExecutableSeverity(
           ? "CHEAT/INJECTOR EXECUTADO · "
           : evidence?.usbExecution === true
             ? "EXECUÇÃO EM PENDRIVE · "
+            : recentUnsignedDeletion
+              ? "EXE SEM ASSINATURA APAGADO RECENTEMENTE · "
             : evidence?.gameTargetedDevelopmentOutput === true
               ? "BUILD DIRECIONADA AO JOGO · "
               : "LOADER SUSPEITO EXECUTADO · ";
@@ -382,6 +389,7 @@ function adjustExecutableSeverity(
         ) ||
         explicitCheatExecutable ||
         behavioralUnknownLoader ||
+        recentUnsignedDeletion ||
         knownCheatExecutable ||
         evidence?.usbExecution === true ||
         evidence?.gameTargetedDevelopmentOutput === true;

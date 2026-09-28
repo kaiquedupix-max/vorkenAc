@@ -42,6 +42,10 @@ internal sealed class RemoteAdminForm : Form
     public RemoteAdminForm()
     {
         Text = "Vorken · Administração Remota";
+        var appIcon =
+            Icon.ExtractAssociatedIcon(Application.ExecutablePath) ??
+            SystemIcons.Application;
+        Icon = appIcon;
         StartPosition = FormStartPosition.CenterScreen;
         MinimumSize = new Size(1080, 720);
         Size = new Size(1320, 820);
@@ -64,9 +68,13 @@ internal sealed class RemoteAdminForm : Form
         var header = new Panel { Dock = DockStyle.Top, Height = 88, BackColor = Color.FromArgb(5, 15, 22) };
         header.MouseDown += HeaderMouseDown;
 
-        var mark = Label("V", 22F, Color.FromArgb(2, 23, 25), FontStyle.Bold);
-        mark.TextAlign = ContentAlignment.MiddleCenter;
-        mark.BackColor = Accent;
+        var mark = new PictureBox
+        {
+            BackColor = Accent,
+            Image = (Icon ?? SystemIcons.Application).ToBitmap(),
+            SizeMode = PictureBoxSizeMode.Zoom,
+            Padding = new Padding(8)
+        };
         mark.SetBounds(32, 18, 52, 52);
         ApplyRounded(mark, 8);
         header.Controls.Add(mark);
