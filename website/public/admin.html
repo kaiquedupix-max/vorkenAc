@@ -590,8 +590,9 @@
       <h2>Identificar o jogador</h2>
       <p class="muted">Esta análise foi criada por link manual. Informe o SteamID64 para aplicar o banimento ao jogador correto e vincular a decisão ao relatório.</p>
 
-      <label>SteamID64 do jogador
-        <input id="manualBanSteamId" type="text" inputmode="numeric" maxlength="17" placeholder="7656119XXXXXXXXXX" autocomplete="off" required>
+      <label>Identificação Steam do jogador
+        <input id="manualBanSteamId" type="text" maxlength="220" list="manualBanSteamIdSuggestions" placeholder="SteamID64, STEAM_0:1:..., [U:1:...] ou link do perfil" autocomplete="off" required>
+        <datalist id="manualBanSteamIdSuggestions"></datalist>
       </label>
 
       <label>Discord User ID <span class="muted">(opcional)</span>
@@ -611,6 +612,6 @@
   </dialog>
 
   <script src="/ui-polish.js?v=20260927-remote-admin-v1"></script>
-  <script src="/admin.js?v=20260928-manual-ban-v1"></script>
+  <script src="/admin.js?v=20260928-manual-ban-v2"></script>
 </body>
 </html>

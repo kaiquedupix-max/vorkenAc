@@ -1664,6 +1664,27 @@ function cleanText(value, max = 250) {
   return String(value || "").trim().slice(0, max);
 }
 
+function normalizeSteamId64Input(value) {
+  const raw = cleanText(value, 220);
+  const direct = raw.match(/(?:^|\D)(7656119\d{10})(?!\d)/)?.[1] || "";
+  if (/^7656119\d{10}$/.test(direct)) return direct;
+
+  const steamId3 = raw.match(/^\[?U:1:(\d{1,10})\]?$/i);
+  const steamId2 = raw.match(/^STEAM_[0-5]:([01]):(\d{1,10})$/i);
+
+  try {
+    let accountId = null;
+    if (steamId3) accountId = BigInt(steamId3[1]);
+    if (steamId2) accountId = BigInt(steamId2[2]) * 2n + BigInt(steamId2[1]);
+    if (accountId === null) return "";
+
+    const steamId64 = String(76561197960265728n + accountId);
+    return /^7656119\d{10}$/.test(steamId64) ? steamId64 : "";
+  } catch {
+    return "";
+  }
+}
+
 function sanitizePostgresString(value) {
   const input = String(value ?? "");
   let output = "";
@@ -9561,7 +9582,7 @@ app.post(
       req.body?.manualPlayer && typeof req.body.manualPlayer === "object"
         ? req.body.manualPlayer
         : {};
-    const manualSteamId = cleanText(submittedManualPlayer.steamId, 17);
+    const manualSteamId = normalizeSteamId64Input(submittedManualPlayer.steamId);
     const manualDiscordUserId = cleanText(submittedManualPlayer.discordUserId, 20);
     const manualTicketChannelId = cleanText(submittedManualPlayer.ticketChannelId, 20);
 

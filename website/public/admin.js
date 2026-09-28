@@ -11,6 +11,7 @@ let currentClientReportReleased = false;
 let currentGuerraFriaLinked = false;
 let currentDecisionSelectable = false;
 let currentIntegrationDecision = null;
+let currentDetectedSteamIds = [];
 let selectedBanEvidenceIds = new Set();
 let selectedTrustedEvidenceIds = new Set();
 let dashboardPollTimer = null;
@@ -126,6 +127,7 @@ function requestManualBanPlayer() {
     const discordIdInput = document.getElementById("manualBanDiscordId");
     const ticketIdInput = document.getElementById("manualBanTicketId");
     const message = document.getElementById("manualBanPlayerMessage");
+    const suggestions = document.getElementById("manualBanSteamIdSuggestions");
     const confirmBtn = document.getElementById("manualBanPlayerConfirmBtn");
     const cancelBtn = document.getElementById("manualBanPlayerCancelBtn");
 
@@ -135,7 +137,15 @@ function requestManualBanPlayer() {
       return;
     }
 
-    steamIdInput.value = "";
+    steamIdInput.value =
+      currentDetectedSteamIds.length === 1
+        ? currentDetectedSteamIds[0]
+        : "";
+    if (suggestions) {
+      suggestions.innerHTML = currentDetectedSteamIds
+        .map((steamId) => '<option value="' + escapeHtml(steamId) + '"></option>')
+        .join("");
+    }
     if (discordIdInput) discordIdInput.value = "";
     if (ticketIdInput) ticketIdInput.value = "";
     if (message) {
@@ -162,12 +172,12 @@ function requestManualBanPlayer() {
     };
 
     const onConfirm = () => {
-      const steamId = String(steamIdInput.value || "").trim();
+      const steamId = normalizeSteamId64Input(steamIdInput.value);
       const discordUserId = String(discordIdInput?.value || "").trim();
       const ticketChannelId = String(ticketIdInput?.value || "").trim();
 
       if (!/^7656119\d{10}$/.test(steamId)) {
-        showError("Informe um SteamID64 válido com 17 dígitos, começando por 7656119.");
+        showError("Steam inválido. Cole o link do perfil, SteamID64, SteamID2 ou SteamID3. Um SteamID64 possui 17 dígitos.");
         steamIdInput.focus();
         return;
       }
@@ -199,6 +209,27 @@ function requestManualBanPlayer() {
     dialog.showModal();
     setTimeout(() => steamIdInput.focus(), 0);
   });
+}
+
+function normalizeSteamId64Input(value) {
+  const raw = String(value || "").trim();
+  const direct = raw.match(/(?:^|\D)(7656119\d{10})(?!\d)/)?.[1] || "";
+  if (/^7656119\d{10}$/.test(direct)) return direct;
+
+  const steamId3 = raw.match(/^\[?U:1:(\d{1,10})\]?$/i);
+  const steamId2 = raw.match(/^STEAM_[0-5]:([01]):(\d{1,10})$/i);
+
+  try {
+    let accountId = null;
+    if (steamId3) accountId = BigInt(steamId3[1]);
+    if (steamId2) accountId = BigInt(steamId2[2]) * 2n + BigInt(steamId2[1]);
+    if (accountId === null) return "";
+
+    const steamId64 = String(76561197960265728n + accountId);
+    return /^7656119\d{10}$/.test(steamId64) ? steamId64 : "";
+  } catch {
+    return "";
+  }
 }
 
 async function api(url, options = {}) {
@@ -977,6 +1008,7 @@ document.getElementById("closeReportBtn").addEventListener("click", () => {
   currentGuerraFriaLinked = false;
   currentDecisionSelectable = false;
   currentIntegrationDecision = null;
+  currentDetectedSteamIds = [];
   selectedBanEvidenceIds.clear();
   selectedTrustedEvidenceIds.clear();
   showTechnicalResult = false;
@@ -1581,6 +1613,14 @@ async function openReport(id, options = {}) {
     usnActivity: safeArray(payload.usnActivity),
     systemIntegrityExpansion: safeArray(payload.systemIntegrityExpansion),
   };
+
+  currentDetectedSteamIds = [
+    ...new Set(
+      arrays.steamAccounts
+        .map((account) => normalizeSteamId64Input(account?.steamId64))
+        .filter(Boolean)
+    )
+  ];
 
   const usbStorageDevices = uniqueUsbStorageDevices([
     ...arrays.usbCurrent,
