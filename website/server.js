@@ -9221,7 +9221,11 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
       decodeStoredRawReport(reportResult.rows[0]);
 
     reportResult.rows[0].payload =
-      projectReportPayloadForAdmin(rawAdminReport);
+      projectReportPayloadForAdmin({
+        ...rawAdminReport,
+        usbExecutionEvidence:
+          compactUsbExecutionEvidence(rawAdminReport),
+      });
 
     delete reportResult.rows[0].payload_raw;
     delete reportResult.rows[0].payload_encoding;

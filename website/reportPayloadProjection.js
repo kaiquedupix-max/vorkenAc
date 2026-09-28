@@ -4,7 +4,7 @@ const COLLECTION_LIMITS = Object.freeze({
   steamAccounts: 20,
   usbCurrent: 60,
   usbHistory: 60,
-  usbFiles: 60,
+  usbExecutionEvidence: 120,
   serialDevices: 60,
   browserHistorySignals: 60,
 });
@@ -13,6 +13,26 @@ const SAFE_OBJECT_KEYS = new Set([
   "hardwareSummary",
   "steamAccountCorrelation",
 ]);
+
+export function isUsbStorageDevice(item) {
+  if (!item || typeof item !== "object") return false;
+  const text = [
+    item.name,
+    item.friendlyName,
+    item.deviceDescription,
+    item.deviceClass,
+    item.deviceId,
+    item.pnpDeviceId,
+    item.instanceId,
+    item.manufacturer,
+  ].filter(Boolean).join(" ").toLowerCase();
+
+  if (!text) return false;
+  if (/root hub|generic hub|host controller|dispositivo de entrada|input device|\bhid\b|keyboard|teclado|mouse|composite device|porta usb/.test(text)) {
+    return false;
+  }
+  return /usbstor|mass storage|flash (?:disk|drive)|usb (?:disk|drive)|pendrive|thumb drive|disk&ven_|diskdrive|physicaldrive/.test(text);
+}
 
 export function projectReportPayloadForAdmin(payload) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
@@ -31,7 +51,10 @@ export function projectReportPayloadForAdmin(payload) {
   let originalItems = 0;
   let projectedItems = 0;
 
-  for (const [key, value] of Object.entries(payload)) {
+  for (const [key, originalValue] of Object.entries(payload)) {
+    const value = ["usbCurrent", "usbHistory"].includes(key) && Array.isArray(originalValue)
+      ? originalValue.filter(isUsbStorageDevice)
+      : originalValue;
     if (!Array.isArray(value)) {
       if (
         value == null ||

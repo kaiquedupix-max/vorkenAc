@@ -917,22 +917,16 @@ internal static class Program
 
         using var searcher =
             new ManagementObjectSearcher(
-                "SELECT Name,DeviceID,PNPDeviceID,Manufacturer,Status FROM Win32_PnPEntity");
+                "SELECT Model,DeviceID,PNPDeviceID,Manufacturer,Status FROM Win32_DiskDrive WHERE InterfaceType='USB'");
 
         foreach (ManagementObject item in searcher.Get())
         {
             string pnp = Convert.ToString(item["PNPDeviceID"]) ?? "";
             string deviceId = Convert.ToString(item["DeviceID"]) ?? "";
 
-            if (!pnp.StartsWith("USB", StringComparison.OrdinalIgnoreCase) &&
-                !deviceId.StartsWith("USB", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
             result.Add(new UsbDeviceRecord
             {
-                Name = Convert.ToString(item["Name"]) ?? "",
+                Name = Convert.ToString(item["Model"]) ?? "Dispositivo de armazenamento USB",
                 DeviceId = deviceId,
                 PnpDeviceId = pnp,
                 Manufacturer = Convert.ToString(item["Manufacturer"]) ?? "",

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  isUsbStorageDevice,
   projectFindingEvidenceForAdmin,
   projectReportPayloadForAdmin,
 } from "../reportPayloadProjection.js";
@@ -56,4 +57,33 @@ test("finding evidence is bounded before reaching the browser", () => {
   assert.equal(projected.note, "visible");
   assert.equal(projected.matches.length, 20);
   assert.ok(projected.raw.length < 2100);
+});
+
+test("USB report projection keeps storage and removes hubs and input devices", () => {
+  const payload = {
+    usbCurrent: [
+      { name: "USB Root Hub (USB 3.0)", pnpDeviceId: "USB\\ROOT_HUB30\\1" },
+      { name: "Dispositivo de Entrada USB", pnpDeviceId: "USB\\VID_1234&PID_5678\\1" },
+      { name: "Generic Flash Disk USB Device", pnpDeviceId: "USBSTOR\\DISK&VEN_GENERIC\\ABC" },
+    ],
+    usbHistory: [
+      { friendlyName: "Kingston DataTraveler", deviceClass: "Disk&Ven_Kingston&Prod_DataTraveler", instanceId: "SERIAL1", present: false },
+    ],
+    usbExecutionEvidence: [
+      { name: "loader.exe", path: "E:\\loader.exe", isExe: true, removableConfirmed: true },
+    ],
+  };
+
+  const projected = projectReportPayloadForAdmin(payload);
+  assert.equal(projected.usbCurrent.length, 1);
+  assert.equal(projected.usbCurrent[0].name, "Generic Flash Disk USB Device");
+  assert.equal(projected.usbHistory.length, 1);
+  assert.equal(projected.usbExecutionEvidence.length, 1);
+  assert.equal(projected.uiCollectionCounts.usbCurrent, 1);
+});
+
+test("USB storage classifier rejects ports and accepts USBSTOR disks", () => {
+  assert.equal(isUsbStorageDevice({ name: "USB Root Hub (USB 3.0)" }), false);
+  assert.equal(isUsbStorageDevice({ name: "Dispositivo de Entrada USB" }), false);
+  assert.equal(isUsbStorageDevice({ pnpDeviceId: "USBSTOR\\DISK&VEN_SANDISK\\123" }), true);
 });

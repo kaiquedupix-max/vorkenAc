@@ -162,6 +162,36 @@ function safeArray(value) {
   return Array.isArray(value) ? value.filter(Boolean) : [];
 }
 
+function isUsbStorageDeviceClient(item) {
+  const text = [
+    item?.name,
+    item?.friendlyName,
+    item?.deviceDescription,
+    item?.deviceClass,
+    item?.deviceId,
+    item?.pnpDeviceId,
+    item?.instanceId,
+    item?.manufacturer,
+  ].filter(Boolean).join(" ").toLowerCase();
+  if (!text || /root hub|generic hub|host controller|dispositivo de entrada|input device|\bhid\b|keyboard|teclado|mouse|composite device|porta usb/.test(text)) {
+    return false;
+  }
+  return /usbstor|mass storage|flash (?:disk|drive)|usb (?:disk|drive)|pendrive|thumb drive|disk&ven_|diskdrive|physicaldrive/.test(text);
+}
+
+function uniqueUsbStorageDevices(items) {
+  const seen = new Set();
+  return safeArray(items).filter(isUsbStorageDeviceClient).filter((item) => {
+    const key = String(
+      item.instanceId || item.pnpDeviceId || item.deviceId ||
+      [item.friendlyName, item.name, item.manufacturer].filter(Boolean).join("|")
+    ).trim().toLowerCase();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function clientWindowsBaseName(value) {
   return String(value || "")
     .replaceAll("/", "\\")
@@ -1435,10 +1465,20 @@ async function openReport(id, options = {}) {
     systemIntegrityExpansion: safeArray(payload.systemIntegrityExpansion),
   };
 
+  const usbStorageDevices = uniqueUsbStorageDevices([
+    ...arrays.usbCurrent,
+    ...arrays.usbHistory,
+  ]);
+  const usbExecutedExes = arrays.usbExecutionEvidence
+    .filter((item) =>
+      item?.isExe === true &&
+      /\.exe(?:$|[?#])/i.test(String(item.path || item.name || "")) &&
+      (item.removableConfirmed === true || item.detachedRemovable === true)
+    )
+    .sort((a, b) => new Date(b.timeUtc || 0) - new Date(a.timeUtc || 0));
+
   const disconnectedUsb =
-    Number.isFinite(Number(uiSummary.disconnectedUsb))
-      ? Number(uiSummary.disconnectedUsb)
-      : arrays.usbHistory.filter((item) => item.present === false).length;
+    usbStorageDevices.filter((item) => item.present === false).length;
 
   const effectiveFindingSeverity = (item) =>
     item.severity || "info";
@@ -1618,11 +1658,11 @@ async function openReport(id, options = {}) {
 
   document.getElementById("criticalCountBadge").textContent = criticalFindings.length;
   document.getElementById("mediumCountBadge").textContent = mediumFindings.length;
-  document.getElementById("hardwareCountBadge").textContent = hardwareCount;
+  document.getElementById("hardwareCountBadge").textContent = usbStorageDevices.length;
   document.getElementById("infoCountBadge").textContent = informationalCount;
   document.getElementById("filterCriticalCount")?.replaceChildren(String(criticalFindings.length));
   document.getElementById("filterMediumCount")?.replaceChildren(String(mediumFindings.length));
-  document.getElementById("filterUsbCount")?.replaceChildren(String(disconnectedUsb));
+  document.getElementById("filterUsbCount")?.replaceChildren(String(usbStorageDevices.length));
   document.getElementById("filterSerialCount")?.replaceChildren(String(countFor("serialDevices", arrays.serialDevices)));
   document.getElementById("filterInventoryCount")?.replaceChildren(String(informationalCount));
 
@@ -2130,40 +2170,37 @@ async function openReport(id, options = {}) {
     )
   );
 
-  const usbTotal =
-    collectionCount("usbCurrent", arrays.usbCurrent) +
-    collectionCount("usbHistory", arrays.usbHistory);
+  const usbTotal = usbStorageDevices.length;
   document.getElementById("filterUsbCount")?.replaceChildren(String(usbTotal));
   lightRows(
     "deviceOverviewList",
-    [...arrays.usbCurrent, ...arrays.usbHistory],
-    "Nenhum dispositivo USB encontrado.",
+    usbStorageDevices,
+    "Nenhum pendrive foi encontrado.",
     (item) => simpleFinding(
-      item.friendlyName || item.name || "Dispositivo USB",
-      item.deviceId || item.instanceId || item.serialNumber || "—",
+      item.friendlyName || item.name || item.deviceDescription || "Pendrive / armazenamento USB",
+      item.instanceId || item.pnpDeviceId || item.deviceId || item.serialNumber || "—",
       item.present === false ? "Desconectado" : "Presente na coleta"
     )
   );
-  lightRows(
-    "connectedUsbFilesList",
-    arrays.usbFiles,
-    "Nenhum arquivo de pendrive conectado foi coletado.",
-    (item) => simpleFinding(
-      item.name || "Arquivo USB",
-      item.path || item.fullPath || "—",
-      item.lastWriteUtc || ""
-    )
-  );
-  lightRows(
-    "disconnectedUsbList",
-    arrays.usbHistory.filter((item) => item.present === false),
-    "Nenhum pendrive desconectado encontrado.",
-    (item) => simpleFinding(
-      item.friendlyName || "USB desconectado",
-      item.deviceId || item.instanceId || "—",
-      item.lastSeenUtc || ""
-    )
-  );
+  const lightUsbExecutionEvidenceList = document.getElementById("usbExecutionEvidenceList");
+  if (lightUsbExecutionEvidenceList) {
+    lightUsbExecutionEvidenceList.innerHTML = usbExecutedExes.length
+      ? usbExecutedExes.map((item) => `
+          <article class="finding severity-card critical">
+            <div class="finding-head">
+              <h4>${escapeHtml(item.name || "Executável em pendrive")}</h4>
+              <span class="tag critical">CRÍTICO · EXECUTADO NO PENDRIVE</span>
+            </div>
+            <code>${escapeHtml(item.path || "—")}</code>
+            <div class="kv"><span>Fonte da execução</span><span>${escapeHtml(item.source || "—")}</span></div>
+            <div class="kv"><span>Última execução</span><span>${escapeHtml(formatDate(item.timeUtc))}</span></div>
+            ${Number(item.runCount || 0) > 0
+              ? '<div class="kv"><span>Execuções registradas</span><span>' + escapeHtml(String(item.runCount)) + '</span></div>'
+              : ""}
+          </article>
+        `).join("")
+      : '<div class="message ok">Nenhum EXE executado em pendrive foi encontrado.</div>';
+  }
 
   const serialTotal =
     collectionCount("serialDevices", arrays.serialDevices);
