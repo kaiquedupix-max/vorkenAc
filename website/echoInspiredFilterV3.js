@@ -1121,9 +1121,9 @@ export async function runDetectionEngineV4({
                 knownMatch.entry?.confidence || "confirmed"
             },
             priorityMaximum:
-              evidence?.executionConfirmed === true,
+              true,
             protectedByTechnicalEngine:
-              evidence?.executionConfirmed === true
+              true
           };
         }
 

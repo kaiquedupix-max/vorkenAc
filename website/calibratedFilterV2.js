@@ -980,7 +980,10 @@ export async function runCalibratedFilterV2({
     new Set([
       ...executionIndex.keys(),
       ...deletedIndex.keys(),
-      ...peIndex.keys()
+      ...peIndex.keys(),
+      ...safeArray(report?.files)
+        .map((item) => baseName(item?.path || item?.name))
+        .filter((name) => /\.exe$/i.test(name))
     ]);
 
   // 1. Executable correlation. Presence alone is not guilt.
@@ -1186,23 +1189,22 @@ export async function runCalibratedFilterV2({
     const behavioralUnknownLoader =
       unknownLoaderAssessment.critical;
 
-    if (
-      knownCheatExecutableMatch.matched === true &&
-      executed
-    ) {
+    if (knownCheatExecutableMatch.matched === true) {
       severity = "critical";
-      title =
-        "PRIORIDADE MÁXIMA: executável confirmado no catálogo com execução";
-      reason =
-        "Nome exato ou SHA-256 corresponde ao catálogo confirmado de executáveis de cheat e há evidência histórica de execução. A sessão atual do Rust não é necessária para preservar esse fato.";
-    } else if (
-      knownCheatExecutableMatch.matched === true
-    ) {
-      severity = "medium";
-      title =
-        "Executável confirmado no catálogo sem execução comprovada";
-      reason =
-        "Nome exato ou SHA-256 corresponde ao catálogo confirmado, mas os artefatos disponíveis não comprovam execução. Mantido para revisão sem afirmar uso.";
+      title = executed
+        ? "PRIORIDADE MÁXIMA: executável confirmado no catálogo com execução"
+        : "ARQUIVO SUSPEITO ENCONTRADO: executável confirmado no catálogo";
+      reason = executed
+        ? "Nome exato ou SHA-256 corresponde ao catálogo confirmado de executáveis de cheat e há evidência histórica de execução."
+        : "Nome exato, SHA-256 ou assinatura técnica corresponde ao catálogo confirmado. Pela política Vorken, a presença desse arquivo é crítica mesmo sem execução comprovada.";
+    } else if (catalogMatches.length > 0) {
+      severity = "critical";
+      title = executed
+        ? "PRIORIDADE MÁXIMA: executável do catálogo com execução confirmada"
+        : "ARQUIVO SUSPEITO ENCONTRADO: executável correspondente ao catálogo";
+      reason = executed
+        ? "O executável corresponde diretamente ao catálogo de ameaça e possui evidência de execução."
+        : "O executável corresponde diretamente ao catálogo de ameaça. A presença confirmada é classificada como crítica mesmo sem evidência de execução.";
     } else if (explicitCheatExecutable) {
       severity = "critical";
       title =
@@ -1285,25 +1287,6 @@ export async function runCalibratedFilterV2({
       reason =
         "O executável foi executado e contém múltiplas APIs clássicas de injeção, mas a execução não foi associada à instância atual do Rust.";
     } else if (
-      catalogMatches.length > 0 &&
-      executed &&
-      executionScope.inSession
-    ) {
-      severity = "critical";
-      title =
-        "IN-SESSION: executável do catálogo com execução confirmada";
-      reason =
-        "O executável corresponde ao catálogo de ameaça e foi executado durante a instância atual do Rust.";
-    } else if (
-      catalogMatches.length > 0 &&
-      executed
-    ) {
-      severity = "medium";
-      title =
-        "OUT-OF-SESSION: executável do catálogo com execução confirmada";
-      reason =
-        "O executável corresponde ao catálogo e possui evidência de execução, mas não durante a instância atual do Rust.";
-    } else if (
       inputSignal &&
       executed &&
       (
@@ -1339,14 +1322,6 @@ export async function runCalibratedFilterV2({
         "Capacidade de injeção sem execução comprovada (inventário)";
       reason =
         "Foram encontradas múltiplas APIs de injeção, mas sem execução comprovada isso permanece apenas como inventário técnico.";
-    } else if (
-      catalogMatches.length > 0
-    ) {
-      severity = "medium";
-      title =
-        "Executável correspondente ao catálogo";
-      reason =
-        "O arquivo corresponde ao catálogo, mas não há evidência suficiente de execução nesta análise.";
     } else if (
       inputSignal &&
       executed

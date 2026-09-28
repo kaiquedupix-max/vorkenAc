@@ -135,6 +135,57 @@ test("executed exact cheat executable catalog match is critical historically", a
   assert.equal(executable.evidence.knownCheatExecutable, true);
 });
 
+test("confirmed suspicious executable is critical even without execution", async () => {
+  const confirmedHash = "a".repeat(64);
+  const findings = await collect(
+    {
+      collectedAtUtc: "2026-09-26T12:00:00Z",
+      files: [{
+        name: "confirmed-loader.exe",
+        path: "C:\\Users\\Player\\Downloads\\confirmed-loader.exe",
+        sha256: confirmedHash,
+        signed: false
+      }]
+    },
+    {
+      knownCheatExecutableMatch: (_value, evidence) => ({
+        matched: evidence?.sha256 === confirmedHash,
+        matchedBy: "sha256",
+        entry: {
+          name: "confirmed-loader.exe",
+          label: "Confirmed loader",
+          confidence: "confirmed"
+        }
+      })
+    }
+  );
+
+  const executable = findings.find((item) =>
+    item.artifactType === "correlated_executable_v2"
+  );
+  assert.ok(executable);
+  assert.equal(executable.severity, "critical");
+  assert.equal(executable.evidence.executionConfirmed, false);
+  assert.equal(executable.evidence.protectedByTechnicalEngine, true);
+  assert.match(executable.title, /ARQUIVO SUSPEITO ENCONTRADO/i);
+});
+
+test("heuristic-only unexecuted filename does not become a false critical", async () => {
+  const findings = await collect({
+    collectedAtUtc: "2026-09-26T12:00:00Z",
+    files: [{
+      name: "AbC9xQ2LmN7.exe",
+      path: "C:\\Users\\Player\\Downloads\\AbC9xQ2LmN7.exe",
+      signed: false
+    }]
+  });
+
+  assert.equal(findings.some((item) =>
+    item.artifactType === "correlated_executable_v2" &&
+    item.severity === "critical"
+  ), false);
+});
+
 test("missing executable without an independent risk signal is inventory only", async () => {
   const findings = await collect({
     collectedAtUtc: "2026-09-26T12:00:00Z",
