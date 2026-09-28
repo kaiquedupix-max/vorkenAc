@@ -109,11 +109,31 @@ jobs:
 
           gh release view $tag --repo $repo *> $null
           if ($LASTEXITCODE -eq 0) {
-            gh release upload $tag .\publish\Vorken.Agent.exe .\publish\SHA256SUMS.txt .\publish-admin\Vorken.RemoteAdmin.exe .\publish-admin\REMOTE_ADMIN_SHA256SUMS.txt --repo $repo --clobber
             gh release edit $tag --repo $repo --title "Vorken · latest" --notes "Build automático do agente e do aplicativo administrativo a partir do commit $shortSha."
           } else {
             $global:LASTEXITCODE = 0
-            gh release create $tag .\publish\Vorken.Agent.exe .\publish\SHA256SUMS.txt .\publish-admin\Vorken.RemoteAdmin.exe .\publish-admin\REMOTE_ADMIN_SHA256SUMS.txt --repo $repo --target "${{ github.sha }}" --title "Vorken · latest" --notes "Build automático do agente e do aplicativo administrativo a partir do commit $shortSha." --latest=false
+            gh release create $tag --repo $repo --target "${{ github.sha }}" --title "Vorken · latest" --notes "Build automático do agente e do aplicativo administrativo a partir do commit $shortSha." --latest=false
+          }
+
+          $assets = @(
+            ".\publish\Vorken.Agent.exe",
+            ".\publish\SHA256SUMS.txt",
+            ".\publish-admin\Vorken.RemoteAdmin.exe",
+            ".\publish-admin\REMOTE_ADMIN_SHA256SUMS.txt"
+          )
+
+          foreach ($asset in $assets) {
+            gh release upload $tag $asset --repo $repo --clobber
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to publish release asset: $asset"
+            }
+          }
+
+          $publishedAssets = @(gh release view $tag --repo $repo --json assets --jq '.assets[].name')
+          foreach ($expectedAsset in @("Vorken.Agent.exe", "SHA256SUMS.txt", "Vorken.RemoteAdmin.exe", "REMOTE_ADMIN_SHA256SUMS.txt")) {
+            if ($publishedAssets -notcontains $expectedAsset) {
+              throw "Release asset was not published: $expectedAsset"
+            }
           }
 
           Write-Host "Automatic agent release updated: https://github.com/$repo/releases/tag/$tag"
