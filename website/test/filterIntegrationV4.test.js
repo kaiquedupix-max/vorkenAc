@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { runCalibratedFilterV2 } from "../calibratedFilterV2.js";
 import { catalogWebTargetMatch } from "../detectionPolicyV4.js";
+import { runDetectionEngineV4 } from "../echoInspiredFilterV3.js";
 
 function helpers() {
   return {
@@ -45,6 +46,19 @@ async function collect(report, helperOverrides = {}) {
       artifactValue,
       evidence
     })
+  });
+  return findings;
+}
+
+async function collectFinal(report, helperOverrides = {}) {
+  const findings = [];
+  await runDetectionEngineV4({
+    analysisId: 1,
+    report,
+    helpers: { ...helpers(), ...helperOverrides },
+    insertFinding: async (
+      analysisId, title, severity, artifactType, artifactValue, evidence
+    ) => findings.push({ analysisId, title, severity, artifactType, artifactValue, evidence }),
   });
   return findings;
 }
@@ -314,4 +328,61 @@ test("detached USB Prefetch remains critical when correlated with disconnect his
   assert.ok(executable);
   assert.equal(executable.severity, "critical");
   assert.match(executable.title, /EXECUTADO DENTRO DE PENDRIVE/i);
+});
+
+test("SIGN.MEDIA execution is recognized as critical removable-media evidence", async () => {
+  const findings = await collectFinal({
+    collectedAtUtc: "2026-09-26T12:00:00Z",
+    shimCache: [{
+      path: "SIGN.MEDIA=A91F20CC QmT7vLpX9.exe",
+      executed: "Yes",
+      filePresent: false
+    }]
+  });
+
+  const executable = findings.find((item) =>
+    item.artifactType === "correlated_executable_v2"
+  );
+  assert.ok(executable);
+  assert.equal(executable.severity, "critical");
+  assert.equal(executable.evidence.usbExecution, true);
+  assert.match(executable.title, /PENDRIVE/i);
+});
+
+test("missing executed game development build is critical", async () => {
+  const findings = await collectFinal({
+    collectedAtUtc: "2026-09-26T12:00:00Z",
+    prefetchExecutions: [{
+      executableName: "RenamedPayload.exe",
+      resolvedExecutablePath: "C:\\Users\\Player\\Desktop\\cs2\\bin\\Debug\\net10.0-windows7.0\\RenamedPayload.exe",
+      executablePresent: false,
+      lastRunUtc: "2026-09-25T11:00:00Z"
+    }]
+  });
+
+  const executable = findings.find((item) =>
+    item.artifactType === "correlated_executable_v2"
+  );
+  assert.ok(executable);
+  assert.equal(executable.severity, "critical");
+  assert.equal(executable.evidence.gameTargetedDevelopmentOutput, true);
+});
+
+test("generic missing Desktop executable is review instead of inventory", async () => {
+  const findings = await collectFinal({
+    collectedAtUtc: "2026-09-26T12:00:00Z",
+    prefetchExecutions: [{
+      executableName: "Anything.exe",
+      resolvedExecutablePath: "C:\\Users\\Player\\Desktop\\Anything.exe",
+      executablePresent: false,
+      lastRunUtc: "2026-09-25T11:00:00Z"
+    }]
+  });
+
+  const executable = findings.find((item) =>
+    item.artifactType === "correlated_executable_v2"
+  );
+  assert.ok(executable);
+  assert.equal(executable.severity, "medium");
+  assert.match(executable.title, /pasta de usuário/i);
 });

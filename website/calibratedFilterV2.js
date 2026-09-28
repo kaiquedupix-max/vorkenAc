@@ -217,6 +217,20 @@ function suspiciousUserPath(value) {
   );
 }
 
+function signMediaExecution(value) {
+  return /(^|[\\/])?sign\.media=[a-f0-9]+\s+.+\.exe(?:$|[?#])/i
+    .test(String(value || "").trim());
+}
+
+function gameTargetedDevelopmentOutput(value) {
+  const path = normalizePath(value);
+  return (
+    /\\(?:cs2|counter[- ]?strike(?: 2)?|rust)\\/.test(path) &&
+    /\\bin\\(?:x64\\|x86\\)?(?:debug|release)\\/.test(path) &&
+    /\.exe$/.test(path)
+  );
+}
+
 function isKnownVersionedOneDriveComponent(value) {
   const p = normalizePath(value);
 
@@ -558,6 +572,14 @@ function buildExecutionIndex(report) {
 
     const entry = byName.get(name);
     const normalized = normalizePath(rawPath);
+    const signMedia = signMediaExecution(rawPath);
+    const effectiveUsb = signMedia
+      ? {
+          confirmed: true,
+          reason: "windows_sign_media_external_execution",
+          device: null
+        }
+      : details.usb;
 
     if (normalized)
       entry.paths.add(normalized);
@@ -566,15 +588,16 @@ function buildExecutionIndex(report) {
     entry.sources.push({
       source,
       path: rawPath,
-      ...details
+      ...details,
+      usb: effectiveUsb
     });
 
     if (details.missing === true)
       entry.missing = true;
 
-    if (details.usb?.confirmed === true) {
+    if (effectiveUsb?.confirmed === true) {
       entry.usbConfirmed = true;
-      entry.usbContext = details.usb;
+      entry.usbContext = effectiveUsb;
     }
   };
 
@@ -1079,6 +1102,12 @@ export async function runCalibratedFilterV2({
     const genericInstaller =
       isGenericInstaller(representative);
 
+    const gameDevelopmentOutput =
+      gameTargetedDevelopmentOutput(representative) ||
+      execution.sources.some((source) =>
+        gameTargetedDevelopmentOutput(source?.path)
+      );
+
     const knownVersionedOneDriveComponent =
       isKnownVersionedOneDriveComponent(
         representative
@@ -1237,6 +1266,16 @@ export async function runCalibratedFilterV2({
     } else if (
       executed &&
       deletedOrMissing &&
+      gameDevelopmentOutput
+    ) {
+      severity = "critical";
+      title =
+        "PRIORIDADE MÁXIMA: executável ausente em build direcionada ao jogo";
+      reason =
+        "O executável foi rodado a partir de uma saída Debug/Release dentro de projeto explicitamente associado ao jogo e depois deixou de estar presente. A combinação é tratada como evidência crítica.";
+    } else if (
+      executed &&
+      deletedOrMissing &&
       !genericInstaller &&
       (
         strongInjection ||
@@ -1345,14 +1384,18 @@ export async function runCalibratedFilterV2({
       executed &&
       deletedOrMissing
     ) {
-      severity = "info";
-      title =
-        genericInstaller
-          ? "Instalador/updater ausente após execução (inventário)"
+      severity = genericInstaller || !suspiciousPath
+        ? "info"
+        : "medium";
+      title = genericInstaller
+        ? "Instalador/updater ausente após execução (inventário)"
+        : suspiciousPath
+          ? "Executável de pasta de usuário ausente após execução"
           : "Executável ausente após execução (inventário)";
-      reason =
-        genericInstaller
-          ? "Instaladores e atualizadores podem remover a si próprios legitimamente; sem outro sinal técnico, o registro não exige revisão."
+      reason = genericInstaller
+        ? "Instaladores e atualizadores podem remover a si próprios legitimamente; sem outro sinal técnico, o registro não exige revisão."
+        : suspiciousPath
+          ? "O executável foi rodado a partir de Desktop, Downloads ou pasta temporária e depois deixou de estar presente. Sem assinatura técnica adicional permanece em revisão laranja."
           : "Execução seguida de ausência, isoladamente e sem outro sinal técnico forte, não exige revisão administrativa.";
     }
 
@@ -1419,6 +1462,8 @@ export async function runCalibratedFilterV2({
           pe?.signed,
         suspiciousPath,
         genericInstaller,
+        gameTargetedDevelopmentOutput:
+          gameDevelopmentOutput,
         highRiskName,
         explicitCheatExecutable,
         randomLoaderName,

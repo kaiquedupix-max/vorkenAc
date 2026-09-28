@@ -328,7 +328,9 @@ function adjustExecutableSeverity(
     (
       knownCheatExecutable ||
       explicitCheatExecutable ||
-      behavioralUnknownLoader
+      behavioralUnknownLoader ||
+      evidence?.usbExecution === true ||
+      evidence?.gameTargetedDevelopmentOutput === true
     );
 
   if (protectedExecutedThreat) {
@@ -337,7 +339,11 @@ function adjustExecutableSeverity(
         ? "CHEAT CONHECIDO · "
         : explicitCheatExecutable
           ? "CHEAT/INJECTOR EXECUTADO · "
-          : "LOADER SUSPEITO EXECUTADO · ";
+          : evidence?.usbExecution === true
+            ? "EXECUÇÃO EM PENDRIVE · "
+            : evidence?.gameTargetedDevelopmentOutput === true
+              ? "BUILD DIRECIONADA AO JOGO · "
+              : "LOADER SUSPEITO EXECUTADO · ";
 
     return {
       severity: "critical",
@@ -376,7 +382,9 @@ function adjustExecutableSeverity(
         ) ||
         explicitCheatExecutable ||
         behavioralUnknownLoader ||
-        knownCheatExecutable;
+        knownCheatExecutable ||
+        evidence?.usbExecution === true ||
+        evidence?.gameTargetedDevelopmentOutput === true;
 
       if (!exceptionallyStrong) {
         nextSeverity = "medium";

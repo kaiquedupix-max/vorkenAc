@@ -275,7 +275,7 @@ function knownCheatExecutableMatch(
   ].filter(Boolean);
 
   for (const candidate of candidates) {
-    const normalized =
+    const normalizedLeaf =
       String(candidate || "")
         .replaceAll("/", "\\")
         .split("\\")
@@ -283,6 +283,10 @@ function knownCheatExecutableMatch(
         .at(-1)
         ?.replace(/[?#].*$/, "")
         .toLowerCase() || "";
+
+    const normalized = normalizedLeaf
+      .replace(/^sign\.media=[a-f0-9]+\s+/i, "")
+      .trim();
 
     const direct =
       knownCheatExecutables.byName.get(
@@ -8867,6 +8871,10 @@ function compactUsbExecutionEvidence(payload) {
   const isExePath = (...values) =>
     values.some((value) => /\.exe(?:$|[?#])/i.test(String(value || "").trim()));
 
+  const isSignMediaPath = (value) =>
+    /(^|[\\/])?sign\.media=[a-f0-9]+\s+.+\.exe(?:$|[?#])/i
+      .test(String(value || "").trim());
+
   const add = (row) => {
     const path = String(row.path || row.name || "").trim();
     if (!path)
@@ -8946,7 +8954,8 @@ function compactUsbExecutionEvidence(payload) {
     const path = item?.processPath || item?.processName || "";
     const removable =
       String(item?.driveType || "").toLowerCase() === "removable" ||
-      pathOnCurrentRemovableDrive(path);
+      pathOnCurrentRemovableDrive(path) ||
+      isSignMediaPath(path);
 
     if (!removable)
       continue;
@@ -8981,7 +8990,8 @@ function compactUsbExecutionEvidence(payload) {
   for (const item of Array.isArray(payload?.shimCache) ? payload.shimCache : []) {
     const path = item?.path || "";
     const executed =
-      String(item?.executed || "").toLowerCase() === "true";
+      item?.executed === true ||
+      ["true", "yes"].includes(String(item?.executed || "").toLowerCase());
 
     const removable =
       String(item?.driveType || "").toLowerCase() === "removable" ||
@@ -8997,7 +9007,9 @@ function compactUsbExecutionEvidence(payload) {
       timeUtc: item?.lastModifiedUtc || null,
       removableConfirmed: true,
       isExe: isExePath(path),
-      detail: "ShimCache marca o arquivo como executado em unidade removível."
+      detail: isSignMediaPath(path)
+        ? "O marcador SIGN.MEDIA do Windows confirma execução a partir de mídia externa/removível."
+        : "ShimCache marca o arquivo como executado em unidade removível."
     });
   }
 
