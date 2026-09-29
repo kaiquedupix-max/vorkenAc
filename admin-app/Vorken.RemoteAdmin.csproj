@@ -8,16 +8,20 @@
     <Nullable>enable</Nullable>
     <AssemblyName>Vorken.RemoteAdmin</AssemblyName>
     <RootNamespace>Vorken.RemoteAdmin</RootNamespace>
-    <Version>1.0.2</Version>
+    <Version>1.0.3</Version>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <Title>Vorken Administração Remota</Title>
     <Product>Vorken Remote Support</Product>
     <Company>Vorken</Company>
-    <AssemblyVersion>1.0.2.0</AssemblyVersion>
-    <FileVersion>1.0.2.0</FileVersion>
-    <InformationalVersion>1.0.2</InformationalVersion>
+    <Authors>Vorken contributors</Authors>
+    <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/kaiquedupix-max/vorkenAc</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <AssemblyVersion>1.0.3.0</AssemblyVersion>
+    <FileVersion>1.0.3.0</FileVersion>
+    <InformationalVersion>1.0.3</InformationalVersion>
     <ApplicationIcon>..\agent\assets\vorken.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>

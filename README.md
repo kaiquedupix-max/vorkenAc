@@ -2,6 +2,17 @@
 
 Vorken is a consent-based Windows forensic scanner for competitive game-server investigations.
 
+Vorken is free and open-source software licensed under
+[GNU AGPL v3.0 only](LICENSE). Modified deployments must provide their
+corresponding source under the same license. The Vorken name and visual identity
+are governed separately by the [trademark policy](TRADEMARKS.md).
+
+- [Privacy policy](docs/PRIVACY.md)
+- [Security policy](SECURITY.md)
+- [Contributing](CONTRIBUTING.md)
+- [Third-party notices](THIRD_PARTY_NOTICES.md)
+- [SignPath setup](docs/SIGNPATH_SETUP.md)
+
 ## Vorken Agent 1.0
 
 The public analysis page downloads a **single Windows EXE**. The analysis token is encoded in the downloaded filename, so there is no ZIP and no sidecar configuration file to extract.
@@ -88,7 +99,27 @@ The production root Dockerfile builds the Windows agent and places it at the con
 
 Every direct download exposes the SHA-256 of the exact executable on the analysis page and through the `X-Vorken-SHA256` response header.
 
-The GitHub Actions workflow supports optional Authenticode signing with these repository secrets:
+The preferred signing route is the free Open Source program provided by
+SignPath. See the complete [Code signing policy](docs/CODE_SIGNING_POLICY.md).
+
+Free code signing provided by SignPath.io, certificate by SignPath Foundation.
+
+After SignPath approves the project, configure these GitHub repository secrets:
+
+```text
+SIGNPATH_API_TOKEN
+SIGNPATH_ORGANIZATION_ID
+SIGNPATH_PROJECT_SLUG
+SIGNPATH_SIGNING_POLICY_SLUG
+SIGNPATH_ARTIFACT_CONFIGURATION_SLUG
+```
+
+Each production signing request requires manual approval in SignPath. The
+workflow uploads the unsigned GitHub build, waits for the approved signed
+artifact, validates its Authenticode signature, generates its checksum, and only
+then publishes it.
+
+The workflow also retains an optional certificate-owned fallback using:
 
 ```text
 VORKEN_SIGNING_PFX_BASE64
@@ -96,6 +127,16 @@ VORKEN_SIGNING_PFX_PASSWORD
 ```
 
 The PFX must contain a valid Windows code-signing certificate. Without a trusted code-signing certificate, Windows SmartScreen or antivirus products may still warn about a newly distributed executable even when the build is legitimate. Product metadata and a checksum improve verification but do not replace code-signing reputation.
+
+### Open-source governance
+
+- Project license: `AGPL-3.0-only`.
+- Official branding is not licensed for modified builds; see
+  [TRADEMARKS.md](TRADEMARKS.md).
+- Vulnerabilities must be reported privately according to
+  [SECURITY.md](SECURITY.md).
+- Real player reports, access tokens, credentials, proprietary signatures, and
+  commercial detection databases must never be committed.
 
 ## Detection philosophy
 

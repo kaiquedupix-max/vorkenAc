@@ -15,47 +15,6 @@ internal sealed class AgentMainForm : Form
     private const uint SndNodefault = 0x0002;
     private const uint SndAlias = 0x00010000;
 
-    private const string TermsContent = """
-TERMOS DE USO E CONSENTIMENTO — VORKEN ANTI-CHEAT
-
-Última atualização: setembro de 2026
-
-1. FINALIDADE DA ANÁLISE
-O Vorken realiza uma verificação técnica sob demanda para apoiar a revisão de integridade em ambientes de jogos competitivos. O aplicativo coleta e correlaciona evidências técnicas; ele não substitui a decisão humana da administração.
-
-2. DADOS TÉCNICOS ANALISADOS
-Durante a sessão, o Vorken pode examinar processos e módulos em execução, serviços e drivers, histórico de execução do Windows (incluindo Prefetch, BAM, Amcache, ShimCache e UserAssist), eventos do sistema, integridade de boot, dispositivos USB e seriais, arquivos executáveis e compactados relevantes, histórico técnico de downloads, sinais do Microsoft Defender e artefatos necessários para construir uma linha do tempo da análise.
-
-3. DADOS QUE NÃO FAZEM PARTE DA COLETA
-O Vorken não foi projetado para coletar senhas, cookies de autenticação, conteúdo de mensagens, fotografias, vídeos, documentos pessoais ou o conteúdo privado de contas. A análise deve permanecer limitada aos indicadores técnicos descritos nestes termos.
-
-4. PROCESSAMENTO E ENVIO
-Os resultados técnicos podem ser enviados ao servidor Vorken associado à verificação para classificação automática e revisão administrativa. O relatório pode conter nomes e caminhos de arquivos, hashes, horários, metadados de execução, dispositivos detectados e evidências correlacionadas.
-
-5. CLASSIFICAÇÃO E REVISÃO HUMANA
-As cores e níveis apresentados pelo Vorken indicam prioridade de revisão. Um alerta, isoladamente, não representa decisão definitiva. Evidências críticas devem possuir correlação técnica forte; sinais contextuais são mantidos para revisão ou inventário.
-
-6. CONSENTIMENTO
-Ao aceitar, você declara que leu este texto, compreendeu o escopo da análise e autoriza a execução desta verificação técnica no computador atual. A análise somente começará quando você pressionar o botão de início na tela seguinte.
-
-7. TRANSPARÊNCIA DURANTE A SESSÃO
-O aplicativo exibirá o andamento da coleta e permanecerá aberto até a conclusão. Não feche a janela durante o processo, pois isso pode interromper a análise e gerar um resultado incompleto.
-
-7.1 SUPORTE REMOTO OPCIONAL
-O suporte remoto não começa junto com a análise. Cada sessão exige que você escolha um administrador, selecione entre somente tela ou tela com controle e confirme novamente a autorização. A tela pode exibir conteúdo pessoal que esteja aberto no computador; feche-o antes de transmitir. O Vorken não habilita transferência de arquivos, área de transferência ou acesso após o encerramento, e exibe um botão visível para parar a sessão imediatamente.
-
-8. RESPONSABILIDADE E CONTESTAÇÃO
-A decisão administrativa deve considerar o conjunto das evidências e o contexto da sessão. Caso você discorde do resultado, solicite à administração a revisão do relatório e das evidências utilizadas.
-
-9. PRIVACIDADE
-Mais informações estão disponíveis na Política de Privacidade oficial. Os links para os documentos oficiais permanecem acessíveis nesta tela e nas configurações do aplicativo.
-
-10. ACEITE
-Role até o final deste documento. O botão de aceite será liberado somente após a leitura integral ter sido disponibilizada na tela.
-
-FIM DOS TERMOS
-""";
-
     private readonly string[] _args;
     private readonly AnimatedSurface _surface = new();
     private readonly Panel _header = new();

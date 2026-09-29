@@ -2,6 +2,13 @@
   "name": "vorken-anticheat-web",
   "version": "0.1.0",
   "private": true,
+  "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kaiquedupix-max/vorkenAc.git"
+  },
+  "bugs": "https://github.com/kaiquedupix-max/vorkenAc/issues",
+  "homepage": "https://vorkenac.guerrafriarust.com.br",
   "type": "module",
   "scripts": {
     "start": "node server.js",

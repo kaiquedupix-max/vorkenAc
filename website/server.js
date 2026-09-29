@@ -10751,6 +10751,14 @@ app.get("/admin", (_req, res) => {
   res.sendFile(path.join(__dirname, "public", "admin.html"));
 });
 
+app.get("/privacy", (_req, res) => {
+  res.sendFile(path.join(__dirname, "public", "privacy.html"));
+});
+
+app.get("/terms", (_req, res) => {
+  res.sendFile(path.join(__dirname, "public", "terms.html"));
+});
+
 app.get("/a/:token", (_req, res) => {
   res.sendFile(path.join(__dirname, "public", "analysis.html"));
 });

@@ -8,7 +8,7 @@
     <Nullable>enable</Nullable>
     <AssemblyName>Vorken.Agent</AssemblyName>
     <RootNamespace>Vorken.Agent</RootNamespace>
-    <Version>1.0.28</Version>
+    <Version>1.0.29</Version>
     <PublishSingleFile>true</PublishSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <SelfContained>true</SelfContained>
@@ -18,11 +18,15 @@
     <Title>Vorken AntiCheat</Title>
     <Product>Vorken AntiCheat</Product>
     <Company>Vorken</Company>
+    <Authors>Vorken contributors</Authors>
+    <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/kaiquedupix-max/vorkenAc</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
     <Description>Consent-based defensive forensic scanner for competitive game investigations.</Description>
     <Copyright>Copyright © Vorken 2026</Copyright>
-    <AssemblyVersion>1.0.28.0</AssemblyVersion>
-    <FileVersion>1.0.28.0</FileVersion>
-    <InformationalVersion>1.0.28</InformationalVersion>
+    <AssemblyVersion>1.0.29.0</AssemblyVersion>
+    <FileVersion>1.0.29.0</FileVersion>
+    <InformationalVersion>1.0.29</InformationalVersion>
     <Deterministic>true</Deterministic>
   </PropertyGroup>
 

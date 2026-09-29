@@ -98,7 +98,10 @@ A decisão administrativa deve considerar o conjunto das evidências e o context
 9. PRIVACIDADE
 Mais informações estão disponíveis na Política de Privacidade oficial. Os links para os documentos oficiais permanecem acessíveis nesta tela e nas configurações do aplicativo.
 
-10. ACEITE
+10. SOFTWARE LIVRE E CÓDIGO-FONTE
+O Vorken é software livre licenciado sob GNU AGPL v3.0 only. O código-fonte correspondente e a licença estão disponíveis em https://github.com/kaiquedupix-max/vorkenAc. Builds modificadas não podem se apresentar como versões oficiais do Vorken.
+
+11. ACEITE
 Role até o final deste documento. O botão de aceite será liberado somente após a leitura integral ter sido disponibilizada na tela.
 
 FIM DOS TERMOS
@@ -139,7 +142,10 @@ La decisión administrativa debe considerar el conjunto de evidencias y el conte
 9. PRIVACIDAD
 Hay más información en la Política de Privacidad oficial. Los enlaces a los documentos oficiales permanecen disponibles en esta pantalla y en la configuración.
 
-10. ACEPTACIÓN
+10. SOFTWARE LIBRE Y CÓDIGO FUENTE
+Vorken es software libre bajo la licencia GNU AGPL v3.0 only. El código fuente correspondiente y la licencia están disponibles en https://github.com/kaiquedupix-max/vorkenAc. Las compilaciones modificadas no pueden presentarse como versiones oficiales de Vorken.
+
+11. ACEPTACIÓN
 Desplácese hasta el final de este documento. El botón de aceptación solo se habilitará después de mostrar la lectura completa.
 
 FIN DE LOS TÉRMINOS
@@ -180,7 +186,10 @@ The administrative decision must consider all evidence and the session context. 
 9. PRIVACY
 More information is available in the official Privacy Policy. Links to the official documents remain available on this screen and in the application settings.
 
-10. ACCEPTANCE
+10. FREE SOFTWARE AND SOURCE CODE
+Vorken is free software licensed under GNU AGPL v3.0 only. The corresponding source code and license are available at https://github.com/kaiquedupix-max/vorkenAc. Modified builds may not present themselves as official Vorken releases.
+
+11. ACCEPTANCE
 Scroll to the end of this document. The acceptance button will only be enabled after the complete text has been displayed.
 
 END OF TERMS
