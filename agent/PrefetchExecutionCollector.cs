@@ -125,12 +125,13 @@ internal static class PrefetchExecutionCollector
                                 StringComparison.OrdinalIgnoreCase)
                     );
 
+                // Um volume ausente/não montado também pode ser ISO, VHD,
+                // partição de recuperação ou mídia de instalação do Windows.
+                // Só afirmamos mídia removível quando o Windows confirma o
+                // DriveType atual. O restante permanece como contexto técnico.
                 bool likelyDetachedOrRemovable =
                     !nativeLooksLikeWindowsSystemPath &&
-                    (
-                        currentRemovable ||
-                        (volumeNotMounted && nonSystemVolume)
-                    );
+                    currentRemovable;
 
                 result.Add(new PrefetchExecutionRecord
                 {

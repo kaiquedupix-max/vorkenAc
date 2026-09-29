@@ -471,18 +471,6 @@ function inputApis(item) {
   );
 }
 
-function buildRecentUsb(report) {
-  return safeArray(report?.usbHistory)
-    .filter((item) => item?.present === false)
-    .map((item) => ({
-      item,
-      when:
-        validDateMs(item?.lastDisconnectedUtc) ||
-        validDateMs(item?.lastConnectedUtc)
-    }))
-    .filter((entry) => entry.when > 0);
-}
-
 function buildRemovableDrivePrefixes(report) {
   const prefixes = new Set();
   const remember = (value) => {
@@ -515,7 +503,7 @@ function pathOnRemovableDrive(value, removableDrives) {
   return Boolean(match && removableDrives.has(match[1].toLowerCase()));
 }
 
-function usbCorrelatesExecution(execution, recentUsb, removableDrives = new Set()) {
+function usbCorrelatesExecution(execution, removableDrives = new Set()) {
   const executionPaths = [
     execution?.resolvedExecutablePath,
     execution?.nativeExecutablePath,
@@ -554,41 +542,18 @@ function usbCorrelatesExecution(execution, recentUsb, removableDrives = new Set(
     };
   }
 
-  const runMs =
-    validDateMs(execution?.lastRunUtc);
-
-  if (!runMs) {
-    return {
-      confirmed: false,
-      reason: "detached_without_time",
-      device: null
-    };
-  }
-
-  const match =
-    recentUsb
-      .map((entry) => ({
-        ...entry,
-        delta: Math.abs(entry.when - runMs)
-      }))
-      .filter((entry) =>
-        runMs <= entry.when + 15 * 60 * 1000 &&
-        runMs >= entry.when - 24 * 60 * 60 * 1000
-      )
-      .sort((a, b) => a.delta - b.delta)[0];
-
+  // Proximidade de horário com qualquer USB desconectado não identifica o
+  // volume do Prefetch. O volume ausente pode ser ISO, VHD, recuperação ou
+  // mídia de instalação; sem identidade exata ele não é prova de pendrive.
   return {
-    confirmed: Boolean(match),
-    reason: match
-      ? "detached_correlated_usb"
-      : "detached_unconfirmed",
-    device: match?.item || null
+    confirmed: false,
+    reason: "detached_volume_unconfirmed",
+    device: null
   };
 }
 
 function buildExecutionIndex(report) {
   const byName = new Map();
-  const recentUsb = buildRecentUsb(report);
   const removableDrives = buildRemovableDrivePrefixes(report);
 
   const remember = (
@@ -674,7 +639,6 @@ function buildExecutionIndex(report) {
         usb:
           usbCorrelatesExecution(
             item,
-            recentUsb,
             removableDrives
           ),
         raw: item

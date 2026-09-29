@@ -5672,46 +5672,6 @@ async function addBuiltInReviewFindings(analysisId, report) {
     });
   };
 
-  const recentDisconnectedUsb = (report.usbHistory || [])
-    .filter((item) => {
-      if (item.present !== false)
-        return false;
-
-      const disconnectedAt =
-        item.lastDisconnectedUtc ||
-        item.lastConnectedUtc;
-
-      return Boolean(disconnectedAt);
-    });
-
-  const correlatedDisconnectedUsb = (execution) => {
-    const runMs = new Date(execution?.lastRunUtc || 0).getTime();
-    if (!Number.isFinite(runMs) || runMs <= 0)
-      return null;
-
-    return recentDisconnectedUsb
-      .map((item) => {
-        const disconnectMs = new Date(
-          item.lastDisconnectedUtc ||
-          item.lastConnectedUtc ||
-          0
-        ).getTime();
-
-        if (!Number.isFinite(disconnectMs) || disconnectMs <= 0)
-          return null;
-
-        const plausible =
-          runMs <= disconnectMs + 15 * 60 * 1000 &&
-          runMs >= disconnectMs - 24 * 60 * 60 * 1000;
-
-        return plausible
-          ? { item, delta: Math.abs(disconnectMs - runMs) }
-          : null;
-      })
-      .filter(Boolean)
-      .sort((a, b) => a.delta - b.delta)[0]?.item || null;
-  };
-
   // Keep file reputation/catalog matches separate from proof of execution.
   // A file being present, downloaded, deleted or named like a catalog entry
   // is not execution evidence by itself.
@@ -7685,22 +7645,10 @@ async function addBuiltInReviewFindings(analysisId, report) {
     }
   }
 
-  // HIGH-SIGNAL EXECUTION: removable-drive execution gets maximum priority
-  // only for untrusted EXEs. Detached non-system volumes still require
-  // temporal correlation with recently disconnected USB storage.
+  // HIGH-SIGNAL EXECUTION: only a drive that Windows currently identifies as
+  // removable is enough for maximum USB priority. A detached volume is not
+  // classified as USB without an exact device/volume identity correlation.
   for (const execution of report.prefetchExecutions || []) {
-    const lastAge = ageDays(execution.lastRunUtc);
-
-    const executionPath =
-      execution.resolvedExecutablePath ||
-      execution.nativeExecutablePath ||
-      execution.executableName ||
-      "";
-
-    const executionName = fileName(
-      execution.executableName || executionPath
-    );
-
     const executionCandidates = [
       execution.executableName,
       execution.resolvedExecutablePath,
@@ -7712,42 +7660,16 @@ async function addBuiltInReviewFindings(analysisId, report) {
       /\.exe(?:$|[?#])/i.test(String(value || "").trim())
     );
 
-    const trustedExecutable =
-      executionCandidates.some((value) =>
-        isTrustedExecutableCandidate(value)
-      );
-
     const confirmedRemovable =
       execution.currentRemovable === true;
 
-    const strongDetachedEvidence =
-      execution.volumeNotMounted === true &&
-      execution.nonSystemVolume === true &&
-      execution.executablePresent !== true &&
-      execution.likelyDetachedOrRemovable === true;
-
-    const disconnectedUsb =
-      strongDetachedEvidence
-        ? correlatedDisconnectedUsb(execution)
-        : null;
-
-    const detachedRemovableCandidate =
-      strongDetachedEvidence &&
-      execution.likelyDetachedOrRemovable === true &&
-      lastAge <= 7;
-
     const maximumUsbPriority =
       exeLike &&
-      (
-        confirmedRemovable ||
-        Boolean(disconnectedUsb) ||
-        detachedRemovableCandidate
-      );
+      confirmedRemovable;
 
     if (
       !maximumUsbPriority &&
-      !confirmedRemovable &&
-      !strongDetachedEvidence
+      !confirmedRemovable
     ) {
       continue;
     }
@@ -7761,16 +7683,14 @@ async function addBuiltInReviewFindings(analysisId, report) {
           : "Execução recente em volume removido/não montado",
       maximumUsbPriority
         ? "critical"
-        : confirmedRemovable || lastAge <= 7
-          ? "high"
-          : "medium",
+        : "high",
       "prefetch_execution",
       execution.executableName ||
         execution.nativeExecutablePath ||
         execution.prefetchFile,
       {
         ...execution,
-        correlatedUsb: disconnectedUsb,
+        correlatedUsb: null,
         priorityMaximum: maximumUsbPriority,
         usbExecution: maximumUsbPriority,
         protectedByTechnicalEngine: maximumUsbPriority,
@@ -7812,15 +7732,7 @@ async function addBuiltInReviewFindings(analysisId, report) {
         if (!exeLike)
           return false;
 
-        const detachedRemovable =
-          execution.currentRemovable === true ||
-          (
-            execution.volumeNotMounted === true &&
-            execution.nonSystemVolume === true &&
-            execution.likelyDetachedOrRemovable === true
-          );
-
-        return detachedRemovable;
+        return execution.currentRemovable === true;
       })
       .map((execution) =>
         fileName(
@@ -9066,14 +8978,7 @@ function compactUsbExecutionEvidence(payload) {
       item?.currentRemovable === true ||
       pathOnCurrentRemovableDrive(path);
 
-    const detachedRemovable =
-      item?.likelyDetachedOrRemovable === true ||
-      (
-        item?.volumeNotMounted === true &&
-        item?.nonSystemVolume === true
-      );
-
-    if (!removableConfirmed && !detachedRemovable)
+    if (!removableConfirmed)
       continue;
 
     add({
@@ -9083,17 +8988,10 @@ function compactUsbExecutionEvidence(payload) {
       timeUtc: item?.lastRunUtc || null,
       executionTimesUtc: item?.lastRunTimesUtc,
       runCount: item?.runCount,
-      removableConfirmed:
-        removableConfirmed ||
-        (
-          detachedRemovable &&
-          item?.likelyDetachedOrRemovable === true
-        ),
-      detachedRemovable,
+      removableConfirmed,
+      detachedRemovable: false,
       isExe: isExePath(item?.executableName, path, item?.prefetchFile),
-      detail: removableConfirmed
-        ? "Execução registrada em unidade removível."
-        : "Execução registrada em volume removido/não montado compatível com mídia removível."
+      detail: "Execução registrada em unidade removível confirmada pelo Windows."
     });
   }
 

@@ -427,7 +427,7 @@ test("USB execution is recovered from the removable drive inventory", async () =
   assert.match(executable.title, /EXECUTADO DENTRO DE PENDRIVE/i);
 });
 
-test("detached USB Prefetch remains critical when correlated with disconnect history", async () => {
+test("detached volume Prefetch is not called USB from temporal proximity alone", async () => {
   const findings = await collect({
     collectedAtUtc: "2026-09-26T12:00:00Z",
     usbHistory: [{
@@ -449,9 +449,37 @@ test("detached USB Prefetch remains critical when correlated with disconnect his
   const executable = findings.find((item) =>
     item.artifactType === "correlated_executable_v2"
   );
-  assert.ok(executable);
-  assert.equal(executable.severity, "critical");
-  assert.match(executable.title, /EXECUTADO DENTRO DE PENDRIVE/i);
+  assert.ok(
+    !executable ||
+    executable.evidence?.usbExecution !== true
+  );
+  assert.doesNotMatch(executable?.title || "", /EXECUTADO DENTRO DE PENDRIVE/i);
+});
+
+test("Windows SetupHost on an unmounted volume is not USB evidence", async () => {
+  const findings = await collect({
+    collectedAtUtc: "2026-09-29T12:00:00Z",
+    usbHistory: [{
+      present: false,
+      friendlyName: "USB Mass Storage",
+      lastDisconnectedUtc: "2026-09-29T11:40:00Z"
+    }],
+    prefetchExecutions: [{
+      executableName: "SETUPHOST.EXE",
+      nativeExecutablePath: "\\VOLUME{0000000000000000-4b3c0981}\\SOURCES\\SETUPHOST.EXE",
+      executablePresent: false,
+      volumeNotMounted: true,
+      nonSystemVolume: true,
+      likelyDetachedOrRemovable: true,
+      lastRunUtc: "2026-09-29T11:35:00Z"
+    }]
+  });
+
+  const usbFinding = findings.find((item) =>
+    item.evidence?.usbExecution === true ||
+    /EXECUTADO DENTRO DE PENDRIVE/i.test(item.title || "")
+  );
+  assert.equal(usbFinding, undefined);
 });
 
 test("SIGN.MEDIA execution is recognized as critical removable-media evidence", async () => {
