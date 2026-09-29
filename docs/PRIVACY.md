@@ -41,7 +41,15 @@ the administration interface separates inventory from actual findings.
 
 The agent sends the encrypted-in-transit report to the Vorken server named by
 the analysis link. Authorized administrators of that deployment can review the
-report and record a decision. Reports must not be made public by default.
+report and record a decision. Reports must not be made public by default. If a
+confirmed cheating decision is publicly documented under the Terms of Use, the
+operator must limit disclosure to the player's public nickname and the video
+excerpts or selected evidence necessary to demonstrate the violation. Unrelated
+personal data, private communications, credentials, IP addresses, location,
+third-party data, faces, voices, and notifications must be removed or obscured
+unless strictly necessary and otherwise lawful. The operator must provide a
+review or correction channel and remove or correct the publication if the
+decision is reversed.
 
 An optional AI review can send normalized finding summaries to the Google
 Gemini API when the server operator enables it. Vorken's VirusTotal integration

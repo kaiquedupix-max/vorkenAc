@@ -95,13 +95,18 @@ O suporte remoto não começa junto com a análise. Cada sessão exige que você
 8. RESPONSABILIDADE E CONTESTAÇÃO
 A decisão administrativa deve considerar o conjunto das evidências e o contexto da sessão. Caso você discorde do resultado, solicite à administração a revisão do relatório e das evidências utilizadas.
 
-9. PRIVACIDADE
+9. DIVULGAÇÃO DE INFRAÇÕES CONFIRMADAS
+Quando uma trapaça for confirmada após revisão humana, a comunidade responsável pela verificação poderá divulgar o seu apelido público (nick) e trechos de vídeo ou outras evidências estritamente necessários para demonstrar a infração, promover transparência na moderação e proteger a integridade da comunidade.
+
+A divulgação não poderá incluir senhas, identificadores privados, endereço IP, localização, documentos, conversas privadas, dados de pagamento nem conteúdo pessoal sem relação com a infração. Rostos, vozes, notificações e dados de terceiros deverão ser ocultados ou removidos quando não forem indispensáveis. O material deverá preservar o contexto da ocorrência, não poderá ser manipulado de forma enganosa e deverá ser retirado ou corrigido se a decisão for revertida. Você poderá solicitar revisão ou correção à administração responsável.
+
+10. PRIVACIDADE
 Mais informações estão disponíveis na Política de Privacidade oficial. Os links para os documentos oficiais permanecem acessíveis nesta tela e nas configurações do aplicativo.
 
-10. SOFTWARE LIVRE E CÓDIGO-FONTE
+11. SOFTWARE LIVRE E CÓDIGO-FONTE
 O Vorken é software livre licenciado sob GNU AGPL v3.0 only. O código-fonte correspondente e a licença estão disponíveis em https://github.com/kaiquedupix-max/vorkenAc. Builds modificadas não podem se apresentar como versões oficiais do Vorken.
 
-11. ACEITE
+12. ACEITE
 Role até o final deste documento. O botão de aceite será liberado somente após a leitura integral ter sido disponibilizada na tela.
 
 FIM DOS TERMOS
@@ -139,13 +144,18 @@ El soporte remoto no comienza junto con el análisis. Cada sesión requiere eleg
 8. RESPONSABILIDAD Y RECLAMACIÓN
 La decisión administrativa debe considerar el conjunto de evidencias y el contexto de la sesión. Si no está de acuerdo con el resultado, solicite a la administración una revisión del informe y de las evidencias utilizadas.
 
-9. PRIVACIDAD
+9. DIVULGACIÓN DE INFRACCIONES CONFIRMADAS
+Cuando una trampa sea confirmada después de una revisión humana, la comunidad responsable de la verificación podrá divulgar el apodo público (nick) del jugador y fragmentos de vídeo u otras evidencias estrictamente necesarios para demostrar la infracción, promover la transparencia de la moderación y proteger la integridad de la comunidad.
+
+La divulgación no podrá incluir contraseñas, identificadores privados, dirección IP, ubicación, documentos, conversaciones privadas, datos de pago ni contenido personal no relacionado con la infracción. Los rostros, voces, notificaciones y datos de terceros deberán ocultarse o eliminarse cuando no sean indispensables. El material deberá preservar el contexto, no podrá manipularse de forma engañosa y deberá retirarse o corregirse si se revierte la decisión. El jugador podrá solicitar una revisión o corrección a la administración responsable.
+
+10. PRIVACIDAD
 Hay más información en la Política de Privacidad oficial. Los enlaces a los documentos oficiales permanecen disponibles en esta pantalla y en la configuración.
 
-10. SOFTWARE LIBRE Y CÓDIGO FUENTE
+11. SOFTWARE LIBRE Y CÓDIGO FUENTE
 Vorken es software libre bajo la licencia GNU AGPL v3.0 only. El código fuente correspondiente y la licencia están disponibles en https://github.com/kaiquedupix-max/vorkenAc. Las compilaciones modificadas no pueden presentarse como versiones oficiales de Vorken.
 
-11. ACEPTACIÓN
+12. ACEPTACIÓN
 Desplácese hasta el final de este documento. El botón de aceptación solo se habilitará después de mostrar la lectura completa.
 
 FIN DE LOS TÉRMINOS
@@ -183,13 +193,18 @@ Remote support does not start with the analysis. Each session requires you to ch
 8. RESPONSIBILITY AND APPEALS
 The administrative decision must consider all evidence and the session context. If you disagree with the result, ask the administration to review the report and the evidence used.
 
-9. PRIVACY
+9. DISCLOSURE OF CONFIRMED VIOLATIONS
+When cheating is confirmed after human review, the community responsible for the verification may disclose the player's public nickname and video excerpts or other evidence strictly necessary to demonstrate the violation, promote transparency in moderation, and protect the integrity of the community.
+
+The disclosure must not include passwords, private identifiers, IP addresses, location, documents, private conversations, payment data, or personal content unrelated to the violation. Faces, voices, notifications, and third-party data must be concealed or removed when not essential. The material must preserve the context, must not be manipulated misleadingly, and must be removed or corrected if the decision is reversed. The player may request review or correction from the responsible administration.
+
+10. PRIVACY
 More information is available in the official Privacy Policy. Links to the official documents remain available on this screen and in the application settings.
 
-10. FREE SOFTWARE AND SOURCE CODE
+11. FREE SOFTWARE AND SOURCE CODE
 Vorken is free software licensed under GNU AGPL v3.0 only. The corresponding source code and license are available at https://github.com/kaiquedupix-max/vorkenAc. Modified builds may not present themselves as official Vorken releases.
 
-11. ACCEPTANCE
+12. ACCEPTANCE
 Scroll to the end of this document. The acceptance button will only be enabled after the complete text has been displayed.
 
 END OF TERMS
