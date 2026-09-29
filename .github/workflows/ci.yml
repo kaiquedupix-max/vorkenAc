@@ -182,6 +182,9 @@ jobs:
           Build automático do agente e do aplicativo administrativo a partir do commit $shortSha.
 
           ## Code signing policy
+          Free code signing provided by SignPath.io, certificate by SignPath Foundation.
+          Signing becomes active only after Foundation approval and is identified by a valid Authenticode signature.
+
           https://github.com/$repo/blob/main/docs/CODE_SIGNING_POLICY.md
 
           ## License and source code
@@ -231,6 +234,9 @@ jobs:
           generate_release_notes: true
           body: |
             ## Code signing policy
+            Free code signing provided by SignPath.io, certificate by SignPath Foundation.
+            Signing becomes active only after Foundation approval and is identified by a valid Authenticode signature.
+
             https://github.com/${{ github.repository }}/blob/main/docs/CODE_SIGNING_POLICY.md
 
             ## License and source code
