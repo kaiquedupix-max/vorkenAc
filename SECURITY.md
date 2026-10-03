@@ -1,25 +1,19 @@
-# Security policy
+# Política de segurança
 
-## Supported version
+## Versão suportada
 
-Security fixes target the latest release published from the `main` branch.
-Older binaries should be replaced with the latest official release.
+As correções de segurança são direcionadas à versão mais recente publicada a partir da branch `main`. Binários antigos devem ser substituídos pela versão oficial mais recente sempre que possível.
 
-## Reporting a vulnerability
+## Relato de vulnerabilidades
 
-Please use GitHub's private vulnerability reporting flow:
+Utilize o fluxo privado de vulnerabilidades do GitHub:
 
 <https://github.com/kaiquedupix-max/vorkenAc/security/advisories/new>
 
-Include the affected version, reproduction steps, impact, and any suggested
-mitigation. Do not attach real player reports, access tokens, credentials, or
-other personal data. Please allow the maintainers time to investigate before
-public disclosure.
+Inclua a versão afetada, passos para reprodução, impacto observado e qualquer mitigação sugerida. Não anexe relatórios reais de jogadores, tokens de acesso, credenciais ou outros dados pessoais. Aguarde a análise dos mantenedores antes de realizar qualquer divulgação pública.
 
-## Release integrity
+## Integridade das versões
 
-Official binaries are published only through this repository's GitHub Releases
-workflow. Verify the SHA-256 file supplied with each release and, once the free
-signing application is approved, verify the Authenticode publisher and
-timestamp as described in the
-[code signing policy](docs/CODE_SIGNING_POLICY.md).
+Binários oficiais devem ser publicados somente por fluxos controlados pelo projeto. Verifique o SHA-256 fornecido com cada versão e, quando o executável estiver assinado, valide também o publicador Authenticode e o carimbo de tempo conforme descrito na [política de assinatura de código](docs/CODE_SIGNING_POLICY.md).
+
+A distribuição proprietária do Vorken não depende do programa gratuito de assinatura destinado a projetos open source.
