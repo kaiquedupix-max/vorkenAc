@@ -1,17 +1,13 @@
-# Third-party notices
+# Avisos de terceiros
 
-Vorken's original source is licensed under `AGPL-3.0-only`. Third-party
-dependencies remain under their respective licenses.
+O Vorken Anti Cheat é distribuído atualmente como software proprietário. Essa condição se aplica apenas aos componentes originais do Vorken e não altera as licenças de dependências ou componentes pertencentes a terceiros.
 
-The direct .NET dependencies used by the Windows applications are licensed
-under MIT: System.Management, Microsoft.Data.Sqlite, Prefetch, Amcache,
-AppCompatCache, and System.Security.Cryptography.ProtectedData.
+As dependências .NET utilizadas diretamente pelos aplicativos Windows incluem componentes licenciados sob MIT, como System.Management, Microsoft.Data.Sqlite, Prefetch, Amcache, AppCompatCache e System.Security.Cryptography.ProtectedData.
 
-The direct Node.js dependencies used by the web service are open-source npm
-packages: archiver, compression, cookie-parser, express, pg, and ws. Their
-license texts and transitive dependency notices are distributed in their npm
-packages and package metadata.
+As dependências diretas do serviço web em Node.js incluem pacotes npm de terceiros, como archiver, compression, cookie-parser, express, pg e ws. Os respectivos textos de licença, avisos e informações de dependências transitivas permanecem disponíveis nos próprios pacotes e metadados do ecossistema npm.
 
-The .NET runtime and framework libraries bundled by self-contained releases
-retain Microsoft's applicable open-source licenses and notices. Nothing in the
-Vorken license changes a third party's license or attribution requirements.
+O runtime e as bibliotecas do .NET incluídos em versões self-contained permanecem sujeitos às licenças e avisos aplicáveis da Microsoft e de seus respectivos titulares.
+
+Nada na licença proprietária do Vorken substitui, reduz ou amplia direitos concedidos por terceiros sobre seus próprios componentes.
+
+Versões antigas do código original do Vorken que tenham sido validamente distribuídas sob licença anterior permanecem sujeitas aos termos aplicáveis àquelas cópias.
