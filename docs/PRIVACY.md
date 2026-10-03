@@ -1,95 +1,57 @@
-# Vorken privacy policy
+# Política de privacidade do Vorken
 
-Last updated: 29 September 2026
+Última atualização: 3 de outubro de 2026
 
-Vorken is an on-demand, consent-based forensic scanner for competitive game
-investigations. This policy describes the open-source Vorken software. A person
-or organization operating a Vorken server is responsible for its own deployment,
-access controls, retention rules, and compliance obligations.
+O Vorken é um scanner forense sob demanda e baseado em consentimento, desenvolvido para investigações de integridade em ambientes competitivos de jogos. Esta política descreve o funcionamento das versões proprietárias atuais do Vorken Anti Cheat. O operador de uma implantação do Vorken é responsável por seus próprios controles de acesso, prazos de retenção e obrigações legais aplicáveis.
 
-## Before collection
+## Antes da coleta
 
-The Windows agent presents its terms and this policy before a scan can begin.
-The player may decline and close the application. Vorken does not install an
-unattended service or silently run a scan in the background.
+O agente Windows apresenta seus termos e esta política antes do início da análise. O jogador pode recusar e fechar o aplicativo. O Vorken não instala serviço de acesso não assistido nem executa silenciosamente uma análise em segundo plano.
 
-## Technical data collected
+## Dados técnicos coletados
 
-After explicit consent, the agent may collect technical indicators needed for
-an integrity review, including:
+Após consentimento explícito, o agente pode coletar indicadores técnicos necessários para uma revisão de integridade, incluindo:
 
-- operating-system, machine, security-product, and hardware metadata;
-- running-process, module, executable-signature, and integrity metadata;
-- Windows execution artifacts such as Prefetch, Amcache, ShimCache, BAM/DAM,
-  UserAssist, MUICache, PCA, event logs, crash metadata, and USN activity;
-- executable names, paths, hashes, deletion correlations, download origin, and
-  removable-media execution indicators;
-- connected and historical removable, USB, and relevant serial devices;
-- browser download records and narrowly filtered browsing indicators relevant
-  to administrator-defined or public threat rules;
-- narrowly filtered PowerShell, autorun, scheduled-task, DNS, and connection
-  indicators relevant to the investigation;
-- Steam identifiers and administrator-supplied case identifiers; and
-- scan errors, timestamps, agent version, and analysis status.
+- metadados do sistema operacional, máquina, produtos de segurança e hardware;
+- processos em execução, módulos, assinaturas de executáveis e metadados de integridade;
+- artefatos de execução do Windows, como Prefetch, Amcache, ShimCache, BAM/DAM, UserAssist, MUICache, PCA, logs de eventos, metadados de falha e atividade USN;
+- nomes de executáveis, caminhos, hashes, correlações com exclusão, origem de download e indicadores de execução em mídia removível;
+- dispositivos removíveis, USB e seriais relevantes, atuais e históricos;
+- registros de download do navegador e indicadores de navegação restritos ao necessário para regras de ameaça definidas pelo sistema ou pelo administrador;
+- indicadores filtrados de PowerShell, inicialização automática, tarefas agendadas, DNS e conexões relevantes à investigação;
+- identificadores Steam e identificadores de caso fornecidos pelo administrador; e
+- erros da análise, timestamps, versão do agente e status da análise.
 
-Vorken is not designed to collect passwords, authentication cookies, private
-message contents, photographs, videos, personal-document contents, payment
-data, or arbitrary memory dumps. Collectors must minimize unrelated content and
-the administration interface separates inventory from actual findings.
+O Vorken não foi projetado para coletar senhas, cookies de autenticação, conteúdo de mensagens privadas, fotografias, vídeos pessoais, conteúdo de documentos pessoais, dados de pagamento ou dumps arbitrários de memória RAM. Os coletores devem minimizar conteúdo não relacionado e a interface administrativa deve separar inventário técnico de achados efetivos.
 
-## Transfer and access
+## Transferência e acesso
 
-The agent sends the encrypted-in-transit report to the Vorken server named by
-the analysis link. Authorized administrators of that deployment can review the
-report and record a decision. Reports must not be made public by default. If a
-confirmed cheating decision is publicly documented under the Terms of Use, the
-operator must limit disclosure to the player's public nickname and the video
-excerpts or selected evidence necessary to demonstrate the violation. Unrelated
-personal data, private communications, credentials, IP addresses, location,
-third-party data, faces, voices, and notifications must be removed or obscured
-unless strictly necessary and otherwise lawful. The operator must provide a
-review or correction channel and remove or correct the publication if the
-decision is reversed.
+O agente envia o relatório com transporte criptografado ao servidor Vorken associado ao link de análise. Administradores autorizados daquela implantação podem revisar o relatório e registrar uma decisão.
 
-An optional AI review can send normalized finding summaries to the Google
-Gemini API when the server operator enables it. Vorken's VirusTotal integration
-uses executable hashes only and does not upload files. Operators are responsible
-for reviewing the privacy terms of optional services they enable.
+Relatórios não devem ser tornados públicos por padrão. Caso uma violação confirmada seja documentada publicamente conforme os termos aplicáveis ao servidor, a divulgação deve ser limitada ao necessário para demonstrar a infração. Dados pessoais não relacionados, comunicações privadas, credenciais, endereços IP, localização, dados de terceiros, rostos, vozes e notificações devem ser removidos ou ocultados, salvo quando estritamente necessários e legalmente permitidos.
 
-## Remote support
+Uma revisão opcional por IA pode enviar resumos normalizados de achados à API do Google Gemini quando o operador do servidor habilitar esse recurso. A integração com VirusTotal utiliza apenas hashes de executáveis e não envia arquivos. O operador é responsável por revisar os termos de privacidade dos serviços opcionais que decidir ativar.
 
-Remote support is off by default. A player must choose screen viewing or screen
-viewing with temporary mouse and keyboard control, confirm the request, and an
-available administrator must separately accept it. The player can end the
-session at any time. Vorken does not provide unattended access, file transfer,
-clipboard transfer, credential capture, or persistent remote-control access.
-Screen frames are relayed for the live session and are not intentionally stored
-by the Vorken server.
+## Suporte remoto
 
-## Retention and learned decisions
+O suporte remoto fica desativado por padrão. O jogador deve escolher entre visualização da tela ou visualização com controle temporário de mouse e teclado, confirmar a solicitação e aguardar que um administrador disponível aceite a sessão.
 
-An unstarted analysis link expires after the period selected by the administrator
-(between 1 and 168 hours in the reference deployment). Completed report retention
-is controlled by the deployment operator. Operators should keep reports only as
-long as necessary for the documented investigation and provide an appropriate
-deletion-request channel to their users.
+O jogador pode encerrar a sessão a qualquer momento. O Vorken não oferece acesso não assistido, transferência de arquivos, transferência de área de transferência, captura de credenciais ou controle remoto persistente. Os frames da tela são utilizados para a sessão ao vivo e não são intencionalmente armazenados pelo servidor Vorken.
 
-Administrator decisions can create normalized trust or detection records so
-future analyses do not repeat known false positives. These records should use
-technical identity such as hashes, signer information, product metadata, and
-normalized executable characteristics rather than personal file contents.
+## Retenção e decisões aprendidas
 
-## Security and user choices
+Um link de análise ainda não iniciado pode expirar conforme o período selecionado pelo administrador. A retenção de relatórios concluídos é controlada pelo operador da implantação. Relatórios devem ser mantidos somente pelo período necessário à finalidade documentada da investigação e de acordo com as obrigações legais aplicáveis.
 
-Access to reports requires authenticated administrator accounts. Tokens,
-passwords, API keys, and private reports must never be committed to the source
-repository. Players may refuse a scan, close the agent before collection, decline
-remote support, or end an active remote session.
+Decisões administrativas podem gerar registros técnicos normalizados de confiança ou detecção para evitar a repetição de falsos positivos conhecidos em análises futuras. Esses registros devem utilizar identidade técnica, como hashes, informações de assinatura, metadados do produto e características normalizadas de executáveis, em vez de conteúdo pessoal de arquivos.
 
-For a privacy or security concern about the reference project, use GitHub's
-private report channel:
+## Segurança e escolhas do usuário
+
+O acesso aos relatórios exige autenticação administrativa. Tokens, senhas, chaves de API e relatórios privados nunca devem ser inseridos em repositórios públicos ou em locais acessíveis sem autorização.
+
+O jogador pode recusar a análise, fechar o agente antes da coleta, recusar o suporte remoto ou encerrar uma sessão remota ativa.
+
+Para relatar uma questão de privacidade ou segurança relacionada ao projeto, utilize o canal privado do GitHub enquanto ele estiver disponível para o repositório:
 
 <https://github.com/kaiquedupix-max/vorkenAc/security/advisories/new>
 
-For a deployed community server, contact that server's operator because the
-open-source project does not control third-party deployments.
+Quando o Vorken estiver implantado por uma comunidade ou servidor específico, questões operacionais de retenção, acesso e administração devem ser direcionadas ao respectivo operador.
