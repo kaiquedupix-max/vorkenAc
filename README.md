@@ -1,40 +1,40 @@
 # Vorken Anti Cheat
 
-Vorken is a consent-based Windows forensic scanner for competitive game-server investigations.
+O **Vorken Anti Cheat** é um scanner forense para Windows, baseado em consentimento, desenvolvido para investigações de integridade em servidores competitivos de jogos.
 
-Vorken is free and open-source software licensed under
-[GNU AGPL v3.0 only](LICENSE). Modified deployments must provide their
-corresponding source under the same license. The Vorken name and visual identity
-are governed separately by the [trademark policy](TRADEMARKS.md).
+O Vorken é um software **proprietário**. Novas versões não são distribuídas como software livre ou open source. O código-fonte, os componentes originais, as regras internas, a identidade visual e os materiais proprietários são protegidos pela [licença do Vorken](LICENSE).
 
-- [Privacy policy](docs/PRIVACY.md)
-- [Security policy](SECURITY.md)
-- [Contributing](CONTRIBUTING.md)
-- [Third-party notices](THIRD_PARTY_NOTICES.md)
-- [SignPath setup](docs/SIGNPATH_SETUP.md)
+Versões que já tenham sido validamente distribuídas anteriormente sob a GNU AGPL v3.0 continuam regidas pelos termos aplicáveis àquelas cópias. A mudança de licença não revoga retroativamente direitos já concedidos sobre versões anteriores.
+
+- [Política de privacidade](docs/PRIVACY.md)
+- [Política de segurança](SECURITY.md)
+- [Diretrizes internas de contribuição](CONTRIBUTING.md)
+- [Avisos de terceiros](THIRD_PARTY_NOTICES.md)
+- [Política de marca](TRADEMARKS.md)
+- [Política de assinatura de código](docs/CODE_SIGNING_POLICY.md)
 
 ## Vorken Agent 1.0
 
-The public analysis page downloads a **single Windows EXE**. The analysis token is encoded in the downloaded filename, so there is no ZIP and no sidecar configuration file to extract.
+A página de análise disponibiliza um **único executável do Windows**. O token da análise é incorporado ao nome do arquivo baixado, portanto não existe ZIP nem arquivo de configuração separado para extrair.
 
-The agent collects defensive technical evidence such as:
+O agente coleta evidências técnicas defensivas, incluindo:
 
-- USB/current and historical devices, Arduino/CH34x/CP210x/FTDI and removable-media timeline;
-- Prefetch, BAM/DAM, UserAssist, MUICache, PCA, Amcache, ShimCache and Event 4688;
-- NTFS USN Journal deletions plus JournalTrace-style create/delete/rename/change events;
-- browser download history, browser-risk flags, suspicious search/site history, SQLite/WAL recovery and Zone.Identifier origin;
-- Recycle Bin, shortcuts, Windows Error Reporting/crash metadata and deleted-file correlations;
-- SHA-256, real Authenticode/WinVerifyTrust validation, PE timestamps, entropy, sections and packer indicators;
-- suspicious PowerShell history/events, autoruns, scheduled tasks and NTFS Alternate Data Streams;
-- Rust/high-value process module integrity and capture-excluded/streamproof-style windows;
-- Defender history/exclusions, registered antivirus/firewall products, Secure Boot, BCD, service changes, SRUM state and Prefetch integrity;
-- DNS indicators and current TCP connections correlated with process/signature metadata;
-- VM/virtual-disk/system-time/log-clear/integrity context;
-- public Rust cheat/script IOC catalog plus custom admin rules.
+- dispositivos USB atuais e históricos, Arduino, CH34x, CP210x, FTDI e linha do tempo de mídias removíveis;
+- Prefetch, BAM/DAM, UserAssist, MUICache, PCA, Amcache, ShimCache e Evento 4688;
+- exclusões no USN Journal do NTFS e eventos no estilo JournalTrace, como criação, exclusão, renomeação e alteração;
+- histórico de downloads do navegador, indicadores de risco, histórico de buscas e sites suspeitos, recuperação SQLite/WAL e origem via Zone.Identifier;
+- Lixeira, atalhos, metadados do Windows Error Reporting, falhas e correlações com arquivos excluídos;
+- SHA-256, validação Authenticode real via WinVerifyTrust, timestamps PE, entropia, seções e indicadores de empacotamento;
+- histórico e eventos suspeitos do PowerShell, inicializações automáticas, tarefas agendadas e Alternate Data Streams do NTFS;
+- integridade de módulos de processos de alto valor, incluindo Rust, além de janelas com exclusão de captura e comportamento do tipo streamproof;
+- histórico e exclusões do Defender, produtos antivírus e firewall registrados, Secure Boot, BCD, alterações de serviços, estado do SRUM e integridade do Prefetch;
+- indicadores DNS e conexões TCP atuais correlacionadas com processo e assinatura;
+- contexto de máquina virtual, disco virtual, horário do sistema, limpeza de logs e integridade;
+- catálogo de IOC de cheats e scripts de Rust, além de regras personalizadas do administrador.
 
-The agent does **not** collect passwords, browser cookies, private messages, photos, document contents or arbitrary RAM dumps.
+O agente **não coleta** senhas, cookies de autenticação do navegador, mensagens privadas, fotos, conteúdo de documentos pessoais nem dumps arbitrários de memória RAM.
 
-## Website
+## Site
 
 ```bash
 cd website
@@ -42,7 +42,7 @@ npm install
 npm start
 ```
 
-Environment variables:
+Variáveis de ambiente:
 
 ```text
 DATABASE_URL=postgresql://...
@@ -52,24 +52,24 @@ PUBLIC_URL=https://your-domain.example
 AGENT_BINARY_PATH=/absolute/path/to/Vorken.Agent.exe
 PORT=3000
 
-# Optional: hash-only reputation checks. Vorken never uploads files.
+# Opcional: consultas de reputação apenas por hash. O Vorken não envia arquivos.
 VIRUSTOTAL_API_KEY=
 ```
 
 ## Suporte remoto
 
-O agente possui uma aba **Suporte** com dois modos autorizados pelo jogador: somente transmissão da tela ou tela com controle temporário de mouse e teclado. O aplicativo administrativo separado fica em `admin-app/`:
+O agente possui uma aba **Suporte** com dois modos autorizados pelo jogador: somente transmissão da tela ou transmissão com controle temporário de mouse e teclado. O aplicativo administrativo separado fica em `admin-app/`:
 
 ```bash
 cd admin-app
 dotnet publish -c Release -r win-x64 --self-contained true
 ```
 
-Cada administrador entra com seu próprio usuário e só aparece para o jogador enquanto estiver marcado como disponível. Não há acesso não assistido, transferência de arquivos, área de transferência ou persistência após o encerramento. Veja a configuração e as proteções em [docs/REMOTE_SUPPORT.md](docs/REMOTE_SUPPORT.md).
+Cada administrador entra com seu próprio usuário e só aparece para o jogador enquanto estiver marcado como disponível. Não há acesso não assistido, transferência de arquivos, transferência da área de transferência ou persistência após o encerramento. Consulte [docs/REMOTE_SUPPORT.md](docs/REMOTE_SUPPORT.md) para ver a configuração e as proteções.
 
-### Revisão por Gemini
+## Revisão por Gemini
 
-O Vorken usa o filtro técnico normal como primeira camada e pode usar o **Gemini** como segunda camada para reduzir falsos positivos. A integração usa a Gemini Developer API diretamente por HTTPS, sem SDK adicional.
+O Vorken usa o filtro técnico normal como primeira camada e pode usar o **Gemini** como segunda camada para reduzir falsos positivos. A integração utiliza a Gemini Developer API diretamente por HTTPS, sem SDK adicional.
 
 Variáveis recomendadas:
 
@@ -84,76 +84,58 @@ AI_FALSE_POSITIVE_THRESHOLD=0.85
 AI_REVIEW_MAX_FINDINGS=0
 ```
 
-A chave deve ficar somente no servidor/Coolify. Ela nunca é enviada ao agente Windows nem ao navegador. Se o Gemini falhar, ficar sem cota ou atingir rate limit, o Vorken mantém o resultado do filtro técnico normal e deixa os lotes não revisados disponíveis para uma tentativa posterior.
+A chave deve permanecer somente no servidor ou no Coolify. Ela nunca é enviada ao agente Windows nem ao navegador. Se o Gemini falhar, ficar sem cota ou atingir limite de requisições, o Vorken mantém o resultado do filtro técnico normal e deixa os lotes não revisados disponíveis para uma tentativa posterior.
 
-## Agent
+## Agente
 
 ```bash
 cd agent
 dotnet publish -c Release -r win-x64 --self-contained true
 ```
 
-The production root Dockerfile builds the Windows agent and places it at the configured `AGENT_BINARY_PATH`.
+O `Dockerfile` de produção na raiz compila o agente Windows e posiciona o executável no caminho configurado em `AGENT_BINARY_PATH`.
 
-### EXE verification and code signing
+## Verificação do EXE e assinatura de código
 
-Every direct download exposes the SHA-256 of the exact executable on the analysis page and through the `X-Vorken-SHA256` response header.
+Cada download direto expõe o SHA-256 do executável exato na página da análise e também pelo cabeçalho `X-Vorken-SHA256`.
 
-The preferred signing route is the free Open Source program provided by
-SignPath. See the complete [Code signing policy](docs/CODE_SIGNING_POLICY.md).
+A assinatura de produção deve utilizar um certificado de assinatura de código válido pertencente ao projeto ou um serviço comercial compatível. O programa gratuito da SignPath Foundation voltado a projetos open source não deve ser apresentado como método oficial para novas versões proprietárias do Vorken.
 
-Free code signing provided by SignPath.io, certificate by SignPath Foundation.
+Consulte a [política de assinatura de código](docs/CODE_SIGNING_POLICY.md).
 
-After SignPath approves the project, configure these GitHub repository secrets:
-
-```text
-SIGNPATH_API_TOKEN
-SIGNPATH_ORGANIZATION_ID
-SIGNPATH_PROJECT_SLUG
-SIGNPATH_SIGNING_POLICY_SLUG
-SIGNPATH_ARTIFACT_CONFIGURATION_SLUG
-```
-
-Each production signing request requires manual approval in SignPath. The
-workflow uploads the unsigned GitHub build, waits for the approved signed
-artifact, validates its Authenticode signature, generates its checksum, and only
-then publishes it.
-
-The workflow also retains an optional certificate-owned fallback using:
+O fluxo suporta, quando configurado, um certificado PFX por meio de:
 
 ```text
 VORKEN_SIGNING_PFX_BASE64
 VORKEN_SIGNING_PFX_PASSWORD
 ```
 
-The PFX must contain a valid Windows code-signing certificate. Without a trusted code-signing certificate, Windows SmartScreen or antivirus products may still warn about a newly distributed executable even when the build is legitimate. Product metadata and a checksum improve verification but do not replace code-signing reputation.
+O PFX deve conter um certificado de assinatura de código válido e confiável. Sem um certificado confiável, o Windows SmartScreen ou produtos antivírus ainda podem exibir avisos para um executável recém-distribuído, mesmo quando o build for legítimo. Metadados do produto e checksum ajudam na verificação, mas não substituem reputação de assinatura.
 
-### Open-source governance
+## Governança proprietária
 
-- Project license: `AGPL-3.0-only`.
-- Official branding is not licensed for modified builds; see
-  [TRADEMARKS.md](TRADEMARKS.md).
-- Vulnerabilities must be reported privately according to
-  [SECURITY.md](SECURITY.md).
-- Real player reports, access tokens, credentials, proprietary signatures, and
-  commercial detection databases must never be committed.
+- Licença atual: proprietária, conforme [LICENSE](LICENSE).
+- O código-fonte e os componentes internos não podem ser copiados, redistribuídos ou modificados sem autorização expressa.
+- A marca, o nome e a identidade visual do Vorken são protegidos separadamente; consulte [TRADEMARKS.md](TRADEMARKS.md).
+- Vulnerabilidades devem ser reportadas de forma privada conforme [SECURITY.md](SECURITY.md).
+- Relatórios reais de jogadores, tokens de acesso, credenciais, assinaturas proprietárias e bancos de dados comerciais nunca devem ser enviados ao repositório.
 
-## Detection philosophy
+## Filosofia de detecção
 
-Context/inventory is not automatically a finding. High-severity findings require stronger signals such as execution evidence, deletion correlation, a known IOC, a suspicious unsigned binary, a risky origin, a catalog match or multiple corroborating artifacts.
+Contexto e inventário não são automaticamente uma detecção. Achados de alta severidade exigem sinais mais fortes, como evidência de execução, correlação com exclusão, IOC conhecido, binário suspeito sem assinatura, origem de risco, correspondência de catálogo ou múltiplos artefatos independentes.
 
-Rules and heuristic matches are evidence for human review, not automatic proof that a player cheated.
+Regras e correspondências heurísticas servem como evidência para revisão humana e não constituem, isoladamente, prova automática de trapaça.
 
-### Confidence engine V4
+### Motor de confiança V4
 
-- Direct browser visits to an exact catalog domain/invite are critical and are shown in the dedicated **Histórico suspeito** view.
-- Search results and recovered SQLite/WAL fragments remain review evidence; merely mentioning a catalog domain does not become a direct visit.
-- Exact executable name/SHA-256 catalog matches with historical execution are critical even outside the current Rust session.
-- Unknown random-name executables need independent technical corroboration (for example deletion plus packing, removable media or strong injection APIs) before becoming critical.
-- A user-writable path, an unsigned file, a random-looking name or a suspicious word is never sufficient by itself for a critical verdict.
+- Visitas diretas no navegador a um domínio ou convite exato presente no catálogo são críticas e aparecem na área dedicada de **Histórico suspeito**.
+- Resultados de pesquisa e fragmentos recuperados de SQLite/WAL permanecem como evidência de revisão; apenas mencionar um domínio catalogado não equivale a uma visita direta.
+- Correspondências exatas de nome de executável ou SHA-256 com execução histórica são críticas, mesmo fora da sessão atual de Rust.
+- Executáveis desconhecidos com nomes aleatórios precisam de corroboração técnica independente, por exemplo exclusão associada a empacotamento, mídia removível ou APIs fortes de injeção, antes de serem classificados como críticos.
+- Caminho gravável pelo usuário, ausência de assinatura, nome aparentemente aleatório ou palavra suspeita nunca são suficientes isoladamente para um veredito crítico.
 
-## Public-tool compatibility layer
+## Camada de compatibilidade forense
 
-Vorken implements its own defensive equivalents of publicly documented screenshare/forensic capabilities such as saved-file origin, browser downloads/history, Prefetch, BAM, Amcache, USB, PowerShell, autoruns, USN/JournalTrace, ADS, WER/crashes, PE/packer inspection, integrity checks and network/DNS correlation.
+O Vorken implementa equivalentes defensivos próprios de recursos publicamente documentados usados em screenshare e análise forense, como origem de arquivos, downloads e histórico do navegador, Prefetch, BAM, Amcache, USB, PowerShell, autoruns, USN/JournalTrace, ADS, WER/falhas, inspeção PE/packer, verificações de integridade e correlação de rede/DNS.
 
-It does not copy proprietary signatures, databases or source code from third-party scanners.
+O Vorken não copia assinaturas proprietárias, bancos de dados privados nem código-fonte de scanners de terceiros.
