@@ -15,10 +15,10 @@
     <Title>Vorken Administração Remota</Title>
     <Product>Vorken Remote Support</Product>
     <Company>Vorken</Company>
-    <Authors>Vorken contributors</Authors>
-    <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
+    <Authors>Vorken</Authors>
     <RepositoryUrl>https://github.com/kaiquedupix-max/vorkenAc</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
+    <Copyright>Copyright © Vorken 2026. Todos os direitos reservados.</Copyright>
     <AssemblyVersion>1.0.3.0</AssemblyVersion>
     <FileVersion>1.0.3.0</FileVersion>
     <InformationalVersion>1.0.3</InformationalVersion>
