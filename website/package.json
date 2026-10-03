@@ -2,7 +2,7 @@
   "name": "vorken-anticheat-web",
   "version": "0.1.0",
   "private": true,
-  "license": "AGPL-3.0-only",
+  "license": "UNLICENSED",
   "repository": {
     "type": "git",
     "url": "https://github.com/kaiquedupix-max/vorkenAc.git"
