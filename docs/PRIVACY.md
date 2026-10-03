@@ -30,7 +30,7 @@ O agente envia o relatório com transporte criptografado ao servidor Vorken asso
 
 Relatórios não devem ser tornados públicos por padrão. Caso uma violação confirmada seja documentada publicamente conforme os termos aplicáveis ao servidor, a divulgação deve ser limitada ao necessário para demonstrar a infração. Dados pessoais não relacionados, comunicações privadas, credenciais, endereços IP, localização, dados de terceiros, rostos, vozes e notificações devem ser removidos ou ocultados, salvo quando estritamente necessários e legalmente permitidos.
 
-Uma revisão opcional por IA pode enviar resumos normalizados de achados à API do Google Gemini quando o operador do servidor habilitar esse recurso. A integração com VirusTotal utiliza apenas hashes de executáveis e não envia arquivos. O operador é responsável por revisar os termos de privacidade dos serviços opcionais que decidir ativar.
+A integração opcional com VirusTotal utiliza apenas hashes de executáveis e não envia arquivos. O operador é responsável por revisar os termos de privacidade dos serviços opcionais que decidir ativar.
 
 ## Suporte remoto
 
