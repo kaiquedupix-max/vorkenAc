@@ -1,46 +1,32 @@
-# SignPath Foundation setup
+# Configuração de assinatura de código
 
-This repository is prepared for SignPath Foundation's free Open Source code
-signing program. Signing remains disabled until the project is accepted and the
-repository secrets listed below are configured.
+Este documento existia originalmente para a integração do Vorken com o programa gratuito da SignPath Foundation destinado a projetos open source.
 
-## Application references
+Como as novas versões do Vorken Anti Cheat passam a ser distribuídas como software proprietário, **o programa gratuito para projetos open source não deve ser utilizado nem apresentado como método oficial de assinatura das novas versões**.
 
-- Repository: <https://github.com/kaiquedupix-max/vorkenAc>
-- License: [AGPL-3.0-only](../LICENSE)
-- Released binary: <https://github.com/kaiquedupix-max/vorkenAc/releases/tag/agent-latest>
-- Privacy policy: [PRIVACY.md](PRIVACY.md)
-- Code signing policy: [CODE_SIGNING_POLICY.md](CODE_SIGNING_POLICY.md)
-- Security policy: [SECURITY.md](../SECURITY.md)
-- Official application form: <https://signpath.org/apply>
+## Opções suportadas para novas versões
 
-Suggested project description:
+O projeto pode utilizar:
 
-> Vorken is a consent-based defensive forensic scanner used by competitive game
-> communities to review traces of cheating and tampering. It detects evidence of
-> actual policy or integrity breaches; it does not identify or exploit software
-> vulnerabilities, bypass security controls, install persistence, or provide
-> unattended access. The optional remote-support session requires explicit player
-> initiation, player consent, and administrator acceptance, and can be ended by
-> the player at any time.
+1. um certificado próprio de assinatura de código, armazenado de forma segura e utilizado pelo fluxo de CI/CD; ou
+2. um plano comercial de um provedor de assinatura compatível com Microsoft Authenticode, incluindo SignPath comercial quando aplicável.
 
-## SignPath project configuration
+## Configuração com certificado próprio
 
-1. Apply to SignPath Foundation and wait for project approval.
-2. Enable multi-factor authentication for GitHub and SignPath maintainers.
-3. Install the SignPath GitHub App for this repository.
-4. Use the predefined `GitHub.com` Trusted Build System and GitHub-hosted runners.
-5. Create an artifact configuration that accepts the GitHub artifact containing
-   `Vorken.Agent.exe` and applies an Authenticode signature to that file.
-6. Restrict PE metadata to the values built from `agent/Vorken.Agent.csproj`:
-   product `Vorken AntiCheat`, company `Vorken`, and one consistent semantic
-   version for product, file, assembly, and informational metadata.
-7. Create a production signing policy requiring manual approval.
-8. Create a submitter API token restricted to this project and signing policy.
+O workflow atual possui suporte a credenciais PFX por meio dos seguintes segredos do GitHub:
 
-## GitHub repository secrets
+```text
+VORKEN_SIGNING_PFX_BASE64
+VORKEN_SIGNING_PFX_PASSWORD
+```
 
-Configure these only after SignPath provides the corresponding values:
+O arquivo PFX deve conter um certificado válido de assinatura de código. A chave privada e a senha não podem ser gravadas no repositório, em arquivos de configuração versionados ou em logs públicos.
+
+## Configuração com serviço comercial
+
+Caso o projeto utilize SignPath ou outro provedor comercial, configure os identificadores e tokens exigidos pelo plano contratado somente após a criação do projeto no provedor.
+
+Quando a integração utilizar os campos abaixo, eles devem permanecer exclusivamente como segredos do repositório:
 
 ```text
 SIGNPATH_API_TOKEN
@@ -50,10 +36,15 @@ SIGNPATH_SIGNING_POLICY_SLUG
 SIGNPATH_ARTIFACT_CONFIGURATION_SLUG
 ```
 
-When all five values exist, `.github/workflows/ci.yml` uploads the unsigned
-GitHub build to SignPath, waits for manual approval, downloads the signed result,
-validates the Authenticode signature, generates `SHA256SUMS.txt`, and publishes
-the signed bytes. The older PFX path is skipped automatically.
+Os nomes das variáveis podem ser mantidos por compatibilidade com o workflow existente, mas a utilização efetiva depende de uma conta e política de assinatura compatíveis com a distribuição proprietária do Vorken.
 
-Do not create placeholder secrets. A partially configured set deliberately
-leaves SignPath disabled so ordinary pull-request checks continue to work.
+## Requisitos de segurança
+
+- Ative autenticação multifator nas contas administrativas do GitHub e do provedor de assinatura.
+- Exija aprovação manual para assinaturas de produção quando o provedor oferecer esse recurso.
+- Restrinja tokens de API ao projeto e à política de assinatura necessários.
+- Gere o SHA-256 somente depois que o executável final estiver pronto para distribuição.
+- Não modifique os bytes do executável depois da assinatura.
+- Não use segredos de exemplo ou valores fictícios em produção.
+
+Consulte [CODE_SIGNING_POLICY.md](CODE_SIGNING_POLICY.md) para a política completa de assinatura do Vorken.
