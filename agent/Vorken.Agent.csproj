@@ -18,12 +18,11 @@
     <Title>Vorken AntiCheat</Title>
     <Product>Vorken AntiCheat</Product>
     <Company>Vorken</Company>
-    <Authors>Vorken contributors</Authors>
-    <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
+    <Authors>Vorken</Authors>
     <RepositoryUrl>https://github.com/kaiquedupix-max/vorkenAc</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
-    <Description>Consent-based defensive forensic scanner for competitive game investigations.</Description>
-    <Copyright>Copyright © Vorken 2026</Copyright>
+    <Description>Scanner forense defensivo baseado em consentimento para investigações de integridade em ambientes competitivos de jogos.</Description>
+    <Copyright>Copyright © Vorken 2026. Todos os direitos reservados.</Copyright>
     <AssemblyVersion>1.0.29.0</AssemblyVersion>
     <FileVersion>1.0.29.0</FileVersion>
     <InformationalVersion>1.0.29</InformationalVersion>
