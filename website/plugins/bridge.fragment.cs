@@ -12,11 +12,29 @@
         {
             public bool rustStarted = true, rustVerified = true, rustBans = true;
         }
+        private string AdministratorDisplay(string administrator)
+        {
+            string value = (administrator ?? "").Trim();
+            if (value.StartsWith("discord:", StringComparison.OrdinalIgnoreCase))
+                value = value.Substring("discord:".Length).Trim();
+            int separator = value.IndexOf('|');
+            if (separator >= 0)
+            {
+                string display = value.Substring(separator + 1).Trim();
+                if (!string.IsNullOrWhiteSpace(display)) return Clean(display);
+                value = value.Substring(0, separator).Trim();
+            }
+            if (value.StartsWith("customer:", StringComparison.OrdinalIgnoreCase) || value == "owner" || value == "console")
+                return "Administracao Vorken";
+            ulong discordId;
+            if (ulong.TryParse(value, out discordId)) return "Administracao Vorken";
+            return string.IsNullOrWhiteSpace(value) ? "Administracao Vorken" : Clean(value);
+        }
         private void AnnounceBridge(string kind, string playerName, string administrator = null)
         {
             string name = Clean(playerName);
             if (kind == "start" && bridgeNotifications.rustStarted)
-                Server.Broadcast("<color=#FF2222>[VERIFICAÇÃO]</color> Foi iniciado um processo de verificação administrativa com o jogador <color=#FF5555>" + name + "</color>. Administrador responsável: <color=#FFD166>" + Clean(administrator ?? "Equipe Vorken") + "</color>.");
+                Server.Broadcast("<color=#FF2222>[VERIFICAÇÃO]</color> Foi iniciado um processo de verificação administrativa com o jogador <color=#FF5555>" + name + "</color>. Administrador responsável: <color=#FFD166>" + AdministratorDisplay(administrator) + "</color>.");
             else if (kind == "approve" && bridgeNotifications.rustVerified)
                 Server.Broadcast("<color=#2bf0c9>[VERIFICAÇÃO]</color> O jogador <color=#2bf0c9>" + name + "</color> foi verificado e liberado pela administração. ✅");
             else if (kind == "deny" && bridgeNotifications.rustBans)
@@ -110,7 +128,7 @@
                     if (player != null && player.IsConnected && !player.IsNpc)
                         players.Add(new BridgePlayer { steamId = player.UserIDString, name = player.displayName });
             }
-            string payload = JsonConvert.SerializeObject(new { version = "2.0.1", events = events, receipts = receipts, players = players });
+            string payload = JsonConvert.SerializeObject(new { version = "2.0.4", events = events, receipts = receipts, players = players });
             webrequest.Enqueue(ApiBase + "/api/vorken/plugin/sync", payload, (status, response) => {
                 syncPending = false;
                 if (unloading) return;
@@ -151,7 +169,6 @@
             if (command == null || !Guid.TryParse(command.id, out commandId) || !ulong.TryParse(command.steamId, out steamId)) return;
             if (bridge.Completed.Contains(command.id))
             {
-                // An acknowledged command should never be delivered again.
                 return;
             }
             if (bridge.Receipts.ContainsKey(command.id)) return;
@@ -164,7 +181,7 @@
                     if (!sessions.TryGetValue(steamId, out session))
                         Execute(null, new[] { "iniciar", command.steamId }, "discord:" + command.actorId);
                     receipt.ok = sessions.TryGetValue(steamId, out session);
-                    receipt.result = receipt.ok ? "Telagem iniciada." : "Jogador precisa estar conectado, vivo, acordado e fora de veiculos.";
+                    receipt.result = receipt.ok ? "Verificacao iniciada." : "Jogador precisa estar conectado, vivo, acordado e fora de veiculos.";
                 }
                 else if (!sessions.TryGetValue(steamId, out session) || session.Id != command.sessionId)
                 {
