@@ -74,6 +74,7 @@ test('platform routes isolate customers, confirm decisions and activate payments
   const sharedReport={analysis:{id:1,status:'completed'},report:{payload:{files:[{name:'inventory'}],browserHistorySignals:[{url:'history'}],uiCounts:{files:484}}},findings:[{id:1,severity:'critical',title:'Critical preserved'}],commonApps:[],relatedAnalyses:[]};
   const app=express();app.use(express.json());app.use(cookieParser());
   const platform=installVorkenPlatform(app,{pool,publicUrl:'https://vorken.xyz',
+    loadRawAnalysisReport:async()=>sharedReport.report.payload,
     loadAnalysisReport:async(id,serverId)=>{reportScopes.push({id,serverId});return {...sharedReport,analysis:{...sharedReport.analysis,id}};},
     requireAdmin:(req,res,next)=>req.get('x-test-owner')==='yes'?next():res.sendStatus(401),
     learnAnalysisArtifacts:async(...args)=>learned.push(args),revokeLearnedTrustForFindings:async(...args)=>revoked.push(args)});
@@ -170,6 +171,12 @@ test('platform routes isolate customers, confirm decisions and activate payments
     assert.deepEqual(customer.data.report,sharedReport.report);assert.deepEqual(customer.data.findings,sharedReport.findings);
     assert.deepEqual(operations.data,customer.data);assert.deepEqual(owner.data,customer.data);
     assert(reportScopes.every(scope=>scope.serverId===s1));
+    const raw=await request('/sessions/'+sessionId+'/raw');
+    assert.deepEqual(raw.data,sharedReport.report.payload);
+    assert.deepEqual((await request('/operations/'+s1+'/sessions/'+sessionId+'/raw')).data,raw.data);
+    assert.deepEqual((await request('/admin/operations/'+s1+'/sessions/'+sessionId+'/raw',{owner:true})).data,raw.data);
+    assert.equal((await request('/sessions/'+sessionId+'/raw',{customerId:c2})).status,404);
+    assert.equal((await request('/operations/'+s2+'/sessions/'+sessionId+'/raw',{customerId:c2})).status,404);
     const calls=reportScopes.length;
     assert.equal((await request('/sessions/'+sessionId+'/report',{customerId:c2})).status,404);
     assert.equal((await request('/operations/'+s2+'/sessions/'+sessionId+'/report',{customerId:c2})).status,404);

@@ -52,7 +52,7 @@ export async function importLegacyVerificationBans(pool,records){
  return imported;
 }
 
-export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, learnAnalysisArtifacts, revokeLearnedTrustForFindings, loadAnalysisReport, loadPlayerProfiles }) {
+export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, learnAnalysisArtifacts, revokeLearnedTrustForFindings, loadAnalysisReport, loadPlayerProfiles, loadRawAnalysisReport }) {
   const auditProfiles=new Map();
   const secret = () => process.env.SESSION_SECRET || '';
   const rootHost=new URL(publicUrl).hostname;
@@ -226,6 +226,14 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
       const findings=(await pool.query('SELECT id,title,severity,artifact_type,artifact_value,evidence FROM scan_findings WHERE analysis_id=$1 ORDER BY id',[session.analysis_id])).rows;
       const full=loadAnalysisReport?await loadAnalysisReport(session.analysis_id,s.id):null;
       res.json({session,findings,...(full||{})});
+    }));
+    app.get(base+'/:serverId/sessions/:id/raw',...auth,route(async(req,res)=>{
+      const {s}=await accessible(req);if(!uuid(req.params.id))fail(400,'Sessão inválida.');
+      const session=(await pool.query('SELECT analysis_id FROM vorken_sessions WHERE id=$1 AND server_id=$2',[req.params.id,s.id])).rows[0];
+      if(!session)fail(404,'Sessão não encontrada.');
+      const payload=loadRawAnalysisReport?await loadRawAnalysisReport(session.analysis_id):null;
+      if(!payload)fail(404,'Relatório não encontrado.');
+      res.attachment('vorken-analysis-'+session.analysis_id+'-raw.json').type('application/json').send(JSON.stringify(payload,null,2));
     }));
     app.post(base+'/:serverId/sessions/:id/decision',...auth,csrf,route(async(req,res)=>{
       const {s,actor}=await accessible(req);
@@ -414,6 +422,14 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
     const findings=await pool.query('SELECT id,title,severity,artifact_type,artifact_value,evidence FROM scan_findings WHERE analysis_id=$1 ORDER BY id',[s.analysis_id]);
     const full=loadAnalysisReport?await loadAnalysisReport(s.analysis_id,s.server_id):null;
     res.json({session:s,findings:findings.rows,...(full||{})});
+  }));
+  app.get('/api/vorken/sessions/:id/raw',route(async(req,res)=>{
+    const u=await customer(req);if(!uuid(req.params.id))fail(400,'Sessão inválida.');
+    const session=(await pool.query(`SELECT v.analysis_id FROM vorken_sessions v JOIN vorken_servers s ON s.id=v.server_id WHERE v.id=$1 AND ${accessSql('s')}`,[req.params.id,u.id])).rows[0];
+    if(!session)fail(404,'Sessão não encontrada.');
+    const payload=loadRawAnalysisReport?await loadRawAnalysisReport(session.analysis_id):null;
+    if(!payload)fail(404,'Relatório não encontrado.');
+    res.attachment('vorken-analysis-'+session.analysis_id+'-raw.json').type('application/json').send(JSON.stringify(payload,null,2));
   }));
   app.post('/api/vorken/sessions/:id/decision',csrf,route(async(req,res)=>{
     const u=await customer(req), action=req.body.decision==='approve'?'approve':req.body.decision==='deny'?'deny':null;

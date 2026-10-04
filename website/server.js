@@ -9223,6 +9223,11 @@ function compactAdminReportPayload(report) {
   };
 }
 
+async function loadRawAnalysisReport(id){
+ const result=await pool.query('SELECT payload,payload_raw,payload_encoding FROM scan_reports WHERE analysis_id=$1 ORDER BY id DESC LIMIT 1',[id]);
+ return result.rows[0]?decodeStoredRawReport(result.rows[0]):null;
+}
+
 async function loadSharedAnalysisReport(id, serverId = null) {
 
   const analysisResult = await pool.query(
@@ -10774,7 +10779,7 @@ app.get("/a/:token", (_req, res) => {
 });
 
 const vorkenPlatform = installVorkenPlatform(app, {
-  pool, publicUrl, requireAdmin, learnAnalysisArtifacts, revokeLearnedTrustForFindings, loadAnalysisReport: loadSharedAnalysisReport, loadPlayerProfiles: querySteamOfficialBatch,
+  pool, publicUrl, requireAdmin, learnAnalysisArtifacts, revokeLearnedTrustForFindings, loadAnalysisReport: loadSharedAnalysisReport, loadPlayerProfiles: querySteamOfficialBatch, loadRawAnalysisReport,
 });
 app.get("/relatorio", (_req,res)=>res.sendFile(path.join(__dirname,"public","admin.html")));
 app.get("/servidor", (_req, res) => {

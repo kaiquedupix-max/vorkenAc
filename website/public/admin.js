@@ -2526,7 +2526,7 @@ async function openReport(id, options = {}) {
   const lightDownloadRawReportBtn = document.getElementById("downloadRawReportBtn");
   if (lightDownloadRawReportBtn) {
     lightDownloadRawReportBtn.href =
-      "/api/admin/analyses/" + encodeURIComponent(id) + "/raw";
+      scopedReport ? scopedBase()+"/raw" : "/api/admin/analyses/" + encodeURIComponent(id) + "/raw";
   }
 
   reportCard.classList.remove("report-is-loading");
