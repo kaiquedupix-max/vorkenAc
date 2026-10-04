@@ -3,52 +3,145 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#070a0d">
-  <title>Análise · Vorken Anti-Cheat</title>
+  <meta name="theme-color" content="#031014">
+  <title>Verificação · Vorken Anti-Cheat</title>
   <link rel="icon" type="image/svg+xml" href="/vorken-logo.svg">
-  <link rel="stylesheet" href="/styles.css?v=20260924-brand">
+  <link rel="stylesheet" href="/analysis.css?v=20261004-verification">
 </head>
 <body>
-  <header class="topbar">
-    <div class="shell nav">
-      <a class="brand" href="/"><span class="brand-mark"><img src="/vorken-logo.svg" alt=""></span><span>Vorken<small>ANTI-CHEAT</small></span></a>
-    </div>
-  </header>
+  <div class="analysis-app">
+    <header class="analysis-header">
+      <a class="analysis-brand" href="/" aria-label="Vorken Anti-Cheat">
+        <span class="analysis-brand-mark"><img src="/vorken-logo.svg" alt=""></span>
+        <span class="analysis-brand-copy"><strong>VORKEN</strong><small>ANTI-CHEAT</small></span>
+      </a>
 
-  <main class="shell page">
-    <section id="loading" class="card download-box">
-      <div class="eyebrow">VORKEN SESSION</div>
-      <h1>Carregando análise...</h1>
-    </section>
-
-    <section id="analysisView" class="card download-box hidden">
-      <div class="eyebrow">ANÁLISE AUTORIZADA</div>
-      <h1 id="analysisLabel">Vorken</h1>
-      <p id="analysisText"></p>
-
-      <div class="consent">
-        Antes de iniciar, o aplicativo mostrará exatamente quais categorias técnicas serão analisadas
-        e exigirá consentimento explícito. O Vorken não coleta senhas, cookies, mensagens,
-        fotos, documentos ou conteúdo pessoal dos arquivos. Consulte os
-        <a href="/terms" target="_blank" rel="noopener">termos</a> e a
-        <a href="/privacy" target="_blank" rel="noopener">política de privacidade</a>.
+      <div class="analysis-header-center">
+        <span class="header-kicker" data-i18n="verification">VERIFICAÇÃO</span>
+        <strong data-i18n="privateSession">Sessão privada</strong>
       </div>
 
-      <div class="hero-actions">
-        <a id="downloadBtn" class="button primary" href="#">Baixar Vorken</a>
+      <div class="analysis-header-actions">
+        <div class="language-switch" aria-label="Idioma">
+          <button class="language-btn active" type="button" data-language="pt">PT</button>
+          <button class="language-btn" type="button" data-language="en">EN</button>
+          <button class="language-btn" type="button" data-language="es">ES</button>
+        </div>
+        <span id="headerStatus" class="ready-pill"><span class="ready-dot"></span><span data-i18n="protected">PROTEGIDO</span></span>
       </div>
+    </header>
 
-      <div id="agentVerification" class="message hidden"></div>
-      <div id="analysisStatus" class="message"></div>
-    </section>
+    <main class="analysis-main">
+      <section id="loading" class="state-card center-state">
+        <div class="vorken-loader" aria-hidden="true"><span></span></div>
+        <div>
+          <span class="section-kicker">VORKEN SESSION</span>
+          <h1 data-i18n="loading">Preparando sua verificação...</h1>
+          <p data-i18n="loadingHint">Validando o link exclusivo e os dados da sessão.</p>
+        </div>
+      </section>
 
-    <section id="errorView" class="card download-box hidden">
-      <div class="eyebrow">LINK INDISPONÍVEL</div>
-      <h1>Não foi possível abrir esta análise.</h1>
-      <p id="errorText"></p>
-    </section>
-  </main>
+      <section id="analysisView" class="analysis-grid hidden">
+        <div class="analysis-content">
+          <section class="hero-card">
+            <div class="hero-topline">
+              <div>
+                <span class="section-kicker" data-i18n="authorized">SESSÃO AUTORIZADA</span>
+                <h1 id="playerName">Jogador</h1>
+                <p class="steam-line"><span data-i18n="steam">Steam</span> <code id="steamId">—</code></p>
+              </div>
+              <span id="statusBadge" class="status-badge waiting" data-i18n="waitingBadge">AGUARDANDO</span>
+            </div>
 
-  <script src="/analysis.js"></script>
+            <div class="progress-track" aria-label="Progresso da verificação">
+              <div class="progress-step active" data-step="authorized">
+                <span>01</span>
+                <div><strong data-i18n="stepAuthorized">Autorizada</strong><small data-i18n="stepAuthorizedHint">Link validado</small></div>
+              </div>
+              <div class="progress-line"></div>
+              <div class="progress-step" data-step="scanner">
+                <span>02</span>
+                <div><strong data-i18n="stepScanner">Vorken</strong><small data-i18n="stepScannerHint">Execução</small></div>
+              </div>
+              <div class="progress-line"></div>
+              <div class="progress-step" data-step="analysis">
+                <span>03</span>
+                <div><strong data-i18n="stepAnalysis">Análise</strong><small data-i18n="stepAnalysisHint">Processamento</small></div>
+              </div>
+              <div class="progress-line"></div>
+              <div class="progress-step" data-step="decision">
+                <span>04</span>
+                <div><strong data-i18n="stepDecision">Decisão</strong><small data-i18n="stepDecisionHint">Administração</small></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="download-card">
+            <div class="download-copy">
+              <span class="section-kicker" data-i18n="nextStep">PRÓXIMO PASSO</span>
+              <h2 data-i18n="downloadTitle">Baixe e execute o Vorken</h2>
+              <p id="analysisText" data-i18n="downloadDescription">Baixe o executável exclusivo desta verificação e execute como administrador. Mantenha o Rust aberto até a coleta terminar.</p>
+              <div class="session-expiry"><span data-i18n="validUntil">Link válido até</span> <strong id="expiresAt">—</strong></div>
+            </div>
+            <div class="download-action">
+              <a id="downloadBtn" class="primary-action" href="#">
+                <span class="download-icon">↓</span>
+                <span><strong data-i18n="downloadButton">Baixar Vorken.exe</strong><small data-i18n="windowsExecutable">Executável para Windows</small></span>
+              </a>
+            </div>
+          </section>
+
+          <section class="info-grid">
+            <article class="info-card">
+              <span class="info-icon">◈</span>
+              <div><strong data-i18n="privacyTitle">Privacidade por padrão</strong><p data-i18n="privacyText">O Vorken coleta somente artefatos técnicos necessários à verificação. Senhas, mensagens, fotos e documentos pessoais não fazem parte da análise.</p></div>
+            </article>
+            <article class="info-card">
+              <span class="info-icon">✓</span>
+              <div><strong data-i18n="consentTitle">Consentimento antes da coleta</strong><p data-i18n="consentText">O aplicativo mostra as categorias analisadas e exige sua confirmação antes de iniciar.</p></div>
+            </article>
+          </section>
+
+          <section class="legal-line">
+            <span data-i18n="legalPrefix">Ao continuar, consulte os</span>
+            <a href="/terms" target="_blank" rel="noopener" data-i18n="terms">Termos</a>
+            <span data-i18n="and">e a</span>
+            <a href="/privacy" target="_blank" rel="noopener" data-i18n="privacy">Política de Privacidade</a>.
+          </section>
+        </div>
+
+        <aside class="analysis-sidebar">
+          <section class="side-card current-status">
+            <span class="section-kicker" data-i18n="currentStatus">STATUS ATUAL</span>
+            <div id="statusIcon" class="status-orb">⏱</div>
+            <h2 id="statusTitle" data-i18n="waitingTitle">Aguardando execução</h2>
+            <p id="analysisStatus" data-i18n="waitingText">Baixe o Vorken e execute o arquivo como administrador para iniciar a coleta.</p>
+          </section>
+
+          <section id="agentVerification" class="side-card technical-card hidden">
+            <div class="technical-head"><span class="section-kicker" data-i18n="integrity">INTEGRIDADE DO ARQUIVO</span><span class="shield-mini">✓</span></div>
+            <div class="technical-row"><span>SHA-256</span><code id="sha256Value">—</code></div>
+            <div class="technical-row"><span data-i18n="size">Tamanho</span><strong id="sizeValue">—</strong></div>
+          </section>
+
+          <section class="side-card support-card">
+            <span class="section-kicker" data-i18n="important">IMPORTANTE</span>
+            <p data-i18n="supportText">Não feche o Rust nem interrompa a verificação. Quando a coleta terminar, aguarde a decisão da administração no ticket privado do Discord.</p>
+          </section>
+        </aside>
+      </section>
+
+      <section id="errorView" class="state-card error-state hidden">
+        <div class="error-icon">!</div>
+        <div>
+          <span class="section-kicker" data-i18n="unavailable">LINK INDISPONÍVEL</span>
+          <h1 data-i18n="errorTitle">Não foi possível abrir esta verificação.</h1>
+          <p id="errorText"></p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/analysis.js?v=20261004-verification"></script>
 </body>
 </html>
