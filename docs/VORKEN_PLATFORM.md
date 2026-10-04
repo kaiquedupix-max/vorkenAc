@@ -67,6 +67,14 @@ O download contém chave exclusiva apenas dessa instalação. Guardar como crede
 Comandos locais em website: pnpm install --frozen-lockfile; node --test; node preview-platform.mjs. A prévia é somente localhost e não se conecta a cadastros ou pagamentos reais.
 # Jogadores online e telagem no painel
 
+## Hospedagem atual com nginx
+
+No servidor atual, nginx atende as portas públicas e encaminha o Vorken para `127.0.0.1:18082`, mapeado pelo Coolify à porta 3000 do aplicativo. Não inicie Traefik nas mesmas portas. O domínio principal usa Certbot; o roteamento dos clientes usa `deploy/vorken-tenants.nginx.conf` e um certificado curinga emitido por Lego 4.28.0, que corrige a integração Hostinger da versão 4.27.0.
+
+O token fica em `/etc/vorken/hostinger.token` com permissão 600, o e-mail ACME em `/etc/vorken/acme.email`, e os certificados em `/etc/vorken/acme`. Instale `deploy/vorken-certificate.sh` como `/usr/local/sbin/vorken-certificate` (700), e as unidades service/timer em `/etc/systemd/system`. Só habilite o roteamento após emitir o certificado e validar com `nginx -t`. A renovação diária usa `vorken-certificate.timer`. Não coloque o token da Hostinger no repositório nem nas variáveis do aplicativo.
+
+Para implantar a versão em revisão, use a branch `codex/vorken-independent-platform` no Coolify, `PUBLIC_URL=https://vorken.xyz`, `VORKEN_SUBDOMAINS=true`, as três credenciais Discord e o callback `https://vorken.xyz/api/vorken/auth/callback`. Reinstale o plugin novo em cada Rust. O token da instalação é incluído apenas no download autenticado.
+
 O admin central oferece a aba **Jogadores online**. O cliente tem os mesmos controles em `/servidor`, restritos aos seus servidores. Com mais de um servidor, selecione primeiro o Rust desejado; busque por nome ou SteamID e clique em **Iniciar telagem**. Revise o relatório para **Verificar e liberar jogador** ou banir com provas selecionadas. As ações aguardam confirmação do plugin e usam a mesma fila do bot, sem RCON.
 
 O plugin Vorken 2.0.1 envia a lista de jogadores conectados a cada aproximadamente 10 segundos. O painel atualiza a cada 15 segundos e oculta listas com mais de 30 segundos. Uma lista vazia remove os jogadores que saíram. Instalações existentes precisam baixar e instalar a versão nova do plugin.

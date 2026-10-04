@@ -75,6 +75,7 @@ export async function startVorkenBot(platform) {
         {id:guild.id,allow:[P.ViewChannel,P.ReadMessageHistory],deny:[P.SendMessages]},
         {id:botId,allow:[P.ViewChannel,P.SendMessages,P.ReadMessageHistory,P.EmbedLinks]}]);
       const alerts=await channel(stored.alerts_channel_id,'vorken-alertas',ChannelType.GuildText,privateOverwrites);
+      if(instructions.parentId!==category.id)await instructions.setParent(category.id,{lockPermissions:false});
       await pool.query(`UPDATE vorken_guilds SET verified_role_id=$2,screening_role_id=$3,category_id=$4,verification_channel_id=$5,alerts_channel_id=$6 WHERE id=$1`,
         [guild.id,verified.id,screening.id,category.id,instructions.id,alerts.id]);
       await guild.commands.set(commands);
