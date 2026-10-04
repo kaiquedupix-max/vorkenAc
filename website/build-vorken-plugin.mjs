@@ -2,7 +2,8 @@ import fs from 'node:fs';
 
 const legacySourceUrl=new URL('../rust-plugins/Verificacao.cs',import.meta.url);
 const generatedSourceUrl=new URL('./plugins/Vorken.cs',import.meta.url);
-const hasLegacySource=fs.existsSync(legacySourceUrl);
+const forceGenerated=process.env.VORKEN_PLUGIN_SOURCE==='generated';
+const hasLegacySource=!forceGenerated&&fs.existsSync(legacySourceUrl);
 const original=fs.readFileSync(hasLegacySource?legacySourceUrl:generatedSourceUrl,'utf8').replace(/\r\n/g,'\n');
 let source=original;
 
@@ -106,8 +107,32 @@ source=source.replace(
                       "5. USE O BOTAO DE DOWNLOAD, EXECUTE O VORKEN E AGUARDE\\n" +
                       "A VERIFICACAO E OBRIGATORIA. NAO DESCONECTE.";`);
 
-// Remove o antigo botão que abria uma tela com o convite/URL cru do Discord.
-source=source.replace(/\n\s*ui\.Add\(\s*\n\s*new CuiButton\s*\n\s*\{[\s\S]*?Command = "vorken\.discord"[\s\S]*?\n\s*Ui\s*\n\s*\);\n/, '\n');
+const oldDiscordButton=`
+            ui.Add(
+                new CuiButton
+                {
+                    Button =
+                    {
+                        Color = "0.10 0.35 0.34 1",
+                        Command = "vorken.discord"
+                    },
+                    Text =
+                    {
+                        Text = "MOSTRAR CONVITE DO DISCORD",
+                        FontSize = 16,
+                        Align = TextAnchor.MiddleCenter,
+                        Color = "1 1 1 1"
+                    },
+                    RectTransform =
+                    {
+                        AnchorMin = "0.30 0.12",
+                        AnchorMax = "0.70 0.18"
+                    }
+                },
+                Ui
+            );
+`;
+source=source.replace(oldDiscordButton,'\n');
 
 // O identificador continua interno, mas pode carregar "DiscordID|Nome do ADM".
 source=source.replace(
@@ -124,6 +149,6 @@ source=source.replace(
 
             ulong parsed;`);
 
-if(!source.includes('[Info("Vorken", "Kaique", "2.0.4")]')||!source.includes('SyncBridge')||source.includes('[GF_VERIFICACAO]')||!source.includes('PROCURE O CANAL VERIFICACAO VORKEN')||source.includes('MOSTRAR CONVITE DO DISCORD')||!source.includes('AdministratorDisplay'))throw new Error('Plugin generation failed');
+if(!source.includes('[Info("Vorken", "Kaique", "2.0.4")]')||!source.includes('SyncBridge')||source.includes('[GF_VERIFICACAO]')||!source.includes('PROCURE O CANAL VERIFICACAO VORKEN')||source.includes('MOSTRAR CONVITE DO DISCORD')||!source.includes('AdministratorDisplay')||!source.includes('SEU CODIGO DE VERIFICACAO'))throw new Error('Plugin generation failed');
 fs.mkdirSync(new URL('./plugins/',import.meta.url),{recursive:true});
 fs.writeFileSync(generatedSourceUrl,source);
