@@ -60,7 +60,11 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
     ...(process.env.VORKEN_SUBDOMAINS==='true'?{domain:'.'+rootHost}:{}) };
   const origin = new URL(publicUrl).origin;
   const origins=async req=>{
-    if(req.get('origin')===origin) return true;
+    const requestOrigin=req.get('origin');
+    if(requestOrigin===origin||requestOrigin===new URL(publicUrl).protocol+'//www.'+rootHost) return true;
+    // Fetch Metadata is set by the browser and cannot be supplied by page JavaScript.
+    // Keep Origin validation mandatory whenever the request carries a real origin.
+    if(!requestOrigin&&req.get('sec-fetch-site')==='same-origin')return true;
     if(process.env.VORKEN_SUBDOMAINS!=='true') return false;
     try{const url=new URL(req.get('origin'));
       if(url.protocol!=='https:'||url.port||!url.hostname.endsWith('.'+rootHost)) return false;

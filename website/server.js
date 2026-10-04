@@ -14,6 +14,7 @@ import {
   projectReportPayloadForAdmin,
 } from "./reportPayloadProjection.js";
 import {
+  criticalHardwareFindings,
   canApplyLearnedArtifactTrust,
   catalogWebTargetMatch,
   isArtifactProtectedFromLearning,
@@ -5597,6 +5598,7 @@ async function consolidateExecutableEvidence(
 }
 
 async function addBuiltInReviewFindings(analysisId, report) {
+  for(const finding of criticalHardwareFindings(report))await insertReviewFinding(analysisId,finding.title,"critical",finding.artifactType,finding.artifactValue,finding.evidence);
   const now = Date.now();
 
   const ageDays = (value) => {

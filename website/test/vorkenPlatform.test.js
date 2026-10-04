@@ -91,9 +91,9 @@ test('platform routes isolate customers, confirm decisions and activate payments
   }
   for(const[id,c,g,token]of[[s1,c1,'123456789012345678',token1],[s2,c2,'223456789012345678',token2]])
     await pool.query('INSERT INTO vorken_servers(id,customer_id,guild_id,name,discord_invite,token_hash,slug) VALUES($1,$2,$3,$4,$5,$6,$7)',[id,c,g,'Servidor '+id,'https://discord.gg/test',hash(token),'server-'+id]);
-  const request=async(path,{customerId=c1,owner=false,body,token,origin='https://vorken.xyz',method}={})=>{
+  const request=async(path,{customerId=c1,owner=false,body,token,origin='https://vorken.xyz',method,fetchSite}={})=>{
     const r=await nativeFetch(url+'/api/vorken'+path,{method:method||(body?'POST':'GET'),headers:{'Content-Type':'application/json','X-Vorken-Request':'portal',
-      Origin:origin,Cookie:'vorken_customer='+customerId,...(token?{Authorization:'Bearer '+token}:{}),...(owner?{'X-Test-Owner':'yes'}:{})},
+      ...(origin?{Origin:origin}:{}),...(fetchSite?{'Sec-Fetch-Site':fetchSite}:{}),Cookie:'vorken_customer='+customerId,...(token?{Authorization:'Bearer '+token}:{}),...(owner?{'X-Test-Owner':'yes'}:{})},
       body:body?JSON.stringify(body):undefined});
     const text=await r.text();let data;try{data=JSON.parse(text);}catch{data=text;}return {status:r.status,data};
   };
@@ -101,6 +101,11 @@ test('platform routes isolate customers, confirm decisions and activate payments
     assert.equal((await request('/servers/'+s2+'/plugin',{body:{}})).status,404);
     assert.equal((await request('/servers/'+s1,{method:'PATCH',body:{name:'New',discordInvite:'https://discord.gg/test'},origin:'https://evil.test'})).status,403);
     assert.equal((await request('/admin')).status,401);
+    const body={name:'New',discordInvite:'https://discord.gg/test'};
+    assert.equal((await request('/servers/'+s1,{method:'PATCH',body,origin:'https://www.vorken.xyz'})).status,200);
+    assert.equal((await request('/servers/'+s1,{method:'PATCH',body,origin:null,fetchSite:'same-origin'})).status,200);
+    assert.equal((await request('/servers/'+s1,{method:'PATCH',body,origin:null})).status,403);
+    assert.equal((await request('/servers/'+s1,{method:'PATCH',body,origin:'https://evil.test',fetchSite:'same-origin'})).status,403);
   });
   await t.test('personal invites bind Discord identity, scope roster/reports and revoke immediately',async()=>{
     const invited=await request('/servers/'+s1+'/team/invites',{body:{discordId:'223456789012345678'}});

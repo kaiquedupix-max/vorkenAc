@@ -20,7 +20,7 @@ const ticketCopy={
 };
 
 const statusCopy={
-  pt:{waiting:['⏳ Aguardando execução','O link já está liberado. Baixe o Vorken e execute como administrador.'],collecting:['🧪 Coleta iniciada','O Vorken foi iniciado e a coleta técnica está em andamento. Não feche o Rust nem o Vorken.'],processing:['🔎 Coleta enviada','A coleta terminou e o relatório foi enviado para análise. Aguarde a administração.'],completed:['✅ Análise pronta','O relatório foi processado. Aguarde a decisão da administração neste ticket.']},
+  pt:{waiting:['⏳ Aguardando execução','O link já está liberado. Baixe o Vorken e execute como administrador.'],collecting:['🧪 Scanner Vorken aberto','O jogador abriu o scanner Vorken e a coleta técnica está em andamento. Não feche o Rust nem o Vorken.'],processing:['🔎 Coleta enviada','A coleta terminou e o relatório foi enviado para análise. Aguarde a administração.'],completed:['✅ Análise pronta','O relatório foi processado. Aguarde a decisão da administração neste ticket.']},
   en:{waiting:['⏳ Waiting for execution','The link is ready. Download Vorken and run it as administrator.'],collecting:['🧪 Collection started','Vorken is running and technical collection is in progress. Do not close Rust or Vorken.'],processing:['🔎 Collection submitted','Collection is finished and the report was submitted for analysis. Wait for the administration.'],completed:['✅ Analysis ready','The report has been processed. Wait for the administration decision in this ticket.']},
   es:{waiting:['⏳ Esperando ejecución','El enlace ya está disponible. Descarga Vorken y ejecútalo como administrador.'],collecting:['🧪 Recopilación iniciada','Vorken está ejecutándose y la recopilación técnica está en curso. No cierres Rust ni Vorken.'],processing:['🔎 Recopilación enviada','La recopilación terminó y el informe fue enviado para análisis. Espera a la administración.'],completed:['✅ Análisis listo','El informe fue procesado. Espera la decisión de la administración en este ticket.']}
 };
@@ -45,11 +45,11 @@ function ticketLanguageButtons(sessionId,prefix,extra=''){
     .setLabel(lang.toUpperCase()).setStyle(ButtonStyle.Secondary));
 }
 
-function statusEmbed(stage,lang='pt'){
+function statusEmbed(stage,lang='pt',session=null){
   lang=language(lang);
   const pair=statusCopy[lang][stage]||statusCopy[lang].processing;
   const color=stage==='completed'?0x35de91:stage==='collecting'?0x2bf0c9:stage==='processing'?0x49b5bd:0xf0b429;
-  return new EmbedBuilder().setColor(color).setTitle(pair[0]).setDescription(pair[1]).setFooter({text:'Vorken Scanner · '+(lang==='pt'?'Status da verificação':lang==='en'?'Verification status':'Estado de la verificación')}).setTimestamp();
+  return new EmbedBuilder().setColor(color).setTitle(pair[0]).setDescription((session?'**Jogador:** '+clean(session.player_name,100)+' · SteamID '+clean(session.steam_id,30)+(session.administratorName?'\n**Responsável pela telagem:** '+clean(session.administratorName,100):'')+'\n\n':'')+pair[1]).setFooter({text:'Vorken Scanner · '+(lang==='pt'?'Status da verificação':lang==='en'?'Verification status':'Estado de la verificación')}).setTimestamp();
 }
 
 function decisionEmbed(action,reason,lang='pt'){
@@ -377,7 +377,7 @@ export async function startVorkenBot(platform){
           const [,lang,sessionId,stage]=i.customId.split(':');
           const context=await sessionContext(sessionId);if(!context)throw new Error('Sessão não encontrada.');
           const row=new ActionRowBuilder().addComponents(...ticketLanguageButtons(sessionId,'vorken_status_lang',stage));
-          await i.update({embeds:[statusEmbed(stage,lang)],components:[row],allowedMentions:noMentions});return;
+          await i.update({embeds:[statusEmbed(stage,lang,{...context.row,administratorName:context.admin.name})],components:[row],allowedMentions:noMentions});return;
         }
         if(i.customId.startsWith('vorken_decision_lang:')){
           const [,lang,sessionId,action]=i.customId.split(':');
@@ -454,7 +454,8 @@ export async function startVorkenBot(platform){
         if(!channel?.isSendable()){await db.query('UPDATE vorken_sessions SET notified_stage=$2 WHERE id=$1',[s.id,s.processing_stage]);continue;}
         const stage=['waiting','collecting','processing','completed'].includes(s.processing_stage)?s.processing_stage:'processing';
         const row=new ActionRowBuilder().addComponents(...ticketLanguageButtons(s.id,'vorken_status_lang',stage));
-        await channel.send({embeds:[statusEmbed(stage,'pt')],components:[row],allowedMentions:noMentions});
+        const administrator=await administratorIdentity(channel.guild,s.administrator_id);
+        await channel.send({embeds:[statusEmbed(stage,'pt',{...s,administratorName:administrator.name})],components:[row],allowedMentions:noMentions});
         await db.query('UPDATE vorken_sessions SET notified_stage=$2 WHERE id=$1',[s.id,s.processing_stage]);
       }
 
