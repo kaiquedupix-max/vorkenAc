@@ -19,6 +19,22 @@ export async function initVorkenPlatform(pool) {
   await pool.query("UPDATE vorken_plans SET price_cents=CASE id WHEN 'mensal' THEN 5000 WHEN 'trimestral' THEN 13500 WHEN 'semestral' THEN 25500 WHEN 'anual' THEN 48000 END WHERE price_cents IS NULL");
 }
 
+export async function backfillLegacyVorkenBans(pool){
+  // The old integration has one known Discord community. Never guess a customer by name.
+  const servers=await pool.query('SELECT id FROM vorken_servers WHERE guild_id=$1',[ '1499084540356853912' ]);
+  if(servers.rows.length!==1)return 0;
+  const target=servers.rows[0].id;
+  const result=await pool.query(`INSERT INTO vorken_bans(id,server_id,steam_id,reason,evidence,created_at,legacy_analysis_id)
+    SELECT gen_random_uuid(),$1,a.external_player_id,COALESCE(NULLIF(ep.reason,''),'Banimento confirmado pelo Vorken; motivo original não registrado.'),
+      COALESCE(ep.findings,'[]'::jsonb),COALESCE(a.external_decision_at,a.created_at),a.id
+    FROM analyses a LEFT JOIN LATERAL(SELECT reason,findings FROM evidence_packages WHERE analysis_id=a.id ORDER BY id DESC LIMIT 1) ep ON TRUE
+    WHERE a.external_source IN ('guerra_fria','guerra_fria_manual') AND a.external_decision='deny'
+      AND a.external_player_id ~ '^7656119[0-9]{10}$'
+      AND NOT EXISTS(SELECT 1 FROM vorken_sessions v WHERE v.analysis_id=a.id)
+    ON CONFLICT(legacy_analysis_id) DO NOTHING RETURNING id`,[target]);
+  return result.rows.length;
+}
+
 export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, learnAnalysisArtifacts, revokeLearnedTrustForFindings }) {
   const secret = () => process.env.SESSION_SECRET || '';
   const rootHost=new URL(publicUrl).hostname;
@@ -444,6 +460,23 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
     if(req.body.type!=='payment') return res.json({ok:true});
     await processPayment(await mp('/v1/payments/'+id));res.json({ok:true});
   }));
+  app.get('/api/vorken/alerts/:id',route(async(req,res)=>{
+    const u=await customer(req);if(!uuid(req.params.id))fail(400,'Alerta inválido.');
+    const r=await pool.query(`SELECT n.payload FROM vorken_notices n JOIN vorken_servers s ON s.id::text=n.payload->>'serverId'
+      WHERE n.id=$1 AND n.kind='prior_ban' AND ${accessSql('s')}`,[req.params.id,u.id]);
+    if(!r.rows[0])fail(404,'Alerta não encontrado.');res.json(r.rows[0].payload);
+  }));
+  app.get('/api/vorken/admin/bans',requireAdmin,route(async(req,res)=>{
+    const offset=Math.max(0,Number.parseInt(req.query.offset,10)||0),q=clean(req.query.q,100);
+    const r=await pool.query(`SELECT b.*,s.name AS server_name,COALESCE(v.player_name,b.player_name) AS player_name,
+      COALESCE(NULLIF(split_part(c.actor_id,'|',2),''),(SELECT name FROM vorken_customers WHERE discord_id=split_part(c.actor_id,'|',1)),c.actor_id) AS administrator,
+      COALESCE(v.analysis_id,b.legacy_analysis_id) AS analysis_id,COUNT(*) OVER()::int AS total
+      FROM vorken_bans b JOIN vorken_servers s ON s.id=b.server_id LEFT JOIN vorken_sessions v ON v.id=b.session_id
+      LEFT JOIN LATERAL(SELECT actor_id FROM vorken_commands WHERE (session_id=b.session_id AND action='deny' OR id=b.command_id) AND status='applied' ORDER BY completed_at DESC LIMIT 1)c ON TRUE
+      WHERE $1='' OR b.steam_id ILIKE '%'||$1||'%' OR s.name ILIKE '%'||$1||'%' OR b.reason ILIKE '%'||$1||'%' OR v.player_name ILIKE '%'||$1||'%'
+      ORDER BY b.created_at DESC,b.id LIMIT 100 OFFSET $2`,[q,offset]);
+    res.json({bans:r.rows,total:r.rows[0]?.total||0,offset});
+  }));
   app.get('/api/vorken/admin',requireAdmin,route(async(_req,res)=>{
     const [customers,servers,orders,plans,audits,bans]=await Promise.all([
       pool.query(`SELECT c.*,l.plan_id,l.status AS license_status,l.expires_at AS license_until,l.max_servers FROM vorken_customers c LEFT JOIN vorken_licenses l ON l.customer_id=c.id ORDER BY c.created_at DESC LIMIT 1000`),
@@ -520,7 +553,7 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
         if(event.eventType==='player_join'){
           const bans=await db.query(`SELECT b.id,b.reason,b.created_at,s.name AS server_name,b.evidence FROM vorken_bans b JOIN vorken_servers s ON s.id=b.server_id
             WHERE b.steam_id=$1 AND b.active AND b.server_id<>$2 ORDER BY b.created_at DESC LIMIT 10`,[event.steamId,server.id]);
-          if(bans.rows.length) await notify(db,server.guild_id,'prior_ban',{steamId:event.steamId,playerName:clean(event.playerName,80),serverName:server.name,bans:bans.rows});
+          if(bans.rows.length) await notify(db,server.guild_id,'prior_ban',{serverId:server.id,steamId:event.steamId,playerName:clean(event.playerName,80),serverName:server.name,bans:bans.rows});
         } else if(event.eventType==='session_started'&&uuid(event.sessionId)&&/^\d{4}$/.test(event.code)){
           if(!await serverActive(server,db)) continue;
           const expiry=new Date(event.expiresAt); if(!Number.isFinite(expiry.getTime())) continue;
@@ -531,7 +564,11 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
           if(ended.rows[0]?.ticket_channel_id) await notify(db,server.guild_id,'decision',{sessionId:event.sessionId,
             steamId:event.steamId,discordUserId:ended.rows[0].discord_user_id,channelId:ended.rows[0].ticket_channel_id,action:'cancel',reason:'Sessão encerrada pelo plugin: '+clean(event.reason||event.eventType)});
           if(['refusal_ban','timeout_ban'].includes(event.eventType))await notify(db,server.guild_id,'public_ban',{serverId:server.id,steamId:event.steamId,playerName:clean(event.playerName,100),serverName:server.name,reason:clean(event.reason,500)});
-          // Only bans with selected Vorken evidence are shared across the network.
+          if(['refusal_ban','timeout_ban'].includes(event.eventType)){
+            const session=(await db.query('SELECT id FROM vorken_sessions WHERE id=$1 AND server_id=$2',[event.sessionId,server.id])).rows[0];
+            if(session)await db.query('INSERT INTO vorken_bans(id,session_id,server_id,steam_id,reason,evidence,player_name) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(session_id) DO NOTHING',
+              [crypto.randomUUID(),session.id,server.id,event.steamId,clean(event.reason,500)||'Banimento por política de verificação do servidor.',JSON.stringify([{type:'verification_policy',event:event.eventType,reason:clean(event.reason,500)}]),clean(event.playerName,80)]);
+          }
         }
       }
       for(const receipt of receipts){
@@ -542,6 +579,16 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
         await db.query("UPDATE vorken_commands SET status=$2,result=$3,completed_at=NOW() WHERE id=$1",[command.id,receipt.ok?'applied':'failed',clean(receipt.result,500)]);
         if(command.action==='start') await notify(db,server.guild_id,'command',{steamId:command.steam_id,actorId:command.actor_id,
           result:clean(receipt.result,500),ok:receipt.ok,serverName:server.name});
+        if(command.action==='ban_prior'){
+          const notice=(await db.query("SELECT payload FROM vorken_notices WHERE kind='prior_ban' AND payload->>'commandId'=$1",[command.id])).rows[0];
+          if(receipt.ok&&notice){
+            const p=notice.payload;
+            await db.query('INSERT INTO vorken_bans(id,server_id,steam_id,reason,evidence,command_id,player_name) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(command_id) DO NOTHING',
+              [crypto.randomUUID(),server.id,command.steam_id,command.reason,JSON.stringify(p.bans),command.id,p.playerName]);
+            await notify(db,server.guild_id,'public_ban',{serverId:server.id,playerName:p.playerName,serverName:server.name,steamId:command.steam_id,reason:command.reason,administratorName:command.actor_id.split('|').slice(1).join('|')});
+          }
+          await notify(db,server.guild_id,'command',{steamId:command.steam_id,actorId:command.actor_id,result:clean(receipt.result,500),ok:receipt.ok,serverName:server.name});
+        }
         if(command.session_id&&['approve','deny'].includes(command.action)){
           if(!receipt.ok){await db.query("UPDATE vorken_sessions SET status='redeemed' WHERE id=$1 AND status='deciding'",[command.session_id]);continue;}
           const s=(await db.query('SELECT * FROM vorken_sessions WHERE id=$1',[command.session_id])).rows[0];

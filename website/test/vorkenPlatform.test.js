@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import { PGlite } from '@electric-sql/pglite';
-import { installVorkenPlatform,initVorkenPlatform } from '../vorkenPlatform.js';
+import { installVorkenPlatform,initVorkenPlatform,backfillLegacyVorkenBans } from '../vorkenPlatform.js';
 import { hash,seal,addMonths,licensed,managesGuild,validDiscordInvite,serverSlug } from '../vorkenDomain.js';
 import { canPublish,publicNotice,verificationEmbed,verificationSettings } from '../vorkenSettings.js';
 
@@ -191,6 +191,37 @@ test('platform routes isolate customers, confirm decisions and activate payments
     const notice=(await pool.query("SELECT payload FROM vorken_notices WHERE kind='prior_ban'")).rows[0].payload;
     assert.equal(notice.bans[0].reason,'Proof checked');assert.equal(notice.bans[0].evidence.length,1);
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM vorken_commands WHERE server_id=$1',[s2])).rows[0].n,0);
+  });
+  await t.test('prior ban proofs belong to the destination team; general audit is owner only',async()=>{
+    const n=(await pool.query("SELECT id FROM vorken_notices WHERE kind='prior_ban' LIMIT 1")).rows[0];
+    assert.equal((await request('/alerts/'+n.id)).status,404);
+    const allowed=await request('/alerts/'+n.id,{customerId:c2});assert.equal(allowed.status,200);assert.equal(allowed.data.serverId,s2);
+    assert.equal((await request('/admin/bans')).status,401);
+    const audit=await request('/admin/bans',{owner:true});assert.equal(audit.status,200);assert.equal(audit.data.bans[0].reason,'Proof checked');
+    assert.equal((await request('/admin/bans?q=no-such-player',{owner:true})).data.bans.length,0);
+  });
+  await t.test('local prior-ban action enters the audit only after Rust acknowledgement and cannot duplicate',async()=>{
+    const n=(await pool.query("SELECT * FROM vorken_notices WHERE kind='prior_ban' LIMIT 1")).rows[0];
+    const commandId=await platform.queue(pool,s2,'ban_prior',event.steamId,'223456789012345678|Administrador Xtreme',null,'Provas do servidor de origem revisadas');
+    await pool.query('UPDATE vorken_notices SET payload=$2 WHERE id=$1',[n.id,JSON.stringify({...n.payload,commandId})]);
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM vorken_bans WHERE command_id=$1',[commandId])).rows[0].n,0);
+    for(let i=0;i<2;i++)assert.equal((await request('/plugin/sync',{token:token2,body:{receipts:[{id:commandId,ok:true,result:'Banimento aplicado'}]}})).status,200);
+    const audit=await request('/admin/bans',{owner:true});assert.equal(audit.status,200);
+    const ban=audit.data.bans.find(b=>b.command_id===commandId);assert.equal(ban.administrator,'Administrador Xtreme');assert.equal(ban.evidence[0].reason,'Proof checked');
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM vorken_bans WHERE command_id=$1',[commandId])).rows[0].n,1);
+  });
+  await t.test('historical confirmed Vorken bans import once and exclude unconfirmed analyses',async()=>{
+    await db.exec("ALTER TABLE analyses ADD COLUMN created_at TIMESTAMPTZ DEFAULT NOW(); CREATE TABLE evidence_packages(id BIGSERIAL,analysis_id BIGINT,reason TEXT,findings JSONB);");
+    await pool.query('UPDATE vorken_servers SET guild_id=$1 WHERE id=$2',['1499084540356853912',s1]).catch(async()=>{
+      await pool.query('INSERT INTO vorken_guilds(id,customer_id,name) VALUES($1,$2,$3)',['1499084540356853912',c1,'Guerra Fria']);
+      await pool.query('UPDATE vorken_servers SET guild_id=$1 WHERE id=$2',['1499084540356853912',s1]);
+    });
+    const legacy=(await pool.query("INSERT INTO analyses(external_source,external_player_id,external_decision) VALUES('guerra_fria','76561198000000009','deny') RETURNING id")).rows[0];
+    await pool.query('INSERT INTO evidence_packages(analysis_id,reason,findings) VALUES($1,$2,$3)',[legacy.id,'Motivo histórico',JSON.stringify([{title:'Prova histórica'}])]);
+    await pool.query("INSERT INTO analyses(external_source,external_player_id) VALUES('guerra_fria','76561198000000008')");
+    assert.equal(await backfillLegacyVorkenBans(pool),1);assert.equal(await backfillLegacyVorkenBans(pool),0);
+    const imported=(await pool.query('SELECT * FROM vorken_bans WHERE legacy_analysis_id=$1',[legacy.id])).rows[0];
+    assert.equal(imported.reason,'Motivo histórico');assert.equal(imported.evidence[0].title,'Prova histórica');
   });
   await t.test('license revocation stops commands and new sessions without disabling cleanup',async()=>{
     await request('/admin/customers/'+c1+'/license',{owner:true,body:{action:'revoke'}});

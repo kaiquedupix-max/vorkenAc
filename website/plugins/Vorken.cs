@@ -8,7 +8,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Vorken", "Kaique", "2.0.4")]
+    [Info("Vorken", "Kaique", "2.0.5")]
     [Description("Telagem administrativa integrada ao Vorken/Discord com codigo individual, conexao HTTPS independente, sem RCON.")]
     public class Vorken : RustPlugin
     {
@@ -214,7 +214,7 @@ namespace Oxide.Plugins
                     if (player != null && player.IsConnected && !player.IsNpc)
                         players.Add(new BridgePlayer { steamId = player.UserIDString, name = player.displayName });
             }
-            string payload = JsonConvert.SerializeObject(new { version = "2.0.4", events = events, receipts = receipts, players = players });
+            string payload = JsonConvert.SerializeObject(new { version = "2.0.5", events = events, receipts = receipts, players = players });
             webrequest.Enqueue(ApiBase + "/api/vorken/plugin/sync", payload, (status, response) => {
                 syncPending = false;
                 if (unloading) return;
@@ -255,7 +255,6 @@ namespace Oxide.Plugins
             if (command == null || !Guid.TryParse(command.id, out commandId) || !ulong.TryParse(command.steamId, out steamId)) return;
             if (bridge.Completed.Contains(command.id))
             {
-                // An acknowledged command should never be delivered again.
                 return;
             }
             if (bridge.Receipts.ContainsKey(command.id)) return;
@@ -268,7 +267,20 @@ namespace Oxide.Plugins
                     if (!sessions.TryGetValue(steamId, out session))
                         Execute(null, new[] { "iniciar", command.steamId }, "discord:" + command.actorId);
                     receipt.ok = sessions.TryGetValue(steamId, out session);
-                    receipt.result = receipt.ok ? "Telagem iniciada." : "Jogador precisa estar conectado, vivo, acordado e fora de veiculos.";
+                    receipt.result = receipt.ok ? "Verificacao iniciada." : "Jogador precisa estar conectado, vivo, acordado e fora de veiculos.";
+                }
+                else if (command.action == "ban_prior")
+                {
+                    BasePlayer target = Find(steamId);
+                    string name = target != null ? target.displayName : command.steamId;
+                    string reason = Clean(command.reason);
+                    if (string.IsNullOrWhiteSpace(reason)) throw new Exception("Motivo obrigatorio.");
+                    if (sessions.ContainsKey(steamId)) End(steamId, null);
+                    ServerUsers.Set(steamId, ServerUsers.UserGroup.Banned, name, reason);
+                    ServerUsers.Save();
+                    if (target != null && target.IsConnected) target.Kick(reason);
+                    AnnounceBridge("deny", name);
+                    receipt.ok = true; receipt.result = "Banimento anterior confirmado pela administracao deste servidor.";
                 }
                 else if (!sessions.TryGetValue(steamId, out session) || session.Id != command.sessionId)
                 {
@@ -2057,4 +2069,3 @@ namespace Oxide.Plugins
         }
     }
 }
-

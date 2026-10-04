@@ -50,6 +50,13 @@ CREATE TABLE IF NOT EXISTS vorken_bans (
  steam_id TEXT NOT NULL, reason TEXT NOT NULL, evidence JSONB NOT NULL, active BOOLEAN NOT NULL DEFAULT TRUE, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS vorken_ban_player ON vorken_bans(steam_id) WHERE active;
+ALTER TABLE vorken_bans ADD COLUMN IF NOT EXISTS legacy_analysis_id BIGINT REFERENCES analyses(id);
+ALTER TABLE vorken_bans ADD COLUMN IF NOT EXISTS command_id UUID REFERENCES vorken_commands(id);
+ALTER TABLE vorken_bans ADD COLUMN IF NOT EXISTS player_name TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS vorken_ban_command ON vorken_bans(command_id);
+CREATE UNIQUE INDEX IF NOT EXISTS vorken_legacy_ban_analysis ON vorken_bans(legacy_analysis_id);
+ALTER TABLE vorken_commands DROP CONSTRAINT IF EXISTS vorken_commands_action_check;
+ALTER TABLE vorken_commands ADD CONSTRAINT vorken_commands_action_check CHECK(action IN ('start','attend','approve','deny','ban_prior'));
 CREATE TABLE IF NOT EXISTS vorken_notices (
  id UUID PRIMARY KEY, guild_id TEXT NOT NULL REFERENCES vorken_guilds(id), kind TEXT NOT NULL, payload JSONB NOT NULL,
  sent_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

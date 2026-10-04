@@ -19,7 +19,7 @@ import {
   isArtifactProtectedFromLearning,
 } from "./detectionPolicyV4.js";
 import { initRemoteSupportDb, installRemoteSupport } from "./remoteSupport.js";
-import { initVorkenPlatform, installVorkenPlatform } from "./vorkenPlatform.js";
+import { initVorkenPlatform, installVorkenPlatform, backfillLegacyVorkenBans } from "./vorkenPlatform.js";
 import { startVorkenBot } from "./vorkenBot.js";
 
 const { Pool } = pg;
@@ -10781,6 +10781,7 @@ app.get("/", (req, res, next) => {
 app.get("/admin/clientes", (_req, res) => {
   res.sendFile(path.join(__dirname, "public", "clientes.html"));
 });
+app.get('/admin/banimentos', (_req,res)=>res.sendFile(path.join(__dirname,'public','banimentos.html')));
 app.use("/api/vorken", (_req, res) => res.status(404).json({ message: "Recurso não encontrado." }));
 
 app.get("*", (_req, res) => {
@@ -10791,6 +10792,8 @@ initDb()
   .then(async () => {
     await initRemoteSupportDb(pool);
     await initVorkenPlatform(pool);
+    const importedBans=await backfillLegacyVorkenBans(pool);
+    console.log('Banimentos históricos Vorken importados:',importedBans);
     await disableLearnedArtifactsNowInCatalog();
     await backfillPreviouslyApprovedAnalyses();
 

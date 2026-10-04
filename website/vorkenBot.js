@@ -87,7 +87,7 @@ export async function startVorkenBot(platform){
     try{
       await refreshBanCount().catch(e=>console.error('Vorken statistics:',e.code||e.name));
       const messages=[...(playerCount===null?[]:[`🔍 ${playerCount} jogadores · ${machineCount} máquinas verificadas`]),
-        banCount===null?'🛡️ Vorken Scanner · Proteção para Rust':`🛡️ ${banCount} trapaceiros banidos por Vorken Scanner`,
+        banCount===null?'🛡️ Vorken Scanner · Proteção para Rust':`🛡️ ${banCount} jogadores banidos pelo Vorken Scanner`,
         '🚀 Quer usar no seu servidor? '+plansUrl.replace(/^https?:\/\//,'')];
       client.user.setPresence({status:'online',activities:[{name:'Custom Status',type:ActivityType.Custom,state:messages[presenceIndex++%messages.length]}]});
     }finally{presenceUpdating=false;}
@@ -153,9 +153,15 @@ export async function startVorkenBot(platform){
         {id:guild.id,allow:[P.ViewChannel,P.ReadMessageHistory,P.SendMessages],deny:[P.AttachFiles,P.EmbedLinks]},
         {id:botId,allow:[P.ViewChannel,P.SendMessages,P.ReadMessageHistory,P.EmbedLinks,P.ManageMessages]}]);
       const alerts=await channel(stored.alerts_channel_id,'vorken-alertas',ChannelType.GuildText,privateOverwrites);
+      await alerts.permissionOverwrites.set(privateOverwrites);
       if(instructions.parentId!==category.id)await instructions.setParent(category.id,{lockPermissions:false});
       await instructions.permissionOverwrites.edit(guild.id,{ViewChannel:true,ReadMessageHistory:true,SendMessages:true,AttachFiles:false,EmbedLinks:false});
       await instructions.permissionOverwrites.edit(botId,{ViewChannel:true,SendMessages:true,ReadMessageHistory:true,EmbedLinks:true,ManageMessages:true});
+      const previousMessages=await instructions.messages.fetch({limit:50});
+      for(const message of previousMessages.values()){
+        const oldFeedback=message.author.id===botId&&/^<@!?\d+> /.test(message.content)&&/código (inválido|validado)|Não foi possível validar o código/.test(message.content);
+        if(!message.author.bot&&/^\d{4}$/.test(message.content.trim())||oldFeedback)await message.delete().catch(error=>console.error('Vorken limpeza de código:',error.code||error.name));
+      }
       await pool.query(`UPDATE vorken_guilds SET verified_role_id=$2,screening_role_id=$3,category_id=$4,verification_channel_id=$5,alerts_channel_id=$6 WHERE id=$1`,
         [guild.id,verified.id,screening.id,category.id,instructions.id,alerts.id]);
       await guild.commands.set(commands);
@@ -276,9 +282,10 @@ export async function startVorkenBot(platform){
     return ticket;
   }
 
-  async function temporary(channel,content,userId){
-    const message=await channel.send({content:`<@${userId}> ${content}`,allowedMentions:{users:[userId]}}).catch(()=>null);
-    if(message){const timer=setTimeout(()=>message.delete().catch(()=>{}),10000);timer.unref?.();}
+  async function privateCodeFeedback(user,content){
+    await user.send({content,allowedMentions:noMentions}).catch(error=>{
+      console.error('Vorken retorno privado do código:',error.code||error.name);
+    });
   }
 
   client.on('messageCreate',async message=>{
@@ -286,8 +293,15 @@ export async function startVorkenBot(platform){
     const config=(await pool.query('SELECT * FROM vorken_guilds WHERE id=$1 AND verification_channel_id=$2',[message.guildId,message.channelId])).rows[0];
     if(!config)return;
     const code=message.content.trim();
-    if(!/^\d{4}$/.test(code))return;
-    await message.delete().catch(()=>{});
+    try{await message.delete();}catch(error){
+      console.error('Vorken remoção de mensagem no canal de verificação:',error.code||error.name);
+      await privateCodeFeedback(message.author,'Não foi possível apagar sua mensagem. Avise a administração para conceder ao Vorken a permissão Gerenciar mensagens neste canal.');
+      return;
+    }
+    if(!/^\d{4}$/.test(code)){
+      await privateCodeFeedback(message.author,'Envie somente os 4 dígitos exibidos no Rust no canal de verificação.');
+      return;
+    }
     try{
       const matches=(await pool.query(`SELECT v.id,v.server_id FROM vorken_sessions v JOIN vorken_servers s ON s.id=v.server_id
         WHERE s.guild_id=$1 AND s.enabled AND v.code=$2 AND v.status IN ('pending','redeemed') ORDER BY v.created_at DESC LIMIT 3`,[message.guildId,code])).rows;
@@ -296,9 +310,9 @@ export async function startVorkenBot(platform){
       const server=await licensedServer(message.guildId,matches[0].server_id);
       const session=await redeem(server,code,message.author.id);
       const ticket=await ensureTicket(session);
-      if(ticket)await temporary(message.channel,'código validado. Sua sala privada está pronta: <#'+ticket.id+'>',message.author.id);
-      else await temporary(message.channel,'código validado. Sua sala privada está sendo criada.',message.author.id);
-    }catch(error){await temporary(message.channel,error.message||'Não foi possível validar o código.',message.author.id);}
+      if(ticket)await privateCodeFeedback(message.author,'✅ Código validado. Sua sala privada está pronta: https://discord.com/channels/'+message.guildId+'/'+ticket.id);
+      else await privateCodeFeedback(message.author,'✅ Código validado. Sua sala privada está sendo criada.');
+    }catch(error){await privateCodeFeedback(message.author,error.message||'Não foi possível validar o código.');}
   });
 
   client.on('interactionCreate',async i=>{
@@ -310,6 +324,42 @@ export async function startVorkenBot(platform){
     }
     if(i.isButton()){
       try{
+        if(i.customId.startsWith('vorken_prior:')){
+          await i.deferReply({flags:MessageFlags.Ephemeral});
+          const member=await i.guild.members.fetch(i.user.id);
+          if(!staff(member))throw new Error('Somente a administração pode revisar este alerta.');
+          const [,action,id]=i.customId.split(':');
+          if(!['proof','ban','start','allow','ignore','confirm'].includes(action))throw new Error('Ação inválida.');
+          await tx(async db=>{
+            const notice=(await db.query("SELECT * FROM vorken_notices WHERE id::text=$1 AND guild_id=$2 AND kind='prior_ban' FOR UPDATE",[id,i.guildId])).rows[0];
+            if(!notice?.payload?.serverId)throw new Error('Alerta não encontrado ou antigo.');
+            const p=notice.payload;
+            await licensedServer(i.guildId,p.serverId);
+            if(action==='proof'){
+              const evidence=(p.bans||[]).map(b=>({servidor:b.server_name,motivo:b.reason,data:b.created_at,provas:b.evidence}));
+              await i.editReply({content:'Provas do banimento de '+clean(p.playerName,80)+'. Revise o relatório antes de decidir.',files:[{attachment:Buffer.from(JSON.stringify(evidence,null,2)),name:'provas-vorken.json'}],allowedMentions:noMentions});return;
+            }
+            if(p.reviewed)throw new Error('Este alerta já recebeu uma decisão administrativa.');
+            if(action==='ban'){
+              await i.editReply({content:'Confirmar banimento de '+clean(p.playerName,80)+' neste servidor com base nas provas do alerta?',components:[new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('vorken_prior:confirm:'+id).setLabel('Confirmar banimento neste servidor').setStyle(ButtonStyle.Danger))],allowedMentions:noMentions});return;
+            }
+            const actor=i.user.id+'|'+clean(member.displayName||i.user.username,80);
+            if(action==='confirm'){
+              const server=(await db.query('SELECT plugin_version FROM vorken_servers WHERE id=$1',[p.serverId])).rows[0];
+              if(!server?.plugin_version?.startsWith('2.0.5'))throw new Error('Atualize o plugin deste servidor para Vorken 2.0.5 antes de usar este botão.');
+              const reason=clean('Banimento anterior: '+(p.bans||[]).map(b=>b.server_name+': '+b.reason).join('; '),500);
+              p.commandId=await queue(db,p.serverId,'ban_prior',p.steamId,actor,null,reason);
+            }else if(action==='start'){
+              const pending=await db.query("SELECT id FROM vorken_commands WHERE server_id=$1 AND steam_id=$2 AND action='start' AND status='pending'",[p.serverId,p.steamId]);
+              if(pending.rows.length)throw new Error('Já existe uma solicitação de verificação pendente.');
+              await queue(db,p.serverId,'start',p.steamId,actor);
+            }
+            p.reviewed={action,administrator:i.user.id,at:new Date().toISOString()};
+            await db.query('UPDATE vorken_notices SET payload=$2 WHERE id=$1',[notice.id,JSON.stringify(p)]);
+            await platform.audit(db,i.user.id,'prior_ban_'+action,p.serverId,{noticeId:id,steamId:p.steamId});
+            await i.editReply(action==='confirm'?'Banimento enviado. Aguarde a confirmação do plugin.':action==='start'?'Verificação enviada ao servidor.':action==='allow'?'Jogador autorizado nesta revisão. O banimento do servidor de origem permanece registrado.':'Alerta ignorado nesta revisão.');
+          });return;
+        }
         if(i.customId.startsWith('vorken_lang:')){
           const [,lang,id]=i.customId.split(':');
           const server=(await pool.query('SELECT * FROM vorken_servers WHERE id=$1 AND guild_id=$2',[id,i.guildId])).rows[0];
@@ -363,7 +413,7 @@ export async function startVorkenBot(platform){
       }else{
         await refreshBanCount().catch(e=>console.error('Vorken statistics:',e.code||e.name));
         const embed=new EmbedBuilder().setColor(0x20d8b0).setTitle('Vorken Scanner · Proteção para Rust')
-          .setDescription((banCount===null?'':`🔍 **${playerCount} jogadores · ${machineCount} máquinas verificadas**\n🛡️ **${banCount} trapaceiros banidos por Vorken Scanner**\n\n`)+
+          .setDescription((banCount===null?'':`🔍 **${playerCount} jogadores · ${machineCount} máquinas verificadas**\n🛡️ **${banCount} jogadores banidos pelo Vorken Scanner**\n\n`)+
             'Use **/telagem** para iniciar a verificação. O jogador apenas envia os **4 dígitos diretamente no canal Verificação Vorken** e a sala privada é criada automaticamente.')
           .addFields({name:'Planos e contratação',value:plansUrl})
           .setFooter({text:'Vorken Scanner · Verificação integrada e privada'});
@@ -424,7 +474,7 @@ export async function startVorkenBot(platform){
             const guild=await client.guilds.fetch(n.guild_id);
             const admin=await administratorIdentity(guild,latest.administrator_id);
             const member=latest.discord_user_id?await guild.members.fetch(latest.discord_user_id).catch(()=>null):null;
-            const enriched={...p,administratorName:admin.name,discordUserId:latest.discord_user_id||null,avatarUrl:member?.user?.displayAvatarURL({size:256})||null,duration:p.duration||'Permanente'};
+            const enriched={...p,administratorName:p.administratorName||admin.name,discordUserId:latest.discord_user_id||null,avatarUrl:member?.user?.displayAvatarURL({size:256})||null,duration:p.duration||'Permanente'};
             await channel.send({content:enriched.discordUserId?`<@${enriched.discordUserId}>`:undefined,embeds:[publicNotice(n.kind,enriched)],allowedMentions:enriched.discordUserId?{users:[enriched.discordUserId]}:noMentions});
             await db.query('UPDATE vorken_notices SET sent_at=NOW() WHERE id=$1',[n.id]);continue;
           }
@@ -455,7 +505,14 @@ export async function startVorkenBot(platform){
             const embed=new EmbedBuilder().setColor(0xe53935).setTitle('⚠️ Banimento anterior no Vorken')
               .setDescription(summary).addFields({name:'Jogador',value:clean(p.playerName,100)||'—',inline:true},{name:'SteamID',value:clean(p.steamId,32)||'—',inline:true},{name:'Servidor atual',value:clean(p.serverName,100)||'—',inline:true})
               .setFooter({text:'Revise as evidências no painel administrativo'}).setTimestamp();
-            await channel.send({embeds:[embed],allowedMentions:noMentions});
+            const actions=new ActionRowBuilder().addComponents(
+              new ButtonBuilder().setCustomId('vorken_prior:proof:'+n.id).setLabel('Ver provas').setStyle(ButtonStyle.Secondary),
+              new ButtonBuilder().setCustomId('vorken_prior:ban:'+n.id).setLabel('Banir daqui também').setStyle(ButtonStyle.Danger),
+              new ButtonBuilder().setCustomId('vorken_prior:start:'+n.id).setLabel('Mandar para verificação').setStyle(ButtonStyle.Primary),
+              new ButtonBuilder().setCustomId('vorken_prior:allow:'+n.id).setLabel('Liberar jogador').setStyle(ButtonStyle.Success),
+              new ButtonBuilder().setCustomId('vorken_prior:ignore:'+n.id).setLabel('Ignorar').setStyle(ButtonStyle.Secondary));
+            const links=new ActionRowBuilder().addComponents(new ButtonBuilder().setLabel('Abrir provas no Vorken').setStyle(ButtonStyle.Link).setURL(publicUrl+'/servidor?alert='+n.id+'#workspace'));
+            await channel.send({embeds:[embed],components:[actions,links],allowedMentions:noMentions});
           }
           await db.query('UPDATE vorken_notices SET sent_at=NOW() WHERE id=$1',[n.id]);
         }catch(e){console.error('Vorken notification:',e.code||e.name);}

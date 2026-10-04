@@ -9,7 +9,7 @@ let source=original;
 
 if(hasLegacySource){
   source=original
-    .replace('[Info("Verificacao", "Kaique", "1.6.4")]','[Info("Vorken", "Kaique", "2.0.4")]')
+    .replace('[Info("Verificacao", "Kaique", "1.6.4")]','[Info("Vorken", "Kaique", "2.0.5")]')
     .replace('public class Verificacao : RustPlugin','public class Vorken : RustPlugin')
     .replace('isolamento via Vanish e eventos RCON.','conexao HTTPS independente, sem RCON.')
     .replaceAll('verificacao','vorken')
@@ -44,10 +44,10 @@ if(hasLegacySource){
   source=source.replaceAll('dentro de 5 minutos.','dentro do prazo.').replaceAll('em 5 minutos.','dentro do prazo.');
 }else{
   // O container de produção recebe apenas website/. Nesse cenário usamos o
-  // template Vorken já versionado como base e aplicamos somente a migração 2.0.4.
+  // template Vorken já versionado como base e aplicamos somente a migração 2.0.5.
   source=source
-    .replace('[Info("Vorken", "Kaique", "2.0.3")]','[Info("Vorken", "Kaique", "2.0.4")]')
-    .replace('version = "2.0.1"','version = "2.0.4"');
+    .replace('[Info("Vorken", "Kaique", "2.0.3")]','[Info("Vorken", "Kaique", "2.0.5")]')
+    .replace('version = "2.0.1"','version = "2.0.5"');
 
   if(!source.includes('private string AdministratorDisplay(string administrator)')){
     source=source.replace(
@@ -80,7 +80,7 @@ if(hasLegacySource){
 'AdministratorDisplay(administrator) + "</color>."');
 }
 
-// Vorken 2.0.4: a tela do Rust não expõe URL, ID de canal ou convite bruto.
+// Vorken 2.0.5: a tela do Rust não expõe URL, ID de canal ou convite bruto.
 source=source.replace(
 `                            "VERIFICACAO OBRIGATORIA. NAO DESCONECTE.\\n" +
                             "Voce tem 5 MINUTOS para enviar o codigo no canal " +
@@ -134,6 +134,17 @@ const oldDiscordButton=`
 `;
 source=source.replace(oldDiscordButton,'\n');
 
+// Keep packaged-only installations on the current standalone bridge implementation.
+source=source.replace(/\[Info\("Vorken", "Kaique", "2\.0\.\d+"\)\]/,'[Info("Vorken", "Kaique", "2.0.5")]')
+  .replace(/version = "2\.0\.\d+"/g,'version = "2.0.5"');
+if(!source.includes('command.action == "ban_prior"')){
+  const fragment=fs.readFileSync(new URL('./plugins/bridge.fragment.cs',import.meta.url),'utf8');
+  const start=fragment.indexOf('                else if (command.action == "ban_prior")');
+  const end=fragment.indexOf('                else if (!sessions.TryGetValue',start);
+  if(start<0||end<0)throw new Error('Missing prior ban bridge implementation');
+  source=source.replace('                else if (!sessions.TryGetValue',fragment.slice(start,end)+'                else if (!sessions.TryGetValue');
+}
+
 // O identificador continua interno, mas pode carregar "DiscordID|Nome do ADM".
 source=source.replace(
 `            string id =
@@ -149,6 +160,6 @@ source=source.replace(
 
             ulong parsed;`);
 
-if(!source.includes('[Info("Vorken", "Kaique", "2.0.4")]')||!source.includes('SyncBridge')||source.includes('[GF_VERIFICACAO]')||!source.includes('PROCURE O CANAL VERIFICACAO VORKEN')||source.includes('MOSTRAR CONVITE DO DISCORD')||!source.includes('AdministratorDisplay')||!source.includes('SEU CODIGO DE VERIFICACAO'))throw new Error('Plugin generation failed');
+if(!source.includes('[Info("Vorken", "Kaique", "2.0.5")]')||!source.includes('SyncBridge')||source.includes('[GF_VERIFICACAO]')||!source.includes('PROCURE O CANAL VERIFICACAO VORKEN')||source.includes('MOSTRAR CONVITE DO DISCORD')||!source.includes('AdministratorDisplay')||!source.includes('SEU CODIGO DE VERIFICACAO'))throw new Error('Plugin generation failed');
 fs.mkdirSync(new URL('./plugins/',import.meta.url),{recursive:true});
 fs.writeFileSync(generatedSourceUrl,source);

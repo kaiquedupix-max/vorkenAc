@@ -128,7 +128,7 @@
                     if (player != null && player.IsConnected && !player.IsNpc)
                         players.Add(new BridgePlayer { steamId = player.UserIDString, name = player.displayName });
             }
-            string payload = JsonConvert.SerializeObject(new { version = "2.0.4", events = events, receipts = receipts, players = players });
+            string payload = JsonConvert.SerializeObject(new { version = "2.0.5", events = events, receipts = receipts, players = players });
             webrequest.Enqueue(ApiBase + "/api/vorken/plugin/sync", payload, (status, response) => {
                 syncPending = false;
                 if (unloading) return;
@@ -182,6 +182,19 @@
                         Execute(null, new[] { "iniciar", command.steamId }, "discord:" + command.actorId);
                     receipt.ok = sessions.TryGetValue(steamId, out session);
                     receipt.result = receipt.ok ? "Verificacao iniciada." : "Jogador precisa estar conectado, vivo, acordado e fora de veiculos.";
+                }
+                else if (command.action == "ban_prior")
+                {
+                    BasePlayer target = Find(steamId);
+                    string name = target != null ? target.displayName : command.steamId;
+                    string reason = Clean(command.reason);
+                    if (string.IsNullOrWhiteSpace(reason)) throw new Exception("Motivo obrigatorio.");
+                    if (sessions.ContainsKey(steamId)) End(steamId, null);
+                    ServerUsers.Set(steamId, ServerUsers.UserGroup.Banned, name, reason);
+                    ServerUsers.Save();
+                    if (target != null && target.IsConnected) target.Kick(reason);
+                    AnnounceBridge("deny", name);
+                    receipt.ok = true; receipt.result = "Banimento anterior confirmado pela administracao deste servidor.";
                 }
                 else if (!sessions.TryGetValue(steamId, out session) || session.Id != command.sessionId)
                 {
