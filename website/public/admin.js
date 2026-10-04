@@ -4334,6 +4334,7 @@ function switchAdminTab(name) {
   const panels = {
     sessions: document.getElementById("sessionsPanel"),
     scanner: document.getElementById("scannerPanel"),
+    players: document.getElementById("playersPanel"),
     admins: document.getElementById("remoteAdminsPanel"),
     settings: document.getElementById("settingsPanel"),
   };
@@ -4481,3 +4482,4 @@ async function boot() {
 }
 
 boot();
+

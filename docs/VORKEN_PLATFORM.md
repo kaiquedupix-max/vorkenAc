@@ -65,3 +65,11 @@ O download contém chave exclusiva apenas dessa instalação. Guardar como crede
 - DNS/HTTPS e deploy do Coolify não foram alterados nesta entrega.
 
 Comandos locais em website: pnpm install --frozen-lockfile; node --test; node preview-platform.mjs. A prévia é somente localhost e não se conecta a cadastros ou pagamentos reais.
+# Jogadores online e telagem no painel
+
+O admin central oferece a aba **Jogadores online**. O cliente tem os mesmos controles em `/servidor`, restritos aos seus servidores. Com mais de um servidor, selecione primeiro o Rust desejado; busque por nome ou SteamID e clique em **Iniciar telagem**. Revise o relatório para **Verificar e liberar jogador** ou banir com provas selecionadas. As ações aguardam confirmação do plugin e usam a mesma fila do bot, sem RCON.
+
+O plugin Vorken 2.0.1 envia a lista de jogadores conectados a cada aproximadamente 10 segundos. O painel atualiza a cada 15 segundos e oculta listas com mais de 30 segundos. Uma lista vazia remove os jogadores que saíram. Instalações existentes precisam baixar e instalar a versão nova do plugin.
+
+O bot mantém os cargos **✅ Verificado** (verde) e **🔎 Em telagem** (laranja), a categoria **Verificação Vorken**, instruções e tickets privados. O selo como ícone adicional é aplicado quando o Discord informa suporte a `ROLE_ICONS`; nos demais servidores o selo permanece no nome do cargo. A presença alterna números reais de jogadores/máquinas verificados, banidos e o link dos planos.
+

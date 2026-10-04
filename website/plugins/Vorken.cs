@@ -8,7 +8,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Vorken", "Kaique", "2.0.0")]
+    [Info("Vorken", "Kaique", "2.0.1")]
     [Description("Telagem administrativa integrada ao Vorken/Discord com codigo individual, conexao HTTPS independente, sem RCON.")]
     public class Vorken : RustPlugin
     {
@@ -105,6 +105,11 @@ namespace Oxide.Plugins
             public string id, result;
             public bool ok;
         }
+        private class BridgePlayer
+        {
+            public string steamId, name;
+        }
+        private DateTime lastPlayersSent = DateTime.MinValue;
         private class BridgeCommand
         {
             public string id, sessionId, action, steamId, actorId, reason;
@@ -160,7 +165,15 @@ namespace Oxide.Plugins
             var events = bridge.Events.GetRange(0, Math.Min(50, bridge.Events.Count));
             var receipts = new List<BridgeReceipt>(bridge.Receipts.Values);
             if (receipts.Count > 50) receipts = receipts.GetRange(0, 50);
-            string payload = JsonConvert.SerializeObject(new { version = "2.0.0", events = events, receipts = receipts });
+            List<BridgePlayer> players = null;
+            if ((DateTime.UtcNow - lastPlayersSent).TotalSeconds >= 10)
+            {
+                players = new List<BridgePlayer>();
+                foreach (BasePlayer player in BasePlayer.activePlayerList)
+                    if (player != null && player.IsConnected && !player.IsNpc)
+                        players.Add(new BridgePlayer { steamId = player.UserIDString, name = player.displayName });
+            }
+            string payload = JsonConvert.SerializeObject(new { version = "2.0.1", events = events, receipts = receipts, players = players });
             webrequest.Enqueue(ApiBase + "/api/vorken/plugin/sync", payload, (status, response) => {
                 syncPending = false;
                 if (unloading) return;
@@ -176,6 +189,7 @@ namespace Oxide.Plugins
                     BridgeResponse data = JsonConvert.DeserializeObject<BridgeResponse>(response);
                     if (data == null) return;
                     lastBridgeResponse = DateTime.UtcNow;
+                    if (players != null) lastPlayersSent = DateTime.UtcNow;
                     bridgeActive = data.active;
                     if (data.accepted != null) bridge.Events.RemoveAll(e => data.accepted.Contains(e.id));
                     if (data.acknowledged != null) foreach (string id in data.acknowledged) bridge.Receipts.Remove(id);
@@ -2010,3 +2024,4 @@ namespace Oxide.Plugins
         }
     }
 }
+

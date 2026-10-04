@@ -117,6 +117,69 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
   }
   const notify=async (db,guildId,kind,payload) => db.query('INSERT INTO vorken_notices(id,guild_id,kind,payload) VALUES($1,$2,$3,$4)',[crypto.randomUUID(),guildId,kind,JSON.stringify(payload)]);
 
+  // The owner and customers share the same operations, with separate authorization.
+  for(const owner of [false,true]){
+    const base='/api/vorken/'+(owner?'admin/':'')+'operations';
+    const auth=owner?[requireAdmin]:[];
+    const identity=async req=>owner?{id:null,actor:'owner'}:{id:(await customer(req)).id,actor:null};
+    const accessible=async(req,db=pool)=>{
+      const u=await identity(req);
+      if(!uuid(req.params.serverId))fail(400,'Servidor inválido.');
+      const s=(await db.query('SELECT * FROM vorken_servers WHERE id=$1'+(owner?'':' AND customer_id=$2'),owner?[req.params.serverId]:[req.params.serverId,u.id])).rows[0];
+      if(!s)fail(404,'Servidor não encontrado.');
+      return {s,actor:owner?'owner':'customer:'+u.id};
+    };
+    app.get(base,...auth,route(async(req,res)=>{
+      const u=await identity(req);
+      const r=await pool.query(`SELECT s.id,s.name,s.customer_id,s.enabled,s.last_seen,c.name AS customer_name
+        FROM vorken_servers s JOIN vorken_customers c ON c.id=s.customer_id ${owner?'':'WHERE s.customer_id=$1'} ORDER BY c.name,s.name`,owner?[]:[u.id]);
+      res.set('Cache-Control','no-store').json({servers:r.rows});
+    }));
+    app.get(base+'/:serverId',...auth,route(async(req,res)=>{
+      const {s}=await accessible(req);
+      const connected=!!s.last_seen&&Date.now()-new Date(s.last_seen)<90000;
+      const fresh=connected&&!!s.players_updated_at&&Date.now()-new Date(s.players_updated_at)<30000;
+      const sessions=await pool.query(`SELECT v.id,v.steam_id,v.player_name,v.status,v.analysis_id,a.status AS analysis_status,a.processing_stage
+        FROM vorken_sessions v LEFT JOIN analyses a ON a.id=v.analysis_id WHERE v.server_id=$1 ORDER BY v.created_at DESC LIMIT 100`,[s.id]);
+      const commands=await pool.query("SELECT id,steam_id,status,result FROM vorken_commands WHERE server_id=$1 AND action='start' AND created_at>NOW()-interval '10 minutes' ORDER BY created_at DESC LIMIT 100",[s.id]);
+      res.set('Cache-Control','no-store').json({connected,fresh,active:await serverActive(s),updatedAt:s.players_updated_at,players:fresh?s.online_players:[],sessions:sessions.rows,commands:commands.rows});
+    }));
+    app.post(base+'/:serverId/telagem',...auth,csrf,route(async(req,res)=>{
+      if(!steam(req.body.steamId))fail(400,'SteamID inválido.');
+      const id=await tx(async db=>{
+        const {s,actor}=await accessible(req,db);
+        await db.query('SELECT id FROM vorken_servers WHERE id=$1 FOR UPDATE',[s.id]);
+        const current=(await db.query('SELECT * FROM vorken_servers WHERE id=$1',[s.id])).rows[0];
+        if(!await serverActive(current,db))fail(403,'Servidor ou licença inativa.');
+        if(!current.players_updated_at||Date.now()-new Date(current.players_updated_at)>30000)fail(409,'Lista desatualizada. Aguarde a conexão do plugin.');
+        if(!current.online_players.some(p=>p.steamId===req.body.steamId))fail(409,'Jogador não está online neste servidor.');
+        const pending=await db.query(`SELECT id FROM vorken_sessions WHERE server_id=$1 AND steam_id=$2 AND status IN ('pending','redeemed','deciding')
+          UNION ALL SELECT id FROM vorken_commands WHERE server_id=$1 AND steam_id=$2 AND action='start' AND status='pending'`,[s.id,req.body.steamId]);
+        if(pending.rows.length)fail(409,'Esse jogador já tem uma telagem em andamento.');
+        const command=await queue(db,s.id,'start',req.body.steamId,actor);
+        await audit(db,actor,'screening_requested',s.id,{steamId:req.body.steamId,commandId:command});return command;
+      });res.json({commandId:id,message:'Telagem enviada. Aguardando confirmação do Rust.'});
+    }));
+    app.get(base+'/:serverId/sessions/:id/report',...auth,route(async(req,res)=>{
+      const {s}=await accessible(req);if(!uuid(req.params.id))fail(400,'Sessão inválida.');
+      const session=(await pool.query('SELECT v.*,a.status AS analysis_status,a.processing_stage FROM vorken_sessions v LEFT JOIN analyses a ON a.id=v.analysis_id WHERE v.id=$1 AND v.server_id=$2',[req.params.id,s.id])).rows[0];
+      if(!session)fail(404,'Sessão não encontrada.');
+      const findings=(await pool.query('SELECT id,title,severity,artifact_type,artifact_value,evidence FROM scan_findings WHERE analysis_id=$1 ORDER BY id',[session.analysis_id])).rows;
+      res.json({session,findings});
+    }));
+    app.post(base+'/:serverId/sessions/:id/decision',...auth,csrf,route(async(req,res)=>{
+      const {s,actor}=await accessible(req);
+      const action=['approve','deny'].includes(req.body.decision)?req.body.decision:null;
+      const evidence=validIds(req.body.evidenceIds||[]),trusted=validIds(req.body.trustedIds||[]);
+      if(!uuid(req.params.id)||!action||!evidence||!trusted||evidence.some(id=>trusted.includes(id)))fail(400,'Decisão inválida.');
+      const id=await tx(async db=>{
+        if(!await serverActive(s,db))fail(403,'Servidor ou licença inativa.');
+        if(!(await db.query('SELECT id FROM vorken_sessions WHERE id=$1 AND server_id=$2',[req.params.id,s.id])).rows.length)fail(404,'Sessão não encontrada.');
+        return decision(db,req.params.id,action,actor,clean(req.body.reason,500),evidence,trusted);
+      });res.json({commandId:id,message:'Decisão enviada. Aguardando confirmação do Rust.'});
+    }));
+  }
+
   app.get('/api/vorken/plans',route(async(_req,res)=>{
     const r=await pool.query('SELECT * FROM vorken_plans WHERE enabled ORDER BY months');
     res.json({ plans:r.rows, billingReady:!!(process.env.MERCADO_PAGO_ACCESS_TOKEN && process.env.MERCADO_PAGO_WEBHOOK_SECRET),
@@ -349,6 +412,11 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
     const accepted=[],acknowledged=[];
     await tx(async db=>{
       await db.query('SELECT id FROM vorken_servers WHERE id=$1 FOR UPDATE',[server.id]);
+      if(Array.isArray(req.body.players)){
+        if(req.body.players.length>2000)fail(400,'Lista de jogadores excede o limite.');
+        const players=[...new Map(req.body.players.filter(p=>p&&steam(p.steamId)).map(p=>[p.steamId,{steamId:p.steamId,name:clean(p.name,100)}])).values()];
+        await db.query('UPDATE vorken_servers SET online_players=$2,players_updated_at=NOW() WHERE id=$1',[server.id,JSON.stringify(players)]);
+      }
       for(const event of events){
         if(!uuid(event.id)||!steam(event.steamId)) continue;
         const inserted=await db.query('INSERT INTO vorken_events(id,server_id) VALUES($1,$2) ON CONFLICT DO NOTHING RETURNING id',[event.id,server.id]);

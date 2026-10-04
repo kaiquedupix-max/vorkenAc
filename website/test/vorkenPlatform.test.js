@@ -76,6 +76,23 @@ test('platform routes isolate customers, confirm decisions and activate payments
     assert.equal((await request('/servers/'+s1,{method:'PATCH',body:{name:'New',discordInvite:'https://discord.gg/test'},origin:'https://evil.test'})).status,403);
     assert.equal((await request('/admin')).status,401);
   });
+  await t.test('online roster and panel telagem are scoped, deduplicated and reject stale data',async()=>{
+    const steamId='76561198000000999';
+    await request('/plugin/sync',{token:token1,body:{players:[{steamId,name:'Online player'},{steamId,name:'Online player'},{steamId:'invalid',name:'Invalid'}]}});
+    const roster=await request('/operations/'+s1);
+    assert.equal(roster.data.players.length,1);assert.equal(roster.data.players[0].name,'Online player');
+    assert.equal((await request('/operations/'+s1,{customerId:c2})).status,404);
+    assert.equal((await request('/admin/operations/'+s1)).status,401);
+    assert.equal((await request('/admin/operations/'+s1,{owner:true})).data.players.length,1);
+    const start=await request('/operations/'+s1+'/telagem',{body:{steamId}});assert.equal(start.status,200);
+    assert.equal((await request('/operations/'+s1+'/telagem',{body:{steamId}})).status,409);
+    await pool.query("UPDATE vorken_commands SET status='applied' WHERE id=$1",[start.data.commandId]);
+    await pool.query("UPDATE vorken_servers SET players_updated_at=NOW()-interval '1 minute' WHERE id=$1",[s1]);
+    assert.equal((await request('/operations/'+s1)).data.players.length,0);
+    assert.equal((await request('/operations/'+s1+'/telagem',{body:{steamId}})).status,409);
+    await request('/plugin/sync',{token:token1,body:{players:[]}});
+    assert.equal((await request('/operations/'+s1)).data.players.length,0);
+  });
   const sessionId=crypto.randomUUID(),analysisId=(await pool.query("INSERT INTO analyses(public_token,label,status,processing_stage,expires_at) VALUES('test-public','Test','completed','completed',NOW()+interval '8 hours') RETURNING id")).rows[0].id;
   await pool.query("INSERT INTO scan_findings(analysis_id,title,severity,artifact_type,artifact_value,evidence) VALUES($1,'Test evidence','review','file','test.exe','{}')",[analysisId]);
   const findingId=(await pool.query('SELECT id FROM scan_findings LIMIT 1')).rows[0].id;

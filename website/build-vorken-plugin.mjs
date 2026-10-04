@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 const original = fs.readFileSync(new URL('../rust-plugins/Verificacao.cs',import.meta.url),'utf8').replace(/\r\n/g,'\n');
-let source=original.replace('[Info("Verificacao", "Kaique", "1.6.4")]','[Info("Vorken", "Kaique", "2.0.0")]')
+let source=original.replace('[Info("Verificacao", "Kaique", "1.6.4")]','[Info("Vorken", "Kaique", "2.0.1")]')
   .replace('public class Verificacao : RustPlugin','public class Vorken : RustPlugin')
   .replace('isolamento via Vanish e eventos RCON.','conexao HTTPS independente, sem RCON.')
   .replaceAll('verificacao','vorken').replaceAll('[GF_VERIFICACAO]','[VORKEN]')

@@ -22,6 +22,7 @@
       <button class="vorken-nav-button" data-admin-tab="home">⌂<span>Início</span></button>
       <button class="vorken-nav-button active" data-admin-tab="sessions">☷<span>Sessões</span></button>
       <button class="vorken-nav-button" data-admin-tab="scanner">◉<span>Scanner</span></button>
+      <button class="vorken-nav-button" data-admin-tab="players">♟<span>Jogadores online</span></button>
       <button class="vorken-nav-button" data-admin-tab="admins">♙<span>Administradores</span></button>
       <button class="vorken-nav-button" data-admin-tab="settings">⚙<span>Configurações</span></button>
     </nav>
@@ -51,6 +52,7 @@
     </section>
 
     <section id="dashboardView" class="hidden vorken-dashboard">
+      <section id="playersPanel" class="vorken-tab-panel hidden" data-vorken-operations="owner"></section>
       <section id="sessionsPanel" class="vorken-tab-panel">
         <aside class="session-list-pane">
           <div class="session-pane-title">
@@ -614,6 +616,8 @@
   </dialog>
 
   <script src="/ui-polish.js?v=20260927-remote-admin-v1"></script>
-  <script src="/admin.js?v=20260928-manual-ban-v2"></script>
+  <script src="/admin.js?v=20261004-online-players"></script>
+  <script type="module" src="/operations.js?v=20261004"></script>
 </body>
 </html>
+
