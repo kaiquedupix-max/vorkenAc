@@ -8,7 +8,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Vorken", "Kaique", "2.0.3")]
+    [Info("Vorken", "Kaique", "2.0.4")]
     [Description("Telagem administrativa integrada ao Vorken/Discord com codigo individual, conexao HTTPS independente, sem RCON.")]
     public class Vorken : RustPlugin
     {
@@ -98,11 +98,29 @@ namespace Oxide.Plugins
         {
             public bool rustStarted = true, rustVerified = true, rustBans = true;
         }
+        private string AdministratorDisplay(string administrator)
+        {
+            string value = (administrator ?? "").Trim();
+            if (value.StartsWith("discord:", StringComparison.OrdinalIgnoreCase))
+                value = value.Substring("discord:".Length).Trim();
+            int separator = value.IndexOf('|');
+            if (separator >= 0)
+            {
+                string display = value.Substring(separator + 1).Trim();
+                if (!string.IsNullOrWhiteSpace(display)) return Clean(display);
+                value = value.Substring(0, separator).Trim();
+            }
+            if (value.StartsWith("customer:", StringComparison.OrdinalIgnoreCase) || value == "owner" || value == "console")
+                return "Administracao Vorken";
+            ulong discordId;
+            if (ulong.TryParse(value, out discordId)) return "Administracao Vorken";
+            return string.IsNullOrWhiteSpace(value) ? "Administracao Vorken" : Clean(value);
+        }
         private void AnnounceBridge(string kind, string playerName, string administrator = null)
         {
             string name = Clean(playerName);
             if (kind == "start" && bridgeNotifications.rustStarted)
-                Server.Broadcast("<color=#FF2222>[VERIFICAÇÃO]</color> Foi iniciado um processo de verificação administrativa com o jogador <color=#FF5555>" + name + "</color>. Administrador responsável: <color=#FFD166>" + Clean(administrator ?? "Equipe Vorken") + "</color>.");
+                Server.Broadcast("<color=#FF2222>[VERIFICAÇÃO]</color> Foi iniciado um processo de verificação administrativa com o jogador <color=#FF5555>" + name + "</color>. Administrador responsável: <color=#FFD166>" + AdministratorDisplay(administrator) + "</color>.");
             else if (kind == "approve" && bridgeNotifications.rustVerified)
                 Server.Broadcast("<color=#2bf0c9>[VERIFICAÇÃO]</color> O jogador <color=#2bf0c9>" + name + "</color> foi verificado e liberado pela administração. ✅");
             else if (kind == "deny" && bridgeNotifications.rustBans)
@@ -196,7 +214,7 @@ namespace Oxide.Plugins
                     if (player != null && player.IsConnected && !player.IsNpc)
                         players.Add(new BridgePlayer { steamId = player.UserIDString, name = player.displayName });
             }
-            string payload = JsonConvert.SerializeObject(new { version = "2.0.1", events = events, receipts = receipts, players = players });
+            string payload = JsonConvert.SerializeObject(new { version = "2.0.4", events = events, receipts = receipts, players = players });
             webrequest.Enqueue(ApiBase + "/api/vorken/plugin/sync", payload, (status, response) => {
                 syncPending = false;
                 if (unloading) return;
@@ -498,6 +516,10 @@ namespace Oxide.Plugins
 
             string id =
                 session.Administrador.Substring(prefix.Length).Trim();
+
+            int separator = id.IndexOf('|');
+            if (separator >= 0)
+                id = id.Substring(0, separator).Trim();
 
             ulong parsed;
 
@@ -1091,10 +1113,8 @@ namespace Oxide.Plugins
                     {
                         Text =
                             "VERIFICACAO OBRIGATORIA. NAO DESCONECTE.\n" +
-                            "Voce tem 5 MINUTOS para enviar o codigo no canal " +
-                            Clean(settings.CanalVerificacao) +
-                            " do Discord.\n" +
-                            "RECUSAR, DESCONECTAR OU DEIXAR O TEMPO ACABAR RESULTA EM BAN PERMANENTE.",
+                            "Entre no Discord, procure o canal VERIFICACAO VORKEN e envie os 4 digitos abaixo.\n" +
+                            "RECUSAR, DESCONECTAR OU DEIXAR O TEMPO ACABAR PODE RESULTAR EM BANIMENTO.",
                         FontSize = 20,
                         Align = TextAnchor.MiddleCenter,
                         Color = "0.95 0.18 0.18 1"
@@ -1151,14 +1171,12 @@ namespace Oxide.Plugins
                     ? "CODIGO ACEITO!\n" +
                       "Volte ao Discord e abra a sala privada criada pelo bot.\n" +
                       "Clique no link do Vorken, baixe, execute como administrador e aguarde."
-                    : "1. ENTRE NO DISCORD DO SEU SERVIDOR\n" +
-                      "2. ABRA O CANAL " +
-                      Clean(settings.CanalVerificacao) +
-                      "\n" +
-                      "3. ENVIE SOMENTE OS 4 DIGITOS ACIMA EM ATE 5 MINUTOS\n" +
-                      "4. ENTRE NA SALA PRIVADA CRIADA PELO BOT\n" +
-                      "5. BAIXE E EXECUTE O VORKEN E AGUARDE A DECISAO\n" +
-                      "A VERIFICACAO E OBRIGATORIA. RECUSAR RESULTA EM BAN.";
+                    : "1. ENTRE NO DISCORD\n" +
+                      "2. PROCURE O CANAL VERIFICACAO VORKEN\n" +
+                      "3. ENVIE SOMENTE OS 4 DIGITOS ACIMA DIRETAMENTE NO CHAT\n" +
+                      "4. AGUARDE A SALA PRIVADA SER CRIADA AUTOMATICAMENTE\n" +
+                      "5. USE O BOTAO DE DOWNLOAD, EXECUTE O VORKEN E AGUARDE\n" +
+                      "A VERIFICACAO E OBRIGATORIA. NAO DESCONECTE.";
 
             ui.Add(
                 new CuiLabel
@@ -1200,29 +1218,6 @@ namespace Oxide.Plugins
                 Ui
             );
 
-            ui.Add(
-                new CuiButton
-                {
-                    Button =
-                    {
-                        Color = "0.10 0.35 0.34 1",
-                        Command = "vorken.discord"
-                    },
-                    Text =
-                    {
-                        Text = "MOSTRAR CONVITE DO DISCORD",
-                        FontSize = 16,
-                        Align = TextAnchor.MiddleCenter,
-                        Color = "1 1 1 1"
-                    },
-                    RectTransform =
-                    {
-                        AnchorMin = "0.30 0.12",
-                        AnchorMax = "0.70 0.18"
-                    }
-                },
-                Ui
-            );
 
             ui.Add(
                 new CuiButton
