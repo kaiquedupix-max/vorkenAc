@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { notificationSettings, verificationSettings, canPublish } from './vorkenSettings.js';
 import fs from 'node:fs';
+import { createDiscordGuildCache } from './discordGuildCache.js';
 import { hash, addMonths, licensed, managesGuild, validDiscordInvite, validIds, seal, unseal, serverSlug } from './vorkenDomain.js';
 
 const uuid = value => /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(String(value || ''));
@@ -83,10 +84,18 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
   };
   const discord = async (endpoint, accessToken) => {
     const r = await fetch('https://discord.com/api/v10'+endpoint, { headers:{ Authorization:'Bearer '+accessToken }, signal:AbortSignal.timeout(10000) });
-    if (!r.ok) fail(r.status === 401 ? 401 : 503,'Reconecte o Discord ou tente novamente em instantes.');
+    if(r.status===429){
+      const body=await r.json().catch(()=>({}));
+      const seconds=Number(r.headers.get('retry-after')||body.retry_after);
+      const retryAfter=Number.isFinite(seconds)&&seconds>0?seconds:1;
+      throw Object.assign(new Error('O Discord limitou temporariamente as consultas. Aguarde '+Math.ceil(retryAfter)+' segundos e clique em Atualizar.'),{status:429,retryAfter});
+    }
+    if(r.status===401||r.status===403)fail(401,'Sua autorização do Discord expirou ou foi revogada. Saia e entre novamente com Discord.');
+    if(!r.ok)fail(503,'O Discord está temporariamente indisponível. Tente atualizar em instantes.');
     return r.json();
   };
-  const guilds = async user => (await discord('/users/@me/guilds',unseal(user.access_token,secret()))).filter(managesGuild);
+  const cachedGuilds=createDiscordGuildCache(async sealedToken=>(await discord('/users/@me/guilds',unseal(sealedToken,secret()))).filter(managesGuild));
+  const guilds = user => cachedGuilds(user.access_token);
   const ownedServer = async (id,customerId,db=pool) => {
     if (!uuid(id)) fail(400,'Servidor inválido.');
     const r = await db.query('SELECT * FROM vorken_servers WHERE id=$1 AND customer_id=$2', [id,customerId]);
