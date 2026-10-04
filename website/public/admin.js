@@ -1462,7 +1462,7 @@ async function openReport(id, options = {}) {
 
   currentDecisionSelectable =
     analysis.status === "completed" &&
-    !analysis.external_decision && (!scopedReport || scopedSessionState?.status === "redeemed");
+    !analysis.external_decision && (!scopedReport || ["redeemed", "ended"].includes(scopedSessionState?.status));
 
   currentIntegrationDecision =
     analysis.external_decision
@@ -1571,6 +1571,14 @@ async function openReport(id, options = {}) {
     processingMessage: analysis.processing_message,
   });
 
+  const scopedNotice=document.getElementById('scopedDecisionNotice');
+  scopedNotice?.classList.add('hidden');
+  if(scopedNotice && scopedReport && scopedSessionState?.status==='ended' && !analysis.external_decision){
+    scopedNotice.classList.remove('hidden');
+    scopedNotice.textContent=/^2\.0\.(?:[7-9]|\d{2,})$/.test(scopedSessionState.plugin_version||'')
+      ? 'Sessão encerrada. Selecione as provas e aplique a decisão; o painel aguardará a confirmação do Rust.'
+      : 'Sessão encerrada. Você pode selecionar as provas. Para aplicar a decisão, baixe o plugin atualizado (2.0.7) em Meu painel e substitua Vorken.cs no Rust.';
+  }
   lastOpenReportProcessing =
     isProcessingStage(
       analysis.processing_stage

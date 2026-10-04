@@ -155,6 +155,14 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
     const [channels,roles,member]=await Promise.all([botApi('/guilds/'+server.guild_id+'/channels'),botApi('/guilds/'+server.guild_id+'/roles'),botApi('/guilds/'+server.guild_id+'/members/'+process.env.VORKEN_DISCORD_CLIENT_ID)]);
     return channels.filter(c=>canPublish(c,server.guild_id,member,roles)).map(c=>({id:c.id,name:c.name}));
   };
+  app.get('/banimentos',route(async(req,res)=>{
+    const page=Math.max(1,Math.min(10000,Number.parseInt(req.query.page,10)||1));
+    const records=await pool.query(`SELECT b.steam_id,COALESCE(NULLIF(b.player_name,''),v.player_name,b.steam_id) AS player_name,s.name AS server_name,b.reason,b.created_at FROM vorken_bans b JOIN vorken_servers s ON s.id=b.server_id LEFT JOIN vorken_sessions v ON v.id=b.session_id WHERE b.active ORDER BY b.created_at DESC,b.id DESC LIMIT 50 OFFSET $1`,[(page-1)*50]);
+    const escape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const rows=records.rows.map(b=>'<tr><td><a href="https://steamcommunity.com/profiles/'+escape(b.steam_id)+'" rel="noopener" target="_blank">'+escape(b.player_name)+'</a><small> '+escape(b.steam_id)+'</small></td><td>'+escape(b.server_name)+'</td><td>'+escape(b.reason)+'</td><td>'+escape(new Date(b.created_at).toLocaleDateString('pt-BR',{timeZone:'UTC'}))+'</td></tr>').join('');
+    const table='<div class="table-wrap"><table><thead><tr><th>Jogador / Steam</th><th>Servidor</th><th>Motivo registrado</th><th>Data</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+(rows?'':'<p>Nenhum registro nesta página.</p>')+'<nav>'+(page>1?'<a href="/banimentos?page='+(page-1)+'">Anterior</a>':'')+(records.rows.length===50?'<a href="/banimentos?page='+(page+1)+'">Próxima página</a>':'')+'</nav>';
+    res.type('html').send(fs.readFileSync(new URL('./public/banimentos-publicos.html',import.meta.url),'utf8').replace('<!--PUBLIC_BANS-->',table));
+  }));
   const audit = (db, actor,action,target,details={}) => db.query('INSERT INTO vorken_audit(actor,action,target,details) VALUES($1,$2,$3,$4)',[actor,action,target,JSON.stringify(details)]);
   const queue = async (db,serverId,action,steamId,actorId,sessionId=null,reason='',evidence=[],trusted=[]) => {
     const id=crypto.randomUUID();
@@ -164,7 +172,14 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
   };
   async function decision(db, sessionId, action, actor, reason, evidenceIds, trustedIds) {
     const r=await db.query(`SELECT v.*,s.guild_id,s.customer_id FROM vorken_sessions v JOIN vorken_servers s ON s.id=v.server_id WHERE v.id=$1 FOR UPDATE OF v`,[sessionId]);
-    const s=r.rows[0]; if (!s || s.status!=='redeemed' || !s.analysis_id) fail(409,'Esta sessão não está disponível para decisão.');
+    const s=r.rows[0]; if (!s || !['redeemed','ended'].includes(s.status) || !s.analysis_id) fail(409,'Esta sessão não está disponível para decisão.');
+    const detached=s.status==='ended';
+    if(detached){
+      const version=(await db.query('SELECT plugin_version FROM vorken_servers WHERE id=$1',[s.server_id])).rows[0]?.plugin_version||'';
+      if(!/^2\.0\.(?:[7-9]|\d{2,})$/.test(version)) fail(409,'Atualize o plugin Vorken para 2.0.7 ou superior para decidir sobre uma sessão encerrada.');
+      const live=await db.query("SELECT id FROM vorken_sessions WHERE server_id=$1 AND steam_id=$2 AND id<>$3 AND status IN ('pending','redeemed','deciding')",[s.server_id,s.steam_id,s.id]);
+      if(live.rows.length) fail(409,'Há uma nova verificação desse jogador. Conclua a sessão atual primeiro.');
+    }
     const analysis=await db.query('SELECT status,processing_stage FROM analyses WHERE id=$1',[s.analysis_id]);
     if (analysis.rows[0]?.status!=='completed'||analysis.rows[0]?.processing_stage!=='completed') fail(409,'Aguarde a conclusão bem-sucedida da análise.');
     if (action==='deny' && (!reason || !evidenceIds.length)) fail(400,'Informe o motivo e selecione as provas do banimento.');
@@ -175,6 +190,7 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
     }
     await db.query("UPDATE vorken_sessions SET status='deciding' WHERE id=$1",[s.id]);
     const commandId=await queue(db,s.server_id,action,s.steam_id,actor,s.id,reason,evidenceIds,trustedIds);
+    if(detached) await db.query('UPDATE vorken_commands SET detached_session=TRUE WHERE id=$1',[commandId]);
     await audit(db,actor,'decision_requested',s.id,{ action,commandId,evidenceIds,trustedIds });
     return commandId;
   }
@@ -229,6 +245,7 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
       if(!session)fail(404,'Sessão não encontrada.');
       const findings=(await pool.query('SELECT id,title,severity,artifact_type,artifact_value,evidence FROM scan_findings WHERE analysis_id=$1 ORDER BY id',[session.analysis_id])).rows;
       const full=loadAnalysisReport?await loadAnalysisReport(session.analysis_id,s.id):null;
+      session.plugin_version=s.plugin_version;
       res.json({session,findings,...(full||{})});
     }));
     app.get(base+'/:serverId/sessions/:id/raw',...auth,route(async(req,res)=>{
@@ -420,7 +437,7 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
   }));
   app.get('/api/vorken/sessions/:id/report',route(async(req,res)=>{
     const u=await customer(req); if (!uuid(req.params.id)) fail(400,'Sessão inválida.');
-    const r=await pool.query(`SELECT v.*,a.status AS analysis_status,a.processing_stage FROM vorken_sessions v JOIN vorken_servers s ON s.id=v.server_id
+    const r=await pool.query(`SELECT v.*,s.plugin_version,a.status AS analysis_status,a.processing_stage FROM vorken_sessions v JOIN vorken_servers s ON s.id=v.server_id
       LEFT JOIN analyses a ON a.id=v.analysis_id WHERE v.id=$1 AND ${accessSql('s')}`,[req.params.id,u.id]);
     const s=r.rows[0]; if(!s) fail(404,'Sessão não encontrada.');
     const findings=await pool.query('SELECT id,title,severity,artifact_type,artifact_value,evidence FROM scan_findings WHERE analysis_id=$1 ORDER BY id',[s.analysis_id]);
@@ -636,7 +653,7 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
           await notify(db,server.guild_id,'command',{steamId:command.steam_id,actorId:command.actor_id,result:clean(receipt.result,500),ok:receipt.ok,serverName:server.name});
         }
         if(command.session_id&&['approve','deny'].includes(command.action)){
-          if(!receipt.ok){await db.query("UPDATE vorken_sessions SET status='redeemed' WHERE id=$1 AND status='deciding'",[command.session_id]);continue;}
+          if(!receipt.ok){await db.query("UPDATE vorken_sessions SET status=$2 WHERE id=$1 AND status='deciding'",[command.session_id,command.detached_session?'ended':'redeemed']);continue;}
           const s=(await db.query('SELECT * FROM vorken_sessions WHERE id=$1',[command.session_id])).rows[0];
           if(!s) continue;
           await db.query("UPDATE vorken_sessions SET status=$2 WHERE id=$1",[s.id,command.action==='approve'?'approved':'denied']);
@@ -662,7 +679,7 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
     }
     const active=await serverActive(server);
     await pool.query("UPDATE vorken_commands SET status='failed',result='Solicitação de telagem expirada.',completed_at=NOW() WHERE server_id=$1 AND status='pending' AND action='start' AND created_at<NOW()-interval '2 minutes'",[server.id]);
-    const commands=active?(await pool.query("SELECT id,session_id AS \"sessionId\",action,steam_id AS \"steamId\",actor_id AS \"actorId\",reason FROM vorken_commands WHERE server_id=$1 AND status='pending' ORDER BY created_at LIMIT 20",[server.id])).rows:[];
+    const commands=active?(await pool.query("SELECT id,detached_session AS \"detachedSession\",session_id AS \"sessionId\",action,steam_id AS \"steamId\",actor_id AS \"actorId\",reason FROM vorken_commands WHERE server_id=$1 AND status='pending' ORDER BY created_at LIMIT 20",[server.id])).rows:[];
     const g=(await pool.query('SELECT verification_channel_id FROM vorken_guilds WHERE id=$1',[server.guild_id])).rows[0];
     res.json({active,accepted,acknowledged,commands,discord:server.discord_invite,channel:g?.verification_channel_id?'https://discord.com/channels/'+server.guild_id+'/'+g.verification_channel_id:'#verificacao',notifications:notificationSettings(server.notification_settings),verification:verificationSettings(server.verification_settings)});
   }));

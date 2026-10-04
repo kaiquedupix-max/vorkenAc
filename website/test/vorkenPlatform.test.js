@@ -188,6 +188,24 @@ test('platform routes isolate customers, confirm decisions and activate payments
     assert.equal(reportScopes.length,calls);
   });
   let commandId;
+  await t.test('ended report requires an updated plugin and preserves ended state on failure',async()=>{
+    await pool.query("UPDATE vorken_sessions SET status='ended' WHERE id=$1",[sessionId]);
+    const old=await request('/sessions/'+sessionId+'/decision',{body:{decision:'approve'}});
+    assert.equal(old.status,409);assert.match(old.data.message,/2.0.7/);
+    await pool.query("UPDATE vorken_servers SET plugin_version='2.0.7' WHERE id=$1",[s1]);
+    const newer=crypto.randomUUID();
+    await pool.query("INSERT INTO vorken_sessions(id,server_id,steam_id,player_name,code,status,expires_at) SELECT $1,server_id,steam_id,player_name,'9876','pending',NOW()+interval '5 minutes' FROM vorken_sessions WHERE id=$2",[newer,sessionId]);
+    assert.equal((await request('/sessions/'+sessionId+'/decision',{body:{decision:'approve'}})).status,409);
+    await pool.query("DELETE FROM vorken_sessions WHERE id=$1",[newer]);
+    assert.equal((await request('/sessions/'+sessionId+'/decision',{customerId:c2,body:{decision:'approve'}})).status,404);
+    const result=await request('/sessions/'+sessionId+'/decision',{body:{decision:'approve'}});
+    assert.equal(result.status,200);
+    const sync=await request('/plugin/sync',{token:token1,body:{version:'2.0.7'}});
+    assert.equal(sync.data.commands.find(c=>c.id===result.data.commandId).detachedSession,true);
+    await request('/plugin/sync',{token:token1,body:{version:'2.0.7',receipts:[{id:result.data.commandId,ok:false,result:'New session on Rust'}]}});
+    assert.equal((await pool.query('SELECT status FROM vorken_sessions WHERE id=$1',[sessionId])).rows[0].status,'ended');
+    assert.equal((await pool.query('SELECT external_decision FROM analyses WHERE id=$1',[analysisId])).rows[0].external_decision,null);
+  });
   await t.test('ban needs real selected proof and is not applied before plugin acknowledgement',async()=>{
     assert.equal((await request('/sessions/'+sessionId+'/decision',{body:{decision:'deny',reason:'Cheat',evidenceIds:[]}})).status,400);
     assert.equal((await request('/sessions/'+sessionId+'/decision',{body:{decision:'deny',reason:'Cheat',evidenceIds:[999999]}})).status,400);
@@ -212,6 +230,11 @@ test('platform routes isolate customers, confirm decisions and activate payments
     await request('/servers/'+s1+'/team/'+c2,{method:'DELETE'});
     assert.equal((await request('/sessions/'+event.sessionId+'/report',{customerId:c2})).status,404);
     assert.equal((await request('/operations/'+s1+'/sessions/'+event.sessionId+'/report',{customerId:c2})).status,404);
+  });
+  await t.test('public ban page renders confirmed bans without private proofs or administrator data',async()=>{
+    const r=await nativeFetch(url+'/banimentos');assert.equal(r.status,200);const html=await r.text();
+    assert.match(html,/Proof checked/);assert.match(html,/steamcommunity.com\/profiles/);
+    assert(!html.includes('Critical preserved'));assert(!html.includes('trusted_ids'));assert(!html.includes(c1));
   });
   await t.test('join on a different server queues alert with reason and selected evidence, no ban command',async()=>{
     const r=await request('/plugin/sync',{token:token2,body:{events:[{id:crypto.randomUUID(),eventType:'player_join',steamId:event.steamId,playerName:'Player'}]}});

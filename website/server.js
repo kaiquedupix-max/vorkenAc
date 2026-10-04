@@ -10784,6 +10784,9 @@ const vorkenPlatform = installVorkenPlatform(app, {
   pool, publicUrl, requireAdmin, learnAnalysisArtifacts, revokeLearnedTrustForFindings, loadAnalysisReport: loadSharedAnalysisReport, loadPlayerProfiles: querySteamOfficialBatch, loadRawAnalysisReport,
 });
 app.get("/relatorio", (_req,res)=>res.sendFile(path.join(__dirname,"public","admin.html")));
+app.get('/como-funciona',(_req,res)=>res.sendFile(path.join(__dirname,'public','como-funciona.html')));
+app.get('/robots.txt',(_req,res)=>res.type('text/plain').send('User-agent: *\nDisallow: /admin\nDisallow: /api/\nDisallow: /relatorio\nDisallow: /a/\nSitemap: https://vorken.xyz/sitemap.xml\n'));
+app.get('/sitemap.xml',(_req,res)=>res.type('application/xml').send('<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'+['/','/servidor','/como-funciona','/banimentos','/privacy','/terms'].map(p=>'<url><loc>https://vorken.xyz'+p+'</loc></url>').join('')+'</urlset>'));
 app.get("/servidor", (_req, res) => {
   res.sendFile(path.join(__dirname, "public", "servidor.html"));
 });
