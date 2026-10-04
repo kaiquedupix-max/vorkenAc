@@ -19,6 +19,8 @@ import {
   isArtifactProtectedFromLearning,
 } from "./detectionPolicyV4.js";
 import { initRemoteSupportDb, installRemoteSupport } from "./remoteSupport.js";
+import { initVorkenPlatform, installVorkenPlatform } from "./vorkenPlatform.js";
+import { startVorkenBot } from "./vorkenBot.js";
 
 const { Pool } = pg;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -4788,6 +4790,7 @@ async function backfillPreviouslyApprovedAnalyses() {
          a.id
        FROM analyses a
        WHERE a.external_decision='approve'
+         AND a.external_source IS DISTINCT FROM 'vorken'
          AND EXISTS (
            SELECT 1
            FROM scan_findings sf
@@ -10763,6 +10766,23 @@ app.get("/a/:token", (_req, res) => {
   res.sendFile(path.join(__dirname, "public", "analysis.html"));
 });
 
+const vorkenPlatform = installVorkenPlatform(app, {
+  pool, publicUrl, requireAdmin, learnAnalysisArtifacts, revokeLearnedTrustForFindings,
+});
+app.get("/servidor", (_req, res) => {
+  res.sendFile(path.join(__dirname, "public", "servidor.html"));
+});
+app.get("/", (req, res, next) => {
+  const host = new URL(publicUrl).hostname;
+  if (process.env.VORKEN_SUBDOMAINS === "true" && req.hostname.endsWith("." + host))
+    return res.redirect("/servidor");
+  next();
+});
+app.get("/admin/clientes", (_req, res) => {
+  res.sendFile(path.join(__dirname, "public", "clientes.html"));
+});
+app.use("/api/vorken", (_req, res) => res.status(404).json({ message: "Recurso não encontrado." }));
+
 app.get("*", (_req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
@@ -10770,6 +10790,7 @@ app.get("*", (_req, res) => {
 initDb()
   .then(async () => {
     await initRemoteSupportDb(pool);
+    await initVorkenPlatform(pool);
     await disableLearnedArtifactsNowInCatalog();
     await backfillPreviouslyApprovedAnalyses();
 
@@ -10777,6 +10798,9 @@ initDb()
     remoteSupport.attach(server);
     server.listen(port, "0.0.0.0", () => {
       console.log("Vorken web ouvindo na porta " + port);
+    });
+    startVorkenBot(vorkenPlatform).catch(error => {
+      console.error("Falha ao conectar bot Vorken:", error.code || error.name);
     });
   })
   .catch((error) => {

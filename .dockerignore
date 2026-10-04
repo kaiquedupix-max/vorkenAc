@@ -1,0 +1,9 @@
+.git
+**/node_modules
+**/.env
+**/.env.*
+!**/.env.example
+artifacts
+**/bin
+**/obj
+website/preview-platform.mjs
