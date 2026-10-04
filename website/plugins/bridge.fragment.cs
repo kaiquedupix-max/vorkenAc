@@ -1,6 +1,21 @@
         private const string ApiBase = "__VORKEN_API__";
         private const string Installation = "__VORKEN_INSTALLATION__";
         private bool bridgeActive;
+        private BridgeNotifications bridgeNotifications = new BridgeNotifications();
+        private class BridgeNotifications
+        {
+            public bool rustStarted = true, rustVerified = true, rustBans = true;
+        }
+        private void AnnounceBridge(string kind, string playerName, string administrator = null)
+        {
+            string name = Clean(playerName);
+            if (kind == "start" && bridgeNotifications.rustStarted)
+                Server.Broadcast("<color=#FF2222>[VERIFICAÇÃO]</color> Foi iniciado um processo de verificação administrativa com o jogador <color=#FF5555>" + name + "</color>. Administrador responsável: <color=#FFD166>" + Clean(administrator ?? "Equipe Vorken") + "</color>.");
+            else if (kind == "approve" && bridgeNotifications.rustVerified)
+                Server.Broadcast("<color=#2bf0c9>[VERIFICAÇÃO]</color> O jogador <color=#2bf0c9>" + name + "</color> foi verificado e liberado pela administração. ✅");
+            else if (kind == "deny" && bridgeNotifications.rustBans)
+                Server.Broadcast("<color=#FF2222>[VORKEN SCANNER]</color> O jogador <color=#FF5555>" + name + "</color> foi banido após verificação administrativa.");
+        }
         private bool syncPending;
         private DateTime lastBridgeResponse = DateTime.UtcNow;
         private BridgeData bridge = new BridgeData();
@@ -31,6 +46,7 @@
         private class BridgeResponse
         {
             public bool active;
+            public BridgeNotifications notifications;
             public string discord, channel;
             public List<string> accepted, acknowledged;
             public List<BridgeCommand> commands;
@@ -105,6 +121,7 @@
                     lastBridgeResponse = DateTime.UtcNow;
                     if (players != null) lastPlayersSent = DateTime.UtcNow;
                     bridgeActive = data.active;
+                    bridgeNotifications = data.notifications ?? bridgeNotifications;
                     if (data.accepted != null) bridge.Events.RemoveAll(e => data.accepted.Contains(e.id));
                     if (data.acknowledged != null) foreach (string id in data.acknowledged) bridge.Receipts.Remove(id);
                     settings.Discord = data.discord ?? settings.Discord;
@@ -152,7 +169,9 @@
                 {
                     permission.CreateGroup("vorken.verificado", "Vorken Verificado", 0);
                     permission.AddUserGroup(command.steamId, "vorken.verificado");
+                    string verifiedName = session.Nome;
                     End(steamId, "Verificacao Vorken concluida. Voce esta liberado!");
+                    AnnounceBridge("approve", verifiedName);
                     receipt.ok = true; receipt.result = "Jogador liberado e grupo Vorken Verificado aplicado.";
                 }
                 else if (command.action == "deny")
@@ -164,6 +183,7 @@
                     ServerUsers.Save();
                     BasePlayer player = Find(steamId);
                     if (player != null && player.IsConnected) player.Kick(reason);
+                    AnnounceBridge("deny", name);
                     receipt.ok = true; receipt.result = "Banimento aplicado pelo Vorken.";
                 }
                 else { receipt.ok = false; receipt.result = "Acao desconhecida."; }

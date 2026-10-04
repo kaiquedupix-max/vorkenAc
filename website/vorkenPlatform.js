@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { notificationSettings, canPublish } from './vorkenSettings.js';
 import fs from 'node:fs';
 import { hash, addMonths, licensed, managesGuild, validDiscordInvite, validIds, seal, unseal, serverSlug } from './vorkenDomain.js';
 
@@ -92,6 +93,21 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
     if (!r.rows[0]) fail(404,'Servidor não encontrado.');
     return r.rows[0];
   };
+  const accessSql=alias=>`(${alias}.customer_id=$2 OR EXISTS(SELECT 1 FROM vorken_team t WHERE t.server_id=${alias}.id AND t.customer_id=$2))`;
+  const accessibleServer=async(id,userId,db=pool)=>{
+    if(!uuid(id))fail(400,'Servidor inválido.');
+    const s=(await db.query('SELECT s.* FROM vorken_servers s WHERE s.id=$1 AND '+accessSql('s'),[id,userId])).rows[0];
+    if(!s)fail(404,'Servidor não encontrado.');return s;
+  };
+  const botApi=async endpoint=>{
+    if(!process.env.VORKEN_DISCORD_BOT_TOKEN)fail(503,'Bot ainda não configurado.');
+    const r=await fetch('https://discord.com/api/v10'+endpoint,{headers:{Authorization:'Bot '+process.env.VORKEN_DISCORD_BOT_TOKEN},signal:AbortSignal.timeout(10000)});
+    if(!r.ok)fail(503,'Adicione o bot ao Discord e confira suas permissões.');return r.json();
+  };
+  const publishChannels=async server=>{
+    const [channels,roles,member]=await Promise.all([botApi('/guilds/'+server.guild_id+'/channels'),botApi('/guilds/'+server.guild_id+'/roles'),botApi('/guilds/'+server.guild_id+'/members/'+process.env.VORKEN_DISCORD_CLIENT_ID)]);
+    return channels.filter(c=>canPublish(c,server.guild_id,member,roles)).map(c=>({id:c.id,name:c.name}));
+  };
   const audit = (db, actor,action,target,details={}) => db.query('INSERT INTO vorken_audit(actor,action,target,details) VALUES($1,$2,$3,$4)',[actor,action,target,JSON.stringify(details)]);
   const queue = async (db,serverId,action,steamId,actorId,sessionId=null,reason='',evidence=[],trusted=[]) => {
     const id=crypto.randomUUID();
@@ -125,14 +141,14 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
     const accessible=async(req,db=pool)=>{
       const u=await identity(req);
       if(!uuid(req.params.serverId))fail(400,'Servidor inválido.');
-      const s=(await db.query('SELECT * FROM vorken_servers WHERE id=$1'+(owner?'':' AND customer_id=$2'),owner?[req.params.serverId]:[req.params.serverId,u.id])).rows[0];
+      const s=(await db.query('SELECT * FROM vorken_servers WHERE id=$1'+(owner?'':' AND '+accessSql('vorken_servers')),owner?[req.params.serverId]:[req.params.serverId,u.id])).rows[0];
       if(!s)fail(404,'Servidor não encontrado.');
       return {s,actor:owner?'owner':'customer:'+u.id};
     };
     app.get(base,...auth,route(async(req,res)=>{
       const u=await identity(req);
       const r=await pool.query(`SELECT s.id,s.name,s.customer_id,s.enabled,s.last_seen,c.name AS customer_name
-        FROM vorken_servers s JOIN vorken_customers c ON c.id=s.customer_id ${owner?'':'WHERE s.customer_id=$1'} ORDER BY c.name,s.name`,owner?[]:[u.id]);
+        FROM vorken_servers s JOIN vorken_customers c ON c.id=s.customer_id ${owner?'':'WHERE (s.customer_id=$1 OR EXISTS(SELECT 1 FROM vorken_team t WHERE t.server_id=s.id AND t.customer_id=$1))'} ORDER BY c.name,s.name`,owner?[]:[u.id]);
       res.set('Cache-Control','no-store').json({servers:r.rows});
     }));
     app.get(base+'/:serverId',...auth,route(async(req,res)=>{
@@ -220,7 +236,7 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
   app.get('/api/vorken/me',route(async(req,res)=>{
     const u=await customer(req), e=await entitlement(u.id);
     const [servers,orders]=await Promise.all([
-      pool.query('SELECT id,name,slug,guild_id,discord_invite,enabled,last_seen,plugin_version FROM vorken_servers WHERE customer_id=$1 ORDER BY created_at DESC',[u.id]),
+      pool.query('SELECT s.id,s.name,s.slug,s.guild_id,s.discord_invite,s.enabled,s.last_seen,s.plugin_version,(s.customer_id=$1) AS owned FROM vorken_servers s WHERE s.customer_id=$1 OR EXISTS(SELECT 1 FROM vorken_team t WHERE t.server_id=s.id AND t.customer_id=$1) ORDER BY s.created_at DESC',[u.id]),
       pool.query('SELECT id,plan_id,price_cents,status,created_at,checkout_url FROM vorken_orders WHERE customer_id=$1 ORDER BY created_at DESC LIMIT 50',[u.id])]);
     res.json({customer:{id:u.id,name:u.name,discord_id:u.discord_id},license:{...e,active:licensed(e)},servers:servers.rows.map(s=>({...s,portalUrl:domainUrl(s)})),orders:orders.rows,guilds:await guilds(u)});
   }));
@@ -253,6 +269,65 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
     await pool.query('UPDATE vorken_servers SET name=$2,discord_invite=$3 WHERE id=$1',[req.params.id,clean(req.body.name,80),req.body.discordInvite]);
     res.json({ok:true});
   }));
+  app.get('/api/vorken/servers/:id/settings',route(async(req,res)=>{
+    const u=await customer(req),s=await accessibleServer(req.params.id,u.id);
+    res.json({name:s.name,discordInvite:s.discord_invite,owned:s.customer_id===u.id,settings:notificationSettings(s.notification_settings),channels:await publishChannels(s)});
+  }));
+  app.patch('/api/vorken/servers/:id/settings',csrf,route(async(req,res)=>{
+    const u=await customer(req),s=await ownedServer(req.params.id,u.id),v=req.body.settings;
+    if(!v||typeof v!=='object')fail(400,'Configuração inválida.');
+    const settings=notificationSettings();
+    for(const key of Object.keys(settings)){
+      if(key.endsWith('ChannelId')){if(v[key]!==null&&!snowflake(v[key]))fail(400,'Canal inválido.');settings[key]=v[key];}
+      else {if(typeof v[key]!=='boolean')fail(400,'Opção inválida.');settings[key]=v[key];}
+    }
+    const channels=await publishChannels(s);
+    for(const id of [settings.banChannelId,settings.verifiedChannelId])if(id&&!channels.some(c=>c.id===id))fail(400,'Escolha um canal deste Discord onde o bot possa publicar.');
+    await pool.query('UPDATE vorken_servers SET notification_settings=$2 WHERE id=$1',[s.id,JSON.stringify(settings)]);
+    await audit(pool,u.id,'notification_settings',s.id,settings);res.json({ok:true});
+  }));
+  app.get('/api/vorken/servers/:id/team',route(async(req,res)=>{
+    const u=await customer(req),s=await ownedServer(req.params.id,u.id);
+    const members=await pool.query('SELECT c.id,c.name,c.discord_id,t.created_at FROM vorken_team t JOIN vorken_customers c ON c.id=t.customer_id WHERE t.server_id=$1',[s.id]);
+    const invites=await pool.query('SELECT id,discord_id,expires_at FROM vorken_invites WHERE server_id=$1 AND used_at IS NULL AND revoked_at IS NULL AND expires_at>NOW()',[s.id]);
+    res.json({members:members.rows,invites:invites.rows});
+  }));
+  app.post('/api/vorken/servers/:id/team/invites',csrf,route(async(req,res)=>{
+    const u=await customer(req),s=await ownedServer(req.params.id,u.id);limit('invite:'+u.id,10);
+    if(!snowflake(req.body.discordId))fail(400,'Informe o ID Discord do administrador convidado.');
+    const token=crypto.randomBytes(32).toString('base64url'),id=crypto.randomUUID();
+    await pool.query("INSERT INTO vorken_invites(id,server_id,token_hash,discord_id,created_by,expires_at) VALUES($1,$2,$3,$4,$5,NOW()+interval '7 days')",[id,s.id,hash(token),req.body.discordId,u.id]);
+    await audit(pool,u.id,'team_invited',s.id,{discordId:req.body.discordId});
+    res.status(201).json({id,url:publicUrl+'/servidor#convite='+token});
+  }));
+  app.post('/api/vorken/team/accept',csrf,route(async(req,res)=>{
+    const u=await customer(req);limit('accept:'+u.id,10);
+    if(!/^[\w-]{43}$/.test(String(req.body.token||'')))fail(400,'Convite inválido.');
+    const result=await tx(async db=>{
+      const i=(await db.query('SELECT i.*,s.customer_id,s.name,s.guild_id FROM vorken_invites i JOIN vorken_servers s ON s.id=i.server_id WHERE i.token_hash=$1 FOR UPDATE OF i',[hash(req.body.token)])).rows[0];
+      if(!i||i.used_at||i.revoked_at||new Date(i.expires_at)<=new Date()||i.discord_id!==u.discord_id||i.created_by!==i.customer_id)fail(403,'Convite inválido, expirado ou destinado a outra conta Discord.');
+      if(!(await guilds(u)).some(g=>g.id===i.guild_id))fail(403,'Sua conta deve administrar o Discord deste servidor.');
+      await botApi('/guilds/'+i.guild_id+'/members/'+u.discord_id);
+      await db.query('INSERT INTO vorken_team(server_id,customer_id,granted_by) VALUES($1,$2,$3) ON CONFLICT DO NOTHING',[i.server_id,u.id,i.created_by]);
+      await db.query('UPDATE vorken_invites SET used_at=NOW() WHERE id=$1',[i.id]);
+      await audit(db,u.id,'team_joined',i.server_id);return {name:i.name};
+    });res.json(result);
+  }));
+  app.delete('/api/vorken/servers/:id/team/:memberId',csrf,route(async(req,res)=>{
+    const u=await customer(req),s=await ownedServer(req.params.id,u.id);
+    if(!uuid(req.params.memberId))fail(400,'Membro inválido.');
+    await tx(async db=>{
+      const member=(await db.query('SELECT discord_id FROM vorken_customers WHERE id=$1',[req.params.memberId])).rows[0];
+      await db.query('DELETE FROM vorken_team WHERE server_id=$1 AND customer_id=$2',[s.id,req.params.memberId]);
+      if(member)await db.query('UPDATE vorken_invites SET revoked_at=NOW() WHERE server_id=$1 AND discord_id=$2 AND used_at IS NULL',[s.id,member.discord_id]);
+      await audit(db,u.id,'team_removed',s.id,{memberId:req.params.memberId});
+    });res.json({ok:true});
+  }));
+  app.delete('/api/vorken/servers/:id/invites/:inviteId',csrf,route(async(req,res)=>{
+    const u=await customer(req),s=await ownedServer(req.params.id,u.id);
+    if(!uuid(req.params.inviteId))fail(400,'Convite inválido.');
+    await pool.query('UPDATE vorken_invites SET revoked_at=NOW() WHERE id=$1 AND server_id=$2',[req.params.inviteId,s.id]);res.json({ok:true});
+  }));
   app.get('/api/vorken/servers/:id/bot',route(async(req,res)=>{
     const u=await customer(req),s=await ownedServer(req.params.id,u.id);
     if (!process.env.VORKEN_DISCORD_CLIENT_ID) fail(503,'Bot ainda não configurado.');
@@ -277,13 +352,13 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
     const u=await customer(req);
     const r=await pool.query(`SELECT v.*,s.name AS server_name,a.status AS analysis_status,a.processing_stage,a.external_decision
       FROM vorken_sessions v JOIN vorken_servers s ON s.id=v.server_id LEFT JOIN analyses a ON a.id=v.analysis_id
-      WHERE s.customer_id=$1 ORDER BY v.created_at DESC LIMIT 100`,[u.id]);
+      WHERE (s.customer_id=$1 OR EXISTS(SELECT 1 FROM vorken_team t WHERE t.server_id=s.id AND t.customer_id=$1)) ORDER BY v.created_at DESC LIMIT 100`,[u.id]);
     res.json({sessions:r.rows});
   }));
   app.get('/api/vorken/sessions/:id/report',route(async(req,res)=>{
     const u=await customer(req); if (!uuid(req.params.id)) fail(400,'Sessão inválida.');
     const r=await pool.query(`SELECT v.*,a.status AS analysis_status FROM vorken_sessions v JOIN vorken_servers s ON s.id=v.server_id
-      LEFT JOIN analyses a ON a.id=v.analysis_id WHERE v.id=$1 AND s.customer_id=$2`,[req.params.id,u.id]);
+      LEFT JOIN analyses a ON a.id=v.analysis_id WHERE v.id=$1 AND ${accessSql('s')}`,[req.params.id,u.id]);
     const s=r.rows[0]; if(!s) fail(404,'Sessão não encontrada.');
     const findings=await pool.query('SELECT id,title,severity,artifact_type,artifact_value,evidence FROM scan_findings WHERE analysis_id=$1 ORDER BY id',[s.analysis_id]);
     res.json({session:s,findings:findings.rows});
@@ -294,7 +369,7 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
     if(!uuid(req.params.id)||!action||!evidence||!trusted) fail(400,'Decisão inválida.');
     if(evidence.some(id=>trusted.includes(id))) fail(400,'Uma prova de banimento não pode ser marcada como confiável.');
     const id=await tx(async db=>{
-      const r=await db.query('SELECT v.id FROM vorken_sessions v JOIN vorken_servers s ON s.id=v.server_id WHERE v.id=$1 AND s.customer_id=$2',[req.params.id,u.id]);
+      const r=await db.query(`SELECT v.id FROM vorken_sessions v JOIN vorken_servers s ON s.id=v.server_id WHERE v.id=$1 AND ${accessSql('s')}`,[req.params.id,u.id]);
       if(!r.rows[0]) fail(404,'Sessão não encontrada.');
       return decision(db,req.params.id,action,u.discord_id,clean(req.body.reason,500),evidence,trusted);
     });res.json({ok:true,commandId:id,message:'Decisão enviada. Aguardando confirmação do plugin.'});
@@ -461,6 +536,7 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
             await db.query('INSERT INTO vorken_bans(id,session_id,server_id,steam_id,reason,evidence) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(session_id) DO NOTHING',
               [crypto.randomUUID(),s.id,server.id,s.steam_id,command.reason,JSON.stringify(evidence.rows)]);
           }
+          await notify(db,server.guild_id,command.action==='deny'?'public_ban':'public_verified',{serverId:server.id,playerName:s.player_name,serverName:server.name,steamId:s.steam_id,reason:command.reason});
           await notify(db,server.guild_id,'decision',{sessionId:s.id,steamId:s.steam_id,discordUserId:s.discord_user_id,channelId:s.ticket_channel_id,action:command.action,reason:command.reason});
         }
       }
@@ -477,7 +553,8 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
     const active=await serverActive(server);
     await pool.query("UPDATE vorken_commands SET status='failed',result='Solicitação de telagem expirada.',completed_at=NOW() WHERE server_id=$1 AND status='pending' AND action='start' AND created_at<NOW()-interval '2 minutes'",[server.id]);
     const commands=active?(await pool.query("SELECT id,session_id AS \"sessionId\",action,steam_id AS \"steamId\",actor_id AS \"actorId\",reason FROM vorken_commands WHERE server_id=$1 AND status='pending' ORDER BY created_at LIMIT 20",[server.id])).rows:[];
-    res.json({active,accepted,acknowledged,commands,discord:server.discord_invite,channel:'#verificacao'});
+    const g=(await pool.query('SELECT verification_channel_id FROM vorken_guilds WHERE id=$1',[server.guild_id])).rows[0];
+    res.json({active,accepted,acknowledged,commands,discord:server.discord_invite,channel:g?.verification_channel_id?'https://discord.com/channels/'+server.guild_id+'/'+g.verification_channel_id:'#verificacao',notifications:notificationSettings(server.notification_settings)});
   }));
 
   return { pool, entitlement, serverActive, ownedServer, queue, decision, tx, notify, publicUrl, audit };

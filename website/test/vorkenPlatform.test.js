@@ -6,6 +6,17 @@ import cookieParser from 'cookie-parser';
 import { PGlite } from '@electric-sql/pglite';
 import { installVorkenPlatform,initVorkenPlatform } from '../vorkenPlatform.js';
 import { hash,seal,addMonths,licensed,managesGuild,validDiscordInvite,serverSlug } from '../vorkenDomain.js';
+import { canPublish,publicNotice } from '../vorkenSettings.js';
+
+test('Discord channel permissions respect member denies and public feeds omit private evidence',()=>{
+  const guild='123456789012345678',member={user:{id:'999456789012345678'},roles:['staff']};
+  const roles=[{id:guild,permissions:String(1024|2048|16384|65536)},{id:'staff',permissions:'0'}];
+  assert(canPublish({type:0},guild,member,roles));
+  assert(!canPublish({type:0,permission_overwrites:[{id:member.user.id,type:1,deny:'2048',allow:'0'}]},guild,member,roles));
+  assert(!canPublish({type:2},guild,member,roles));
+  const embed=publicNotice('public_ban',{playerName:'<@everyone>',steamId:'76561198000000001',serverName:'Xtreme',reason:'Prova revisada',evidence:'PRIVATE',code:'1234'});
+  assert(!JSON.stringify(embed).includes('PRIVATE'));assert(!JSON.stringify(embed).includes('1234'));
+});
 
 test('calendar billing clamps month ends and preserves UTC time',()=>{
   assert.equal(addMonths('2026-01-31T12:00:00Z',1).toISOString(),'2026-02-28T12:00:00.000Z');
@@ -37,11 +48,15 @@ test('platform routes isolate customers, confirm decisions and activate payments
     CREATE TABLE scan_findings(id BIGSERIAL PRIMARY KEY,analysis_id BIGINT,title TEXT,severity TEXT,artifact_type TEXT,artifact_value TEXT,evidence JSONB);`);
   await initVorkenPlatform(pool);
   const secret='test-session-secret-that-is-at-least-32-bytes';
-  const oldEnv={SESSION_SECRET:process.env.SESSION_SECRET,MERCADO_PAGO_ACCESS_TOKEN:process.env.MERCADO_PAGO_ACCESS_TOKEN,MERCADO_PAGO_WEBHOOK_SECRET:process.env.MERCADO_PAGO_WEBHOOK_SECRET};
+  const oldEnv={SESSION_SECRET:process.env.SESSION_SECRET,MERCADO_PAGO_ACCESS_TOKEN:process.env.MERCADO_PAGO_ACCESS_TOKEN,MERCADO_PAGO_WEBHOOK_SECRET:process.env.MERCADO_PAGO_WEBHOOK_SECRET,VORKEN_DISCORD_BOT_TOKEN:process.env.VORKEN_DISCORD_BOT_TOKEN,VORKEN_DISCORD_CLIENT_ID:process.env.VORKEN_DISCORD_CLIENT_ID};
+  process.env.VORKEN_DISCORD_BOT_TOKEN='test-only-bot';process.env.VORKEN_DISCORD_CLIENT_ID='999456789012345678';
   process.env.SESSION_SECRET=secret;process.env.MERCADO_PAGO_ACCESS_TOKEN='test-only';process.env.MERCADO_PAGO_WEBHOOK_SECRET='test-webhook-secret';
   const nativeFetch=globalThis.fetch;
   let payment;
   globalThis.fetch=async(url,options)=>{
+    if(String(url).endsWith('/channels'))return Response.json([{id:'888456789012345678',name:'ban-feed',type:0},{id:'777456789012345678',name:'verificados',type:0}]);
+    if(String(url).endsWith('/roles'))return Response.json([{id:'123456789012345678',permissions:'8'}]);
+    if(String(url).includes('/members/'))return Response.json({user:{id:'999456789012345678'},roles:[]});
     if(String(url).startsWith('https://discord.com/api/'))return Response.json([{id:'123456789012345678',name:'Discord de teste',owner:true}]);
     if(String(url).includes('api.mercadopago.com/v1/payments/'))return Response.json(payment);
     if(String(url).includes('api.mercadopago.com/checkout/preferences'))return Response.json({id:'pref-test',init_point:'https://www.mercadopago.com.br/checkout/test'});
@@ -75,6 +90,32 @@ test('platform routes isolate customers, confirm decisions and activate payments
     assert.equal((await request('/servers/'+s2+'/plugin',{body:{}})).status,404);
     assert.equal((await request('/servers/'+s1,{method:'PATCH',body:{name:'New',discordInvite:'https://discord.gg/test'},origin:'https://evil.test'})).status,403);
     assert.equal((await request('/admin')).status,401);
+  });
+  await t.test('personal invites bind Discord identity, scope roster/reports and revoke immediately',async()=>{
+    const invited=await request('/servers/'+s1+'/team/invites',{body:{discordId:'223456789012345678'}});
+    assert.equal(invited.status,201);const token=invited.data.url.split('convite=')[1];
+    assert.equal((await request('/team/accept',{body:{token}})).status,403);
+    assert.equal((await request('/team/accept',{customerId:c2,body:{token}})).status,200);
+    assert.equal((await request('/team/accept',{customerId:c2,body:{token}})).status,403);
+    assert.equal((await request('/operations/'+s1,{customerId:c2})).status,200);
+    assert.equal((await request('/servers/'+s1+'/plugin',{customerId:c2,body:{}})).status,404);
+    assert.equal((await request('/servers/'+s1+'/team',{customerId:c2})).status,404);
+    const me=await request('/me',{customerId:c2});assert.equal(me.data.servers.find(s=>s.id===s1).owned,false);
+    await request('/servers/'+s1+'/team/'+c2,{method:'DELETE'});
+    assert.equal((await request('/operations/'+s1,{customerId:c2})).status,404);
+    const revoked=await request('/servers/'+s1+'/team/invites',{body:{discordId:'223456789012345678'}});
+    await request('/servers/'+s1+'/invites/'+revoked.data.id,{method:'DELETE'});
+    assert.equal((await request('/team/accept',{customerId:c2,body:{token:revoked.data.url.split('convite=')[1]}})).status,403);
+    const expired=await request('/servers/'+s1+'/team/invites',{body:{discordId:'223456789012345678'}});
+    await pool.query("UPDATE vorken_invites SET expires_at=NOW()-interval '1 hour' WHERE id=$1",[expired.data.id]);
+    assert.equal((await request('/team/accept',{customerId:c2,body:{token:expired.data.url.split('convite=')[1]}})).status,403);
+  });
+  await t.test('notification channels allow one shared channel, reject foreign IDs and sync Rust switches',async()=>{
+    const settings={banChannelId:'888456789012345678',verifiedChannelId:'888456789012345678',discordBans:true,discordVerified:true,rustStarted:false,rustVerified:false,rustBans:true};
+    assert.equal((await request('/servers/'+s1+'/settings',{method:'PATCH',body:{settings}})).status,200);
+    assert.equal((await request('/servers/'+s1+'/settings',{customerId:c2})).status,404);
+    assert.equal((await request('/servers/'+s1+'/settings',{method:'PATCH',body:{settings:{...settings,banChannelId:'666456789012345678'}}})).status,400);
+    const sync=await request('/plugin/sync',{token:token1,body:{}});assert.equal(sync.data.notifications.rustStarted,false);assert.equal(sync.data.notifications.rustVerified,false);
   });
   await t.test('online roster and panel telagem are scoped, deduplicated and reject stale data',async()=>{
     const steamId='76561198000000999';
@@ -123,6 +164,14 @@ test('platform routes isolate customers, confirm decisions and activate payments
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM vorken_bans')).rows[0].n,1);
     await request('/plugin/sync',{token:token1,body:{receipts:[{id:commandId,ok:true,result:'Retry'}]}});
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM vorken_bans')).rows[0].n,1);assert.equal(revoked.length,1);
+    assert.equal((await pool.query("SELECT count(*)::int AS n FROM vorken_notices WHERE kind='public_ban'")).rows[0].n,1);
+    const invited=await request('/servers/'+s1+'/team/invites',{body:{discordId:'223456789012345678'}});
+    await request('/team/accept',{customerId:c2,body:{token:invited.data.url.split('convite=')[1]}});
+    const report=await request('/sessions/'+event.sessionId+'/report',{customerId:c2});assert.equal(report.status,200);assert.equal(report.data.findings.length,1);
+    assert.equal((await request('/operations/'+s1+'/sessions/'+event.sessionId+'/report',{customerId:c2})).status,200);
+    await request('/servers/'+s1+'/team/'+c2,{method:'DELETE'});
+    assert.equal((await request('/sessions/'+event.sessionId+'/report',{customerId:c2})).status,404);
+    assert.equal((await request('/operations/'+s1+'/sessions/'+event.sessionId+'/report',{customerId:c2})).status,404);
   });
   await t.test('join on a different server queues alert with reason and selected evidence, no ban command',async()=>{
     const r=await request('/plugin/sync',{token:token2,body:{events:[{id:crypto.randomUUID(),eventType:'player_join',steamId:event.steamId,playerName:'Player'}]}});

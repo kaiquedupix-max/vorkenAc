@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 const original = fs.readFileSync(new URL('../rust-plugins/Verificacao.cs',import.meta.url),'utf8').replace(/\r\n/g,'\n');
-let source=original.replace('[Info("Verificacao", "Kaique", "1.6.4")]','[Info("Vorken", "Kaique", "2.0.1")]')
+let source=original.replace('[Info("Verificacao", "Kaique", "1.6.4")]','[Info("Vorken", "Kaique", "2.0.2")]')
   .replace('public class Verificacao : RustPlugin','public class Vorken : RustPlugin')
   .replace('isolamento via Vanish e eventos RCON.','conexao HTTPS independente, sem RCON.')
   .replaceAll('verificacao','vorken').replaceAll('[GF_VERIFICACAO]','[VORKEN]')
@@ -25,6 +25,7 @@ const bridge=fs.readFileSync(new URL('./plugins/bridge.fragment.cs',import.meta.
 source=source.replace('        private void Init()\n',bridge+'\n        private void Init()\n');
 source=source.replace('        private void OnPlayerDisconnected(\n','        private void OnPlayerConnected(BasePlayer player)\n        {\n            if (player != null) QueueJoin(player);\n        }\n\n        private void OnPlayerDisconnected(\n');
 source=source.replace('            unloading = true;','            unloading = true;\n            SaveBridge();');
+source=source.replace('            ShowUi(target, session);\n            EmitEvent("session_started", id, session);','            ShowUi(target, session);\n            AnnounceBridge("start", session.Nome, session.Administrador);\n            EmitEvent("session_started", id, session);');
 if(source===original || !source.includes('SyncBridge') || source.includes('[GF_VERIFICACAO]')) throw new Error('Plugin generation failed');
 fs.mkdirSync(new URL('./plugins/',import.meta.url),{recursive:true});
 fs.writeFileSync(new URL('./plugins/Vorken.cs',import.meta.url),source);

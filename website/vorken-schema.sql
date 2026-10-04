@@ -68,3 +68,15 @@ ALTER TABLE vorken_servers ADD COLUMN IF NOT EXISTS slug TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS vorken_server_slug ON vorken_servers(slug);
 ALTER TABLE vorken_sessions ADD COLUMN IF NOT EXISTS notified_stage TEXT;
 ALTER TABLE vorken_commands ADD COLUMN IF NOT EXISTS learning_complete BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE vorken_servers ADD COLUMN IF NOT EXISTS notification_settings JSONB NOT NULL DEFAULT '{}';
+ALTER TABLE vorken_notices ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+CREATE TABLE IF NOT EXISTS vorken_team (
+ server_id UUID NOT NULL REFERENCES vorken_servers(id) ON DELETE CASCADE,
+ customer_id UUID NOT NULL REFERENCES vorken_customers(id), granted_by UUID NOT NULL REFERENCES vorken_customers(id),
+ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY(server_id,customer_id)
+);
+CREATE TABLE IF NOT EXISTS vorken_invites (
+ id UUID PRIMARY KEY, server_id UUID NOT NULL REFERENCES vorken_servers(id) ON DELETE CASCADE,
+ token_hash TEXT NOT NULL UNIQUE, discord_id TEXT NOT NULL, created_by UUID NOT NULL REFERENCES vorken_customers(id),
+ expires_at TIMESTAMPTZ NOT NULL, used_at TIMESTAMPTZ, revoked_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
