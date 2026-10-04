@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import { PGlite } from '@electric-sql/pglite';
-import { installVorkenPlatform,initVorkenPlatform,backfillLegacyVorkenBans } from '../vorkenPlatform.js';
+import { installVorkenPlatform,initVorkenPlatform,backfillLegacyVorkenBans,importLegacyVerificationBans } from '../vorkenPlatform.js';
 import { hash,seal,addMonths,licensed,managesGuild,validDiscordInvite,serverSlug } from '../vorkenDomain.js';
 import { canPublish,publicNotice,verificationEmbed,verificationSettings } from '../vorkenSettings.js';
 
@@ -70,9 +70,11 @@ test('platform routes isolate customers, confirm decisions and activate payments
     if(String(url).includes('api.mercadopago.com/checkout/preferences'))return Response.json({id:'pref-test',init_point:'https://www.mercadopago.com.br/checkout/test'});
     return nativeFetch(url,options);
   };
-  const learned=[],revoked=[];
+  const learned=[],revoked=[],reportScopes=[];
+  const sharedReport={analysis:{id:1,status:'completed'},report:{payload:{files:[{name:'inventory'}],browserHistorySignals:[{url:'history'}],uiCounts:{files:484}}},findings:[{id:1,severity:'critical',title:'Critical preserved'}],commonApps:[],relatedAnalyses:[]};
   const app=express();app.use(express.json());app.use(cookieParser());
   const platform=installVorkenPlatform(app,{pool,publicUrl:'https://vorken.xyz',
+    loadAnalysisReport:async(id,serverId)=>{reportScopes.push({id,serverId});return {...sharedReport,analysis:{...sharedReport.analysis,id}};},
     requireAdmin:(req,res,next)=>req.get('x-test-owner')==='yes'?next():res.sendStatus(401),
     learnAnalysisArtifacts:async(...args)=>learned.push(args),revokeLearnedTrustForFindings:async(...args)=>revoked.push(args)});
   const server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));
@@ -160,6 +162,19 @@ test('platform routes isolate customers, confirm decisions and activate payments
     assert.equal((await request('/sessions/'+sessionId+'/report',{customerId:c2})).status,404);
   });
   await pool.query("UPDATE vorken_sessions SET status='redeemed',analysis_id=$2 WHERE id=$1",[sessionId,analysisId]);
+  await t.test('customer and operations reuse the complete report only after server authorization',async()=>{
+    const customer=await request('/sessions/'+sessionId+'/report');
+    const operations=await request('/operations/'+s1+'/sessions/'+sessionId+'/report');
+    const owner=await request('/admin/operations/'+s1+'/sessions/'+sessionId+'/report',{owner:true});
+    assert.equal(customer.status,200);assert.equal(operations.status,200);assert.equal(owner.status,200);
+    assert.deepEqual(customer.data.report,sharedReport.report);assert.deepEqual(customer.data.findings,sharedReport.findings);
+    assert.deepEqual(operations.data,customer.data);assert.deepEqual(owner.data,customer.data);
+    assert(reportScopes.every(scope=>scope.serverId===s1));
+    const calls=reportScopes.length;
+    assert.equal((await request('/sessions/'+sessionId+'/report',{customerId:c2})).status,404);
+    assert.equal((await request('/operations/'+s2+'/sessions/'+sessionId+'/report',{customerId:c2})).status,404);
+    assert.equal(reportScopes.length,calls);
+  });
   let commandId;
   await t.test('ban needs real selected proof and is not applied before plugin acknowledgement',async()=>{
     assert.equal((await request('/sessions/'+sessionId+'/decision',{body:{decision:'deny',reason:'Cheat',evidenceIds:[]}})).status,400);
@@ -223,6 +238,15 @@ test('platform routes isolate customers, confirm decisions and activate payments
     assert.equal(await backfillLegacyVorkenBans(pool),1);assert.equal(await backfillLegacyVorkenBans(pool),0);
     const imported=(await pool.query('SELECT * FROM vorken_bans WHERE legacy_analysis_id=$1',[legacy.id])).rows[0];
     assert.equal(imported.reason,'Motivo histórico');assert.equal(imported.evidence[0].title,'Prova histórica');
+  });
+  await t.test('legacy policy bans preserve disconnect reasons and subsequent unbans idempotently',async()=>{
+    const record={id:692,action:'BAN',steam_id:'76561198000000020',player_name:'Policy player',reason:'Desconectou durante a verificacao administrativa.',admin_id:'SYSTEM',admin_name:'Sistema de Verificação',created_at:'2026-09-30T12:00:00Z',latest_action:'BAN'};
+    const released={...record,id:708,steam_id:'76561198000000021',latest_action:'DESBANIR'};
+    assert.equal(await importLegacyVerificationBans(pool,[record,released,{...record,id:709,admin_name:'Moderator',admin_id:'123'}]),2);
+    assert.equal(await importLegacyVerificationBans(pool,[record,released]),0);
+    const rows=(await pool.query("SELECT * FROM vorken_bans WHERE legacy_source='guerra_fria_verification_policy' ORDER BY legacy_record_id")).rows;
+    assert.equal(rows[0].reason,record.reason);assert.equal(rows[0].administrator_name,record.admin_name);assert.equal(rows[0].active,true);assert.equal(rows[1].active,false);
+    assert.equal(rows[0].evidence[0].evidence.legacyRecordId,692);
   });
   await t.test('license revocation stops commands and new sessions without disabling cleanup',async()=>{
     await request('/admin/customers/'+c1+'/license',{owner:true,body:{action:'revoke'}});

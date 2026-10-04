@@ -8,6 +8,7 @@ for(const root of document.querySelectorAll('[data-vorken-operations]')){
   root.innerHTML='<div class="card"><h2>Jogadores online · Verificação Vorken</h2><p>Selecione o servidor para iniciar telagens e revisar verificações pelo painel.</p><label>Servidor Rust<select data-server-select><option value="">Selecione um servidor</option></select></label><label>Buscar jogador<input data-player-search type="search" placeholder="Nome ou SteamID"></label><button data-reload type="button">Atualizar jogadores</button><p data-status role="status"></p><div class="table-wrap"><table><thead><tr><th>Jogador</th><th>SteamID</th><th>Telagem</th></tr></thead><tbody data-players></tbody></table></div><h3>Verificações deste servidor</h3><div data-sessions></div></div><dialog data-report><button type="button" data-close>Fechar</button><div data-report-body></div></dialog>';
   const get=name=>root.querySelector('[data-'+name+']'),status=message=>{get('status').textContent=message;};
   let initialized=false,busy=false,data=null,reportSession=null,reportServer=null;
+  window.addEventListener('message',event=>{if(event.origin===location.origin&&event.source===get('report-body').querySelector('iframe')?.contentWindow&&event.data?.type==='vorken-report-close'){get('report').close();refresh();}});
   const selected=()=>get('server-select').value;
   function renderPlayers(){
     const q=get('player-search').value.trim().toLocaleLowerCase('pt-BR');
@@ -49,8 +50,7 @@ for(const root of document.querySelectorAll('[data-vorken-operations]')){
       if(b.dataset.session){
         const serverId=selected(),result=await api('/'+serverId+'/sessions/'+b.dataset.session+'/report');
         reportSession=result.session.id;reportServer=serverId;
-        const ready=result.session.status==='redeemed'&&result.session.analysis_status==='completed'&&result.session.processing_stage==='completed';
-        get('report-body').innerHTML='<h2>'+esc(result.session.player_name)+'</h2><p>'+esc(result.session.steam_id)+'</p>'+result.findings.map(f=>'<article class="finding"><h3>'+esc(f.title)+'</h3><p>'+esc(f.severity)+'</p><details><summary>Ver prova</summary><pre>'+esc(JSON.stringify(f.evidence,null,2))+'</pre></details><label><input type="checkbox" data-proof value="'+f.id+'"> Prova de banimento</label><label><input type="checkbox" data-trust value="'+f.id+'"> Falso positivo revisado</label></article>').join('')+'<label>Motivo<textarea data-reason maxlength="500"></textarea></label><button type="button" data-decide="approve" '+(!ready?'disabled':'')+'>Verificar e liberar jogador</button> <button type="button" data-decide="deny" '+(!ready?'disabled':'')+'>Banir com provas</button><p data-report-status role="status">'+(ready?'A decisão aguarda confirmação do plugin.':'Aguarde a conclusão da análise para decidir.')+'</p>';
+        get('report-body').innerHTML='<iframe class="full-report-frame" title="Relatório completo da análise" src="/relatorio?session='+encodeURIComponent(reportSession)+'&server='+encodeURIComponent(reportServer)+'&owner='+(root.dataset.vorkenOperations==='owner'?'1':'0')+'"></iframe>';
         get('report').showModal();
       }
       if(b.dataset.decide){

@@ -90,3 +90,9 @@ CREATE TABLE IF NOT EXISTS vorken_invites (
  token_hash TEXT NOT NULL UNIQUE, discord_id TEXT NOT NULL, created_by UUID NOT NULL REFERENCES vorken_customers(id),
  expires_at TIMESTAMPTZ NOT NULL, used_at TIMESTAMPTZ, revoked_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE vorken_bans ADD COLUMN IF NOT EXISTS legacy_source TEXT;
+ALTER TABLE vorken_bans ADD COLUMN IF NOT EXISTS legacy_record_id TEXT;
+ALTER TABLE vorken_bans ADD COLUMN IF NOT EXISTS administrator_id TEXT;
+ALTER TABLE vorken_bans ADD COLUMN IF NOT EXISTS administrator_name TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS vorken_ban_legacy_record ON vorken_bans(legacy_source,legacy_record_id);

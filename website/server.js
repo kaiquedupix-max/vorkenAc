@@ -9223,9 +9223,7 @@ function compactAdminReportPayload(report) {
   };
 }
 
-app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "invalid_id" });
+async function loadSharedAnalysisReport(id, serverId = null) {
 
   const analysisResult = await pool.query(
     `SELECT
@@ -9258,7 +9256,7 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
     [id]
   );
   const analysis = analysisResult.rows[0];
-  if (!analysis) return res.status(404).json({ error: "analysis_not_found" });
+  if (!analysis) return null;
 
   const reportResult = await pool.query(
     `SELECT
@@ -9339,9 +9337,10 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
        FROM analyses
        WHERE machine_fingerprint = $1
          AND id <> $2
+         AND ($3::uuid IS NULL OR EXISTS (SELECT 1 FROM vorken_sessions vs WHERE vs.analysis_id=analyses.id AND vs.server_id=$3))
        ORDER BY id DESC
        LIMIT 20`,
-      [analysis.machine_fingerprint, id]
+      [analysis.machine_fingerprint, id, serverId]
     );
 
     relatedAnalyses = relatedResult.rows;
@@ -9363,7 +9362,7 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
     filter_status: "local_filters",
   };
 
-  res.json({
+  return {
     analysis,
     report: reportResult.rows[0] || null,
     findings: findingsResult.rows.map((finding) => ({
@@ -9378,7 +9377,15 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
     },
     relatedAnalyses,
     commonApps: commonAppCatalog,
-  });
+  };
+}
+
+app.get("/api/admin/analyses/:id", requireAdmin, async (req,res)=>{
+ const id=Number(req.params.id);
+ if(!Number.isInteger(id)||id<=0)return res.status(400).json({error:'invalid_id'});
+ const report=await loadSharedAnalysisReport(id);
+ if(!report)return res.status(404).json({error:'analysis_not_found'});
+ res.json(report);
 });
 
 app.get("/api/admin/analyses/:id/raw-hash", requireAdmin, async (req, res) => {
@@ -10767,8 +10774,9 @@ app.get("/a/:token", (_req, res) => {
 });
 
 const vorkenPlatform = installVorkenPlatform(app, {
-  pool, publicUrl, requireAdmin, learnAnalysisArtifacts, revokeLearnedTrustForFindings,
+  pool, publicUrl, requireAdmin, learnAnalysisArtifacts, revokeLearnedTrustForFindings, loadAnalysisReport: loadSharedAnalysisReport, loadPlayerProfiles: querySteamOfficialBatch,
 });
+app.get("/relatorio", (_req,res)=>res.sendFile(path.join(__dirname,"public","admin.html")));
 app.get("/servidor", (_req, res) => {
   res.sendFile(path.join(__dirname, "public", "servidor.html"));
 });

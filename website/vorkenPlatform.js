@@ -35,7 +35,25 @@ export async function backfillLegacyVorkenBans(pool){
   return result.rows.length;
 }
 
-export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, learnAnalysisArtifacts, revokeLearnedTrustForFindings }) {
+export async function importLegacyVerificationBans(pool,records){
+ const servers=await pool.query('SELECT id FROM vorken_servers WHERE guild_id=$1',['1499084540356853912']);
+ if(servers.rows.length!==1)throw new Error('A comunidade de origem precisa ter exatamente um servidor Rust vinculado.');
+ if(!Array.isArray(records))throw new Error('Histórico inválido.');
+ let imported=0;
+ for(const record of records){
+  if(record.action!=='BAN'||record.admin_id!=='SYSTEM'||!['Sistema de Verificação','Prazo da Verificação'].includes(record.admin_name)||!steam(record.steam_id)||!Number.isSafeInteger(record.id)||record.id<=0||!record.reason||!Number.isFinite(new Date(record.created_at).getTime()))continue;
+  const active=['BAN','PREVENTIVE_BAN'].includes(record.latest_action)&&(!record.ban_expires_at||new Date(record.ban_expires_at)>new Date());
+  const proof=[{type:'verification_policy',title:'Banimento por regra de verificação',reason:clean(record.reason,500),evidence:{source:'Registro confirmado do plugin de verificação',legacyRecordId:record.id,administrator:record.admin_name,latestAction:record.latest_action}}];
+  const result=await pool.query(`INSERT INTO vorken_bans(id,server_id,steam_id,player_name,reason,evidence,active,created_at,legacy_source,legacy_record_id,administrator_id,administrator_name)
+    VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,'guerra_fria_verification_policy',$8,$9,$10)
+    ON CONFLICT(legacy_source,legacy_record_id) DO NOTHING RETURNING id`,[servers.rows[0].id,record.steam_id,clean(record.player_name,100),clean(record.reason,500),JSON.stringify(proof),active,record.created_at,String(record.id),record.admin_id,record.admin_name]);
+  imported+=result.rows.length;
+ }
+ return imported;
+}
+
+export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, learnAnalysisArtifacts, revokeLearnedTrustForFindings, loadAnalysisReport, loadPlayerProfiles }) {
+  const auditProfiles=new Map();
   const secret = () => process.env.SESSION_SECRET || '';
   const rootHost=new URL(publicUrl).hostname;
   const cookieOptions = { httpOnly: true, sameSite: 'lax', secure: publicUrl.startsWith('https:'), path: '/',
@@ -206,7 +224,8 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
       const session=(await pool.query('SELECT v.*,a.status AS analysis_status,a.processing_stage FROM vorken_sessions v LEFT JOIN analyses a ON a.id=v.analysis_id WHERE v.id=$1 AND v.server_id=$2',[req.params.id,s.id])).rows[0];
       if(!session)fail(404,'Sessão não encontrada.');
       const findings=(await pool.query('SELECT id,title,severity,artifact_type,artifact_value,evidence FROM scan_findings WHERE analysis_id=$1 ORDER BY id',[session.analysis_id])).rows;
-      res.json({session,findings});
+      const full=loadAnalysisReport?await loadAnalysisReport(session.analysis_id,s.id):null;
+      res.json({session,findings,...(full||{})});
     }));
     app.post(base+'/:serverId/sessions/:id/decision',...auth,csrf,route(async(req,res)=>{
       const {s,actor}=await accessible(req);
@@ -389,11 +408,12 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
   }));
   app.get('/api/vorken/sessions/:id/report',route(async(req,res)=>{
     const u=await customer(req); if (!uuid(req.params.id)) fail(400,'Sessão inválida.');
-    const r=await pool.query(`SELECT v.*,a.status AS analysis_status FROM vorken_sessions v JOIN vorken_servers s ON s.id=v.server_id
+    const r=await pool.query(`SELECT v.*,a.status AS analysis_status,a.processing_stage FROM vorken_sessions v JOIN vorken_servers s ON s.id=v.server_id
       LEFT JOIN analyses a ON a.id=v.analysis_id WHERE v.id=$1 AND ${accessSql('s')}`,[req.params.id,u.id]);
     const s=r.rows[0]; if(!s) fail(404,'Sessão não encontrada.');
     const findings=await pool.query('SELECT id,title,severity,artifact_type,artifact_value,evidence FROM scan_findings WHERE analysis_id=$1 ORDER BY id',[s.analysis_id]);
-    res.json({session:s,findings:findings.rows});
+    const full=loadAnalysisReport?await loadAnalysisReport(s.analysis_id,s.server_id):null;
+    res.json({session:s,findings:findings.rows,...(full||{})});
   }));
   app.post('/api/vorken/sessions/:id/decision',csrf,route(async(req,res)=>{
     const u=await customer(req), action=req.body.decision==='approve'?'approve':req.body.decision==='deny'?'deny':null;
@@ -470,14 +490,18 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
     const offset=Math.max(0,Number.parseInt(req.query.offset,10)||0),q=clean(req.query.q,100);
     const r=await pool.query(`SELECT b.*,s.name AS server_name,COALESCE(v.player_name,b.player_name,legacy.player_name) AS player_name,
       COALESCE((SELECT name FROM vorken_customers WHERE discord_id=legacy.administrator_id),legacy.administrator_id) AS verification_administrator,
-      COALESCE(NULLIF(split_part(c.actor_id,'|',2),''),(SELECT name FROM vorken_customers WHERE discord_id=split_part(c.actor_id,'|',1)),c.actor_id) AS administrator,
+      COALESCE(b.administrator_name,NULLIF(split_part(c.actor_id,'|',2),''),(SELECT name FROM vorken_customers WHERE discord_id=split_part(c.actor_id,'|',1)),c.actor_id) AS administrator,
       COALESCE(v.analysis_id,b.legacy_analysis_id) AS analysis_id,COUNT(*) OVER()::int AS total
       FROM vorken_bans b JOIN vorken_servers s ON s.id=b.server_id LEFT JOIN vorken_sessions v ON v.id=b.session_id
       LEFT JOIN LATERAL(SELECT player_name,administrator_id FROM guerra_fria_verifications WHERE analysis_id=b.legacy_analysis_id ORDER BY id DESC LIMIT 1)legacy ON TRUE
       LEFT JOIN LATERAL(SELECT actor_id FROM vorken_commands WHERE (session_id=b.session_id AND action='deny' OR id=b.command_id) AND status='applied' ORDER BY completed_at DESC LIMIT 1)c ON TRUE
       WHERE $1='' OR b.steam_id ILIKE '%'||$1||'%' OR s.name ILIKE '%'||$1||'%' OR b.reason ILIKE '%'||$1||'%' OR COALESCE(v.player_name,b.player_name,legacy.player_name) ILIKE '%'||$1||'%'
       ORDER BY b.created_at DESC,b.id LIMIT 100 OFFSET $2`,[q,offset]);
-    res.json({bans:r.rows,total:r.rows[0]?.total||0,offset});
+    if(loadPlayerProfiles){
+      const missing=[...new Set(r.rows.map(b=>b.steam_id))].filter(id=>!auditProfiles.has(id)||auditProfiles.get(id).until<Date.now());
+      if(missing.length){try{const profiles=await loadPlayerProfiles(missing);for(const id of missing)auditProfiles.set(id,{profile:profiles.get(id)?.profile||null,until:Date.now()+3600000});}catch{}}
+    }
+    res.json({bans:r.rows.map(b=>({...b,profile:auditProfiles.get(b.steam_id)?.profile||null})),total:r.rows[0]?.total||0,offset});
   }));
   app.get('/api/vorken/admin',requireAdmin,route(async(_req,res)=>{
     const [customers,servers,orders,plans,audits,bans]=await Promise.all([

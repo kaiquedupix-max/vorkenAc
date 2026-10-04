@@ -4,11 +4,29 @@ const money=cents=>new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL
 const date=value=>value?new Date(value).toLocaleString('pt-BR'):'—';
 const states={active:'Ativa',inactive:'Inativa',suspended:'Suspensa',revoked:'Revogada',pending:'Pendente',paid:'Pago',approved:'Liberado',denied:'Banido',ended:'Encerrada',redeemed:'Em análise',deciding:'Aguardando Rust',waiting:'Aguardando',completed:'Concluída',processing:'Processando',refunded:'Estornado',charged_back:'Contestado'};
 let account=null,plans=[],reportId=null,site=null,billingReady=false;
+function updateWorkspaceView(){
+ const operational=Boolean(account&&(account.license?.active||account.servers?.length));
+ const commercial=new URLSearchParams(location.search).get('view')==='plans'||location.hash==='#planos';
+ document.querySelector('.hero').hidden=operational;
+ $('planos').hidden=operational&&!commercial;
+ $('instalacao').hidden=operational&&location.hash!=='#instalacao';
+ $('workspace').hidden=operational&&commercial;
+ const link=document.querySelector('nav [data-plans-link],nav a[href="#planos"]');
+ link.dataset.plansLink='true';link.textContent=operational?'Ver planos':'Planos';link.href=operational?'?view=plans#planos':'#planos';
+ const workspaceLink=document.querySelector('nav [data-workspace-link],nav a[href="#workspace"]');
+ workspaceLink.dataset.workspaceLink='true';workspaceLink.href=operational?'?view=workspace#workspace':'#workspace';
+ document.title=operational?(commercial?'Vorken · Planos e renovação':'Vorken · Meu painel'):'Vorken · Seu servidor';
+}
+window.addEventListener('hashchange',updateWorkspaceView);
 async function api(path,options={}){
   const response=await fetch('/api/vorken'+path,{credentials:'same-origin',...options,headers:{'Content-Type':'application/json','X-Vorken-Request':'portal',...options.headers}});
   const body=await response.json();
   if(!response.ok)throw Object.assign(new Error(body.message||'Não foi possível concluir.'),{status:response.status});
   return body;
+}
+function evidenceCards(proofs){
+ const fields=value=>value&&typeof value==='object'?'<dl class="proof-details">'+Object.entries(value).map(([key,item])=>'<dt>'+escape(key)+'</dt><dd>'+fields(item)+'</dd>').join('')+'</dl>':escape(value);
+ return (Array.isArray(proofs)?proofs:[]).map(f=>'<article class="finding proof-card '+escape(f.severity||'policy')+'"><span class="badge">'+escape(f.severity==='critical'?'Crítica':f.severity==='high'||f.severity==='medium'?'Revisar':'Registro de verificação')+'</span><h3>'+escape(f.title||'Ocorrência de verificação')+'</h3><p class="proof-artifact">'+escape(f.artifactValue||f.artifact_value||f.reason||'')+'</p><p>'+escape(f.evidence?.note||'')+'</p><details><summary>Detalhes da prova registrada</summary>'+fields(f.evidence||f)+'</details></article>').join('')||'<p class="muted">Sem provas anexadas ao registro histórico.</p>';
 }
 function notice(message,error=false){$('notice').hidden=false;$('notice').textContent=message;$('notice').classList.toggle('error',error);}
 async function action(fn,button){
@@ -27,6 +45,7 @@ async function refresh(){
   if(site.server)$('workspace-title').textContent='Painel · '+site.name;
   try{
     account=await api('/me');$('account').hidden=false;$('signed-out').hidden=true;$('logout').hidden=false;$('refresh').hidden=false;
+    updateWorkspaceView();
     const l=account.license;
     const teamOnly=account.servers.length>0&&!account.servers.some(s=>s.owned);
     $('license').innerHTML='<span class="badge '+(l.active?'active':'inactive')+'">'+(l.active?'LICENÇA ATIVA':escape(states[l.license_status]||'SEM LICENÇA ATIVA'))+'</span> <strong>'+escape(account.customer.name)+'</strong><p class="muted">'+(l.active?'Válida até '+date(l.license_until)+' · '+l.max_servers+' servidor(es) Rust.':'Escolha um plano ou solicite a ativação ao suporte.')+'</p>';
@@ -46,26 +65,17 @@ async function refresh(){
     const alertId=new URLSearchParams(location.search).get('alert');
     if(alertId&&!$('report').open){
       const alert=await api('/alerts/'+encodeURIComponent(alertId));
-      $('report-body').innerHTML='<span class="eyebrow">BANIMENTO ANTERIOR · REDE VORKEN</span><h2>'+escape(alert.playerName)+'</h2><p>SteamID '+escape(alert.steamId)+'</p>'+(alert.bans||[]).map(b=>'<article class="finding"><h3>'+escape(b.server_name)+'</h3><p>'+escape(b.reason)+'</p><small>'+date(b.created_at)+'</small><details><summary>Provas registradas</summary><pre>'+escape(JSON.stringify(b.evidence,null,2))+'</pre></details></article>').join('');
+      $('report-body').innerHTML='<span class="eyebrow">BANIMENTO ANTERIOR · REDE VORKEN</span><h2>'+escape(alert.playerName)+'</h2><p>SteamID '+escape(alert.steamId)+'</p>'+(alert.bans||[]).map(b=>'<article class="finding"><h3>'+escape(b.server_name)+'</h3><p>'+escape(b.reason)+'</p><small>'+date(b.created_at)+'</small><details><summary>Provas registradas</summary>'+evidenceCards(b.evidence)+'</details></article>').join('');
       $('report').showModal();
     }
-  }catch(e){if(e.status!==401)throw e;account=null;$('account').hidden=true;$('signed-out').hidden=false;}
+  }catch(e){if(e.status!==401)throw e;account=null;updateWorkspaceView();$('account').hidden=true;$('signed-out').hidden=false;}
 }
 async function openReport(id){
-  const {session:s,findings}=await api('/sessions/'+id+'/report');reportId=id;
-  const groups={all:findings,critical:findings.filter(f=>f.severity==='critical'),review:findings.filter(f=>['high','medium'].includes(f.severity)),info:findings.filter(f=>!['critical','high','medium'].includes(f.severity))};
-  const result=groups.critical.length?'Evidências críticas encontradas':groups.review.length?'Revisão administrativa necessária':'Nenhum sinal crítico registrado';
-  const cards=[['all','Visão geral','Todos'],['critical','Crítico',groups.critical.length],['review','Laranja · revisar',groups.review.length],['info','Informativo',groups.info.length]];
-  $('report-body').innerHTML='<div class="report-heading"><div><span class="eyebrow">✦ RELATÓRIO DA ANÁLISE</span><h2>#'+escape(s.analysis_id)+' · '+escape(s.player_name)+'</h2><a class="steam-link" href="https://steamcommunity.com/profiles/'+encodeURIComponent(s.steam_id)+'" target="_blank" rel="noopener">◉ Perfil Steam ↗</a><p class="muted">SteamID '+escape(s.steam_id)+'</p></div><span class="badge active">VORKEN · DECISÃO MANUAL</span></div><div class="report-tabs" role="group" aria-label="Filtrar evidências">'+cards.map(([key,label,value])=>'<button class="report-metric '+key+'" data-report-filter="'+key+'" aria-pressed="'+(key==='all')+'"><small>'+label+'</small><strong>'+value+'</strong></button>').join('')+'</div><div class="report-status">'+escape(states[s.analysis_status]||s.analysis_status)+' · '+escape(states[s.status]||s.status)+'</div><div class="report-layout"><div><section class="report-summary"><span class="eyebrow">RESUMO DA SESSÃO</span><h3>'+escape(s.player_name)+'</h3><p>Análise #'+escape(s.analysis_id)+' · '+date(s.created_at)+'</p><p class="muted">Revise cada evidência antes de decidir. Marque como confiáveis apenas os falsos positivos confirmados.</p></section><div class="report-evidence-heading"><h3>Evidências da análise</h3><label>Pesquisar evidências<input id="report-search" type="search" placeholder="Nome, arquivo ou tipo de evidência"></label></div><div id="report-findings">'+
-    (findings.length?findings.map(f=>'<article class="finding report-finding '+(f.severity==='critical'?'critical':['high','medium'].includes(f.severity)?'review':'info')+'" data-severity="'+escape(f.severity)+'"><span class="badge">'+escape(({critical:'Crítico',high:'Revisar · alto',medium:'Revisar',info:'Informativo',low:'Informativo'})[f.severity]||f.severity)+'</span><h3>'+escape(f.title)+'</h3><p>'+escape(f.artifact_type)+': '+escape(f.artifact_value)+'</p><details><summary>Ver evidência técnica</summary><pre>'+escape(JSON.stringify(f.evidence,null,2))+'</pre></details><label><input type="checkbox" name="proof" value="'+f.id+'">Prova de banimento</label><label><input type="checkbox" name="trust" value="'+f.id+'">Falso positivo confirmado</label></article>').join(''):'<p>Nenhum sinal registrado nesta análise.</p>')+'</div><p id="report-no-match" class="muted" hidden>Nenhuma evidência corresponde ao filtro.</p></div><aside class="report-overview"><section><span class="eyebrow">RESULTADO DA ANÁLISE</span><h3 class="'+(groups.critical.length?'critical':'review')+'">'+result+'</h3><p>A decisão final depende da revisão da administração.</p></section><section><span class="eyebrow">ESTATÍSTICAS DA ANÁLISE</span><p>◈ '+findings.length+' evidências registradas<br>◈ '+groups.critical.length+' críticas<br>◈ '+groups.review.length+' para revisão<br>◈ '+groups.info.length+' informativas</p></section><section><span class="eyebrow">RECOMENDAÇÃO</span><p>'+(groups.critical.length?'Priorize as evidências críticas e confira os detalhes técnicos antes de decidir.':'Confira os sinais e o contexto da sessão antes de liberar o jogador.')+'</p></section></aside></div><section class="report-decision">'+
-    '<label>Motivo da decisão<textarea id="decision-reason" maxlength="500" placeholder="Descreva sua avaliação"></textarea></label><div class="actions"><button data-decision="approve" class="primary" '+(s.analysis_status==='completed'&&s.status==='redeemed'?'':'disabled')+'>Liberar jogador</button><button data-decision="deny" class="danger" '+(s.analysis_status==='completed'&&s.status==='redeemed'?'':'disabled')+'>Banir com as provas selecionadas</button></div><p class="muted">A decisão será aplicada no servidor de origem. Banimentos com provas geram alertas nos outros servidores Vorken.</p>';
-  $('report-body').insertAdjacentHTML('beforeend','</section>');
-  let selected='all';
-  const filter=()=>{let visible=0;const query=$('report-search').value.trim().toLocaleLowerCase();$('report-findings').querySelectorAll('.finding').forEach(row=>{const severity=row.dataset.severity;row.hidden=!(selected==='all'||selected==='critical'&&severity==='critical'||selected==='review'&&['high','medium'].includes(severity)||selected==='info'&&!['critical','high','medium'].includes(severity))||!row.textContent.toLocaleLowerCase().includes(query);if(!row.hidden)visible++;});$('report-no-match').hidden=visible>0||!findings.length;};
-  $('report-body').querySelectorAll('[data-report-filter]').forEach(button=>button.addEventListener('click',()=>{selected=button.dataset.reportFilter;$('report-body').querySelectorAll('[data-report-filter]').forEach(b=>b.setAttribute('aria-pressed',String(b===button)));filter();}));
-  $('report-search').addEventListener('input',filter);
-  $('report').showModal();
+ reportId=id;
+ $('report-body').innerHTML='<iframe class="full-report-frame" title="Relatório completo da análise" src="/relatorio?session='+encodeURIComponent(id)+'"></iframe>';
+ $('report').showModal();
 }
+window.addEventListener('message',event=>{if(event.origin===location.origin&&event.source===$('report-body').querySelector('iframe')?.contentWindow&&event.data?.type==='vorken-report-close'){$('report').close();action(refresh);}});
 document.addEventListener('click',e=>{
   const b=e.target.closest('button');if(!b)return;
   if(b.dataset.plan)action(async()=>{
