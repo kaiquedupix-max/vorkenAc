@@ -6,12 +6,17 @@ const api=async(path,method='GET',body)=>{
 const dialog=document.createElement('dialog');dialog.innerHTML='<button type="button" data-close>Fechar</button><div data-content></div><p data-message role="status"></p>';document.body.append(dialog);
 const content=dialog.querySelector('[data-content]'),message=dialog.querySelector('[data-message]');
 let current=null;
+let defaultVerification=null;
 const labels={discordBans:'Publicar bans no Discord',discordVerified:'Publicar jogadores verificados no Discord',rustStarted:'Avisar início de telagem no chat do Rust',rustVerified:'Avisar jogador verificado no chat do Rust',rustBans:'Avisar banimento no chat do Rust'};
 async function openConfig(id){
   current=id;message.textContent='';content.textContent='Carregando canais…';dialog.showModal();
   const data=await api('/servers/'+id+'/settings');
+  defaultVerification=data.defaultVerification;
   const options=selected=>'<option value="">Desativado / nenhum canal</option>'+data.channels.map(c=>'<option value="'+esc(c.id)+'" '+(c.id===selected?'selected':'')+'>#'+esc(c.name)+'</option>').join('');
   content.innerHTML='<h2>Bot Vorken · '+esc(data.name)+'</h2><p>Escolha canais separados ou o mesmo canal para bans e verificações. Os tickets e alertas com provas continuam privados.</p><form data-settings><label>Canal de ban feed<select name="banChannelId">'+options(data.settings.banChannelId)+'</select></label><label>Canal de jogadores verificados<select name="verifiedChannelId">'+options(data.settings.verifiedChannelId)+'</select></label><button type="button" data-same>Usar o canal de bans também para verificados</button><h3>Avisos</h3>'+Object.entries(labels).map(([key,label])=>'<label><input type="checkbox" name="'+key+'" '+(data.settings[key]?'checked':'')+'>'+label+'</label>').join('')+'<button type="submit" class="primary">Salvar configuração</button></form>';
+  const v=data.verification,controls=document.createElement('section');
+  controls.innerHTML='<h3>Mensagem e regras da verificação</h3><p>O bot publica o nome deste servidor e atualiza a mensagem quando você salva. As regras são orientações da sua comunidade para a decisão administrativa.</p><label>Introdução<input name="introduction" maxlength="180" required value="'+esc(v.introduction)+'"></label><label>Cor da mensagem<input name="color" type="color" value="'+esc(v.color)+'"></label><label>Prazo para enviar o código (minutos)<input name="timeoutMinutes" type="number" min="1" max="60" step="1" required value="'+v.timeoutSeconds/60+'"></label>'+[['showRules','Exibir regras na mensagem'],['banOnTimeout','Banir automaticamente quando o prazo expirar'],['banOnRefusal','Banir quando o jogador recusar'],['banOnDisconnect','Banir quando o jogador desconectar durante a verificação']].map(([key,label])=>'<label><input name="'+key+'" type="checkbox" '+(v[key]?'checked':'')+'>'+label+'</label>').join('')+'<label>Regras personalizadas (até 2.000 caracteres)<textarea name="rules" rows="14" maxlength="2000">'+esc(v.rules)+'</textarea></label><button data-default-rules type="button">Restaurar regras padrão</button>';
+  const form=content.querySelector('[data-settings]');form.insertBefore(controls,form.querySelector('[type="submit"]'));
   if(!data.owned)content.querySelectorAll('input,select,button').forEach(e=>e.disabled=true);
 }
 async function openTeam(id,alreadyOpen=false){
@@ -26,6 +31,7 @@ document.addEventListener('click',async e=>{
     if(b.dataset.team)await openTeam(b.dataset.team);
     if(b.hasAttribute('data-close')&&dialog.contains(b))dialog.close();
     if(b.hasAttribute('data-same'))content.querySelector('[name="verifiedChannelId"]').value=content.querySelector('[name="banChannelId"]').value;
+    if(b.hasAttribute('data-default-rules'))content.querySelector('[name="rules"]').value=defaultVerification.rules;
     if(b.dataset.remove){await api('/servers/'+current+'/team/'+b.dataset.remove,'DELETE');await openTeam(current,true);}
     if(b.dataset.revoke){await api('/servers/'+current+'/invites/'+b.dataset.revoke,'DELETE');await openTeam(current,true);}
   }catch(err){message.textContent=err.message;}
@@ -36,7 +42,9 @@ dialog.addEventListener('submit',async e=>{
     if(e.target.hasAttribute('data-settings')){
       const settings={};for(const key of Object.keys(labels))settings[key]=e.target.elements[key].checked;
       for(const key of ['banChannelId','verifiedChannelId'])settings[key]=e.target.elements[key].value||null;
-      await api('/servers/'+current+'/settings','PATCH',{settings});message.textContent='Configuração salva. O plugin recebe os avisos automaticamente.';
+      const fields=e.target.elements,verification={introduction:fields.introduction.value,rules:fields.rules.value,color:fields.color.value,timeoutSeconds:Number(fields.timeoutMinutes.value)*60};
+      for(const key of ['showRules','banOnTimeout','banOnRefusal','banOnDisconnect'])verification[key]=fields[key].checked;
+      await api('/servers/'+current+'/settings','PATCH',{settings,verification});message.textContent='Configuração salva. O bot atualiza as instruções e o plugin recebe os avisos automaticamente.';
     }else if(e.target.hasAttribute('data-invite')){
       const r=await api('/servers/'+current+'/team/invites','POST',{discordId:e.target.elements.discordId.value.trim()});
       await openTeam(current,true);const box=content.querySelector('[data-invite-link]');

@@ -69,6 +69,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS vorken_server_slug ON vorken_servers(slug);
 ALTER TABLE vorken_sessions ADD COLUMN IF NOT EXISTS notified_stage TEXT;
 ALTER TABLE vorken_commands ADD COLUMN IF NOT EXISTS learning_complete BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE vorken_servers ADD COLUMN IF NOT EXISTS notification_settings JSONB NOT NULL DEFAULT '{}';
+ALTER TABLE vorken_servers ADD COLUMN IF NOT EXISTS verification_settings JSONB NOT NULL DEFAULT '{}';
+ALTER TABLE vorken_servers ADD COLUMN IF NOT EXISTS instructions_message_id TEXT;
+ALTER TABLE vorken_servers ADD COLUMN IF NOT EXISTS instructions_signature TEXT;
 ALTER TABLE vorken_notices ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 CREATE TABLE IF NOT EXISTS vorken_team (
  server_id UUID NOT NULL REFERENCES vorken_servers(id) ON DELETE CASCADE,

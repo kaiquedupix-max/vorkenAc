@@ -6,7 +6,14 @@ import cookieParser from 'cookie-parser';
 import { PGlite } from '@electric-sql/pglite';
 import { installVorkenPlatform,initVorkenPlatform } from '../vorkenPlatform.js';
 import { hash,seal,addMonths,licensed,managesGuild,validDiscordInvite,serverSlug } from '../vorkenDomain.js';
-import { canPublish,publicNotice } from '../vorkenSettings.js';
+import { canPublish,publicNotice,verificationEmbed,verificationSettings } from '../vorkenSettings.js';
+
+test('verification instructions show tenant name, configurable rules and actual timeout policy',()=>{
+  const embed=verificationEmbed({name:'Xtreme',verification_settings:{timeoutSeconds:600,rules:'Regra exclusiva Xtreme',banOnTimeout:false,banOnRefusal:false,banOnDisconnect:false}});
+  assert(embed.title.includes('Xtreme'));assert(embed.description.includes('10 minutos'));assert(embed.description.includes('Regra exclusiva Xtreme'));
+  assert(!embed.description.includes('Guerra Fria'));assert(!embed.description.includes('youtu'));assert(!embed.description.includes('banimento permanente'));
+  assert(!verificationEmbed({name:'Other',verification_settings:{showRules:false}}).description.includes('PC estopado'));
+});
 
 test('Discord channel permissions respect member denies and public feeds omit private evidence',()=>{
   const guild='123456789012345678',member={user:{id:'999456789012345678'},roles:['staff']};
@@ -116,6 +123,11 @@ test('platform routes isolate customers, confirm decisions and activate payments
     assert.equal((await request('/servers/'+s1+'/settings',{customerId:c2})).status,404);
     assert.equal((await request('/servers/'+s1+'/settings',{method:'PATCH',body:{settings:{...settings,banChannelId:'666456789012345678'}}})).status,400);
     const sync=await request('/plugin/sync',{token:token1,body:{}});assert.equal(sync.data.notifications.rustStarted,false);assert.equal(sync.data.notifications.rustVerified,false);
+    const verification={...verificationSettings(),rules:'Política personalizada Xtreme',timeoutSeconds:600,banOnRefusal:false,banOnDisconnect:false};
+    assert.equal((await request('/servers/'+s1+'/settings',{method:'PATCH',body:{settings,verification}})).status,200);
+    assert.equal((await request('/servers/'+s1+'/settings',{method:'PATCH',body:{settings,verification:{...verification,timeoutSeconds:65}}})).status,400);
+    assert.equal((await request('/servers/'+s1+'/settings',{method:'PATCH',body:{settings,verification:{...verification,rules:'x'.repeat(2001)}}})).status,400);
+    const policy=await request('/plugin/sync',{token:token1,body:{}});assert.equal(policy.data.verification.timeoutSeconds,600);assert.equal(policy.data.verification.banOnRefusal,false);
   });
   await t.test('online roster and panel telagem are scoped, deduplicated and reject stale data',async()=>{
     const steamId='76561198000000999';

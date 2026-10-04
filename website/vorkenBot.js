@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
-import { notificationSettings, publicNotice } from './vorkenSettings.js';
-import { Client, GatewayIntentBits, PermissionFlagsBits as P, ChannelType, SlashCommandBuilder, MessageFlags, AttachmentBuilder, ActivityType, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
+import { notificationSettings, publicNotice, verificationEmbed } from './vorkenSettings.js';
+import { Client, GatewayIntentBits, PermissionFlagsBits as P, ChannelType, SlashCommandBuilder, MessageFlags, AttachmentBuilder, ActivityType, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } from 'discord.js';
 const STEAM=/^7656119\d{10}$/;
 const staff=member=>!!member?.permissions && (member.permissions.has(P.Administrator)||member.permissions.has(P.BanMembers));
 const noMentions={parse:[]};
@@ -49,6 +49,17 @@ export async function startVorkenBot(platform) {
     new SlashCommandBuilder().setName('vorken').setDescription('Abrir o painel e as instruções do seu servidor'),
   ].map(c=>c.toJSON());
   const pendingSetups=new Map();
+  async function publishInstructions(server,config){
+    const channel=client.channels.cache.get(config.verification_channel_id)||await client.channels.fetch(config.verification_channel_id).catch(()=>null);
+    if(!channel?.isSendable()||channel.guildId!==server.guild_id)return;
+    const embed=verificationEmbed(server),signature=crypto.createHash('sha256').update(JSON.stringify(embed)).digest('hex');
+    if(server.instructions_signature===signature&&server.instructions_message_id)return;
+    const components=[new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('vorken_code:'+server.id).setLabel('Enviar código').setStyle(ButtonStyle.Primary))];
+    const payload={embeds:[embed],components,allowedMentions:noMentions};
+    const existing=server.instructions_message_id?await channel.messages.fetch(server.instructions_message_id).catch(()=>null):null;
+    const message=existing?.author.id===client.user.id?await existing.edit(payload):await channel.send(payload);
+    await pool.query('UPDATE vorken_servers SET instructions_message_id=$2,instructions_signature=$3 WHERE id=$1',[server.id,message.id,signature]);
+  }
   async function setup(guild){
     if(pendingSetups.has(guild.id)) return pendingSetups.get(guild.id);
     const promise=(async()=>{
@@ -69,21 +80,24 @@ export async function startVorkenBot(platform) {
       const privateOverwrites=[{id:guild.id,deny:[P.ViewChannel]},
         {id:botId,allow:[P.ViewChannel,P.SendMessages,P.ReadMessageHistory,P.ManageChannels,P.AttachFiles,P.EmbedLinks]},
         ...staffRoles.map(r=>({id:r.id,allow:[P.ViewChannel,P.SendMessages,P.ReadMessageHistory]}))];
-      const channel=async(id,name,type,overwrites)=>guild.channels.cache.get(id)||await guild.channels.create({name,type,permissionOverwrites:overwrites});
+      const normalize=name=>name.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+      const channel=async(id,name,type,overwrites)=>guild.channels.cache.get(id)||
+        (type===ChannelType.GuildCategory?guild.channels.cache.find(c=>c.type===type&&normalize(c.name)===normalize(name)):null)||
+        await guild.channels.create({name,type,permissionOverwrites:overwrites});
       const category=await channel(stored.category_id,'Verificação Vorken',ChannelType.GuildCategory,privateOverwrites);
       if(category.name!=='Verificação Vorken')await category.setName('Verificação Vorken');
-      const instructions=await channel(stored.verification_channel_id,'verificacao',ChannelType.GuildText,[
+      const previousInstructions=stored.verification_channel_id||guild.channels.cache.find(c=>c.type===ChannelType.GuildText&&c.parentId===category.id&&normalize(c.name)==='verificacao')?.id;
+      const instructions=await channel(previousInstructions,'verificacao',ChannelType.GuildText,[
         {id:guild.id,allow:[P.ViewChannel,P.ReadMessageHistory],deny:[P.SendMessages]},
         {id:botId,allow:[P.ViewChannel,P.SendMessages,P.ReadMessageHistory,P.EmbedLinks]}]);
       const alerts=await channel(stored.alerts_channel_id,'vorken-alertas',ChannelType.GuildText,privateOverwrites);
       if(instructions.parentId!==category.id)await instructions.setParent(category.id,{lockPermissions:false});
+      await instructions.permissionOverwrites.edit(botId,{ViewChannel:true,SendMessages:true,ReadMessageHistory:true,EmbedLinks:true});
       await pool.query(`UPDATE vorken_guilds SET verified_role_id=$2,screening_role_id=$3,category_id=$4,verification_channel_id=$5,alerts_channel_id=$6 WHERE id=$1`,
         [guild.id,verified.id,screening.id,category.id,instructions.id,alerts.id]);
       await guild.commands.set(commands);
-      const recent=await instructions.messages.fetch({limit:30});
-      if(!recent.some(m=>m.author.id===botId&&m.content.includes('VORKEN_INSTRUCOES'))){
-        await instructions.send({content:'**Verificação Vorken**\nUse **/codigo** neste Discord, escolha o servidor Rust e informe o código exibido na sua tela. O bot criará um ticket privado com o link da análise.\nA administração usa **/telagem** para iniciar e **/verificar** para liberar após revisar o relatório.\nVORKEN_INSTRUCOES',allowedMentions:noMentions});
-      }
+      const config={...stored,verification_channel_id:instructions.id};
+      for(const server of (await pool.query('SELECT * FROM vorken_servers WHERE guild_id=$1 AND enabled',[guild.id])).rows)await publishInstructions(server,config);
       return {...stored,verified_role_id:verified.id,screening_role_id:screening.id,category_id:category.id,verification_channel_id:instructions.id,alerts_channel_id:alerts.id};
     })();
     pendingSetups.set(guild.id,promise);
@@ -125,8 +139,9 @@ export async function startVorkenBot(platform) {
     await guild.channels.fetch();
     let ticket=guild.channels.cache.get(session.ticket_channel_id)||guild.channels.cache.find(c=>c.topic==='VORKEN_SESSION:'+session.id);
     if(!ticket){
-      const category=guild.channels.cache.get(config.category_id);
-      const overwrites=category?.permissionOverwrites.cache.map(o=>({id:o.id,type:o.type,allow:o.allow.bitfield,deny:o.deny.bitfield}))||[];
+      const overwrites=[{id:guild.id,deny:[P.ViewChannel]},
+        {id:client.user.id,allow:[P.ViewChannel,P.SendMessages,P.ReadMessageHistory,P.ManageChannels,P.AttachFiles,P.EmbedLinks]},
+        ...guild.roles.cache.filter(r=>r.id!==guild.id&&!r.managed&&(r.permissions.has(P.Administrator)||r.permissions.has(P.BanMembers))).map(r=>({id:r.id,allow:[P.ViewChannel,P.SendMessages,P.ReadMessageHistory]}))];
       overwrites.push({id:session.discord_user_id,allow:[P.ViewChannel,P.SendMessages,P.ReadMessageHistory,P.AttachFiles],deny:[]});
       const adminId=String(session.administrator_id||'').replace(/^discord:/,'');
       if(/^\d{16,20}$/.test(adminId)&&adminId!==session.discord_user_id)overwrites.push({id:adminId,allow:[P.ViewChannel,P.SendMessages,P.ReadMessageHistory],deny:[]});
@@ -152,6 +167,23 @@ export async function startVorkenBot(platform) {
       const rows=await pool.query('SELECT id,name FROM vorken_servers WHERE guild_id=$1 AND enabled ORDER BY name',[i.guildId]);
       const query=String(i.options.getFocused()).toLowerCase();
       await i.respond(rows.rows.filter(s=>s.name.toLowerCase().includes(query)).slice(0,25).map(s=>({name:s.name.slice(0,100),value:s.id}))).catch(()=>{});return;
+    }
+    if(i.isButton()&&i.customId.startsWith('vorken_code:')){
+      const id=i.customId.slice('vorken_code:'.length);
+      try{
+        await licensedServer(i.guildId,id);
+        const modal=new ModalBuilder().setCustomId('vorken_redeem:'+id).setTitle('Código da verificação');
+        modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('code').setLabel('Código de 4 dígitos exibido no Rust').setStyle(TextInputStyle.Short).setMinLength(4).setMaxLength(4).setRequired(true)));
+        await i.showModal(modal);
+      }catch(e){await i.reply({content:e.message,flags:MessageFlags.Ephemeral,allowedMentions:noMentions}).catch(()=>{});}return;
+    }
+    if(i.isModalSubmit()&&i.customId.startsWith('vorken_redeem:')){
+      await i.deferReply({flags:MessageFlags.Ephemeral});
+      try{
+        const server=await licensedServer(i.guildId,i.customId.slice('vorken_redeem:'.length));
+        const session=await redeem(server,i.fields.getTextInputValue('code'),i.user.id),ticket=await ensureTicket(session);
+        await i.editReply(ticket?'Sua sala privada está pronta: <#'+ticket.id+'>':'Código aceito. Aguarde a criação do ticket.');
+      }catch(e){await i.editReply({content:e.message,allowedMentions:noMentions});}return;
     }
     if(!i.isChatInputCommand())return;
     try{
@@ -208,7 +240,8 @@ export async function startVorkenBot(platform) {
       const configured=await db.query('SELECT * FROM vorken_guilds');
       for(const config of configured.rows){
         const guild=await client.guilds.fetch(config.id).catch(()=>null);
-        if(guild&&!config.verified_role_id)await setup(guild).catch(e=>console.error('Vorken setup:',e.code||e.name));
+        if(guild&&(!config.verified_role_id||!guild.channels.cache.has(config.verification_channel_id)||!guild.channels.cache.has(config.category_id)))await setup(guild).catch(e=>console.error('Vorken setup:',e.code||e.name));
+        else if(guild)for(const server of (await db.query('SELECT * FROM vorken_servers WHERE guild_id=$1 AND enabled',[config.id])).rows)await publishInstructions(server,config).catch(e=>console.error('Vorken instruções:',e.code||e.name));
       }
       const tickets=await db.query("SELECT * FROM vorken_sessions WHERE status='redeemed' AND ticket_channel_id IS NULL LIMIT 10");
       for(const s of tickets.rows)await ensureTicket(s).catch(e=>console.error('Vorken ticket:',e.code||e.name));
@@ -270,6 +303,11 @@ export async function startVorkenBot(platform) {
   }
   client.once('clientReady',async()=>{
     console.log('Vorken bot conectado.');
+    try{
+      await client.application.fetch();
+      const description='🛡️ Proteção para servidores Rust. Verificação de jogadores, tickets privados, relatórios com provas e alertas de banimentos.\n\n🚀 Use no seu servidor: '+publicUrl+'/servidor';
+      if(client.application.description!==description)await client.application.edit({description});
+    }catch(e){console.error('Vorken descrição do perfil:',e.code||e.name);}
     await updatePresence();
     const presenceTimer=setInterval(()=>updatePresence().catch(e=>console.error('Vorken presence:',e.code||e.name)),30000);presenceTimer.unref();
     for(const guild of client.guilds.cache.values())await setup(guild).catch(e=>console.error('Vorken setup:',e.code||e.name));

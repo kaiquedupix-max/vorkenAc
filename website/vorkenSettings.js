@@ -1,5 +1,23 @@
 export const notificationDefaults={banChannelId:null,verifiedChannelId:null,discordBans:true,discordVerified:true,rustStarted:true,rustVerified:true,rustBans:true};
 export function notificationSettings(value={}){return {...notificationDefaults,...value};}
+export const defaultRules='**1. PC com ambiente de verificação comprometido ("PC estopado")**\n\nWindows otimizado, limpo ou modificado a ponto de apagar, esvaziar ou impedir o acesso a registros relevantes, como Prefetch, Recent e Temp, será tratado como um ambiente comprometido. Dependendo dos indícios restantes, das inconsistências encontradas e do grau de anormalidade do caso, a situação poderá resultar em banimento.\n\n**2. VAC relacionado ao Rust com menos de 120 dias**\n\nResulta em banimento direto, mesmo que nenhuma outra evidência de trapaça seja encontrada durante a verificação.\n\n**3. Conta confirmada em sites de scripts, hacks ou cheats relacionados ao Rust**\n\nSe for confirmado que o usuário possui uma conta cadastrada em qualquer site voltado à venda, distribuição ou uso de scripts, hacks ou qualquer tipo de cheat para Rust, o resultado será banimento direto.';
+export const verificationDefaults={rules:defaultRules,introduction:'A verificação é obrigatória quando solicitada pela administração.',color:'#2bf0c9',timeoutSeconds:300,banOnTimeout:false,banOnRefusal:true,banOnDisconnect:true,showRules:true};
+export const verificationSettings=value=>({...verificationDefaults,...value});
+export function verificationEmbed(server){
+  const p=verificationSettings(server.verification_settings),minutes=p.timeoutSeconds/60;
+  const penalties=[];
+  if(p.banOnRefusal)penalties.push('recusar');if(p.banOnDisconnect)penalties.push('desconectar do servidor');if(p.banOnTimeout)penalties.push('deixar o prazo expirar');
+  const description='**'+p.introduction+'**\n\n'+
+    '1. Veja o **código de 4 dígitos** exibido na tela do Rust.\n'+
+    '2. Você tem **'+minutes+' minutos** para enviar o código pelo botão **Enviar código** abaixo ou pelo comando **/codigo**.\n'+
+    '3. O bot criará uma **sala privada** para sua verificação.\n'+
+    '4. Dentro da sala você receberá o **link exclusivo do Vorken**.\n'+
+    '5. Baixe, execute como administrador e aguarde a análise terminar.\n'+
+    '6. Quando finalizar, **aguarde a decisão da administração** dentro do ticket.\n\n'+
+    (penalties.length?'🚫 **'+penalties.join(', ').replace(/^./,c=>c.toUpperCase())+' resulta em banimento permanente.**\n':'')+
+    '⚠️ Não compartilhe seu código com outra pessoa.'+(p.showRules&&p.rules?'\n\n📋 **Regras da verificação**\n\n'+p.rules:'');
+  return {title:'🛡️ Verificação Vorken · '+server.name,color:parseInt(p.color.slice(1),16),description,footer:{text:'Vorken Scanner · '+server.name}};
+}
 // Discord permissions: base roles, everyone overwrite, aggregated role overwrites, member overwrite.
 export function canPublish(channel,guildId,member,roles){
   if(![0,5].includes(channel.type))return false;

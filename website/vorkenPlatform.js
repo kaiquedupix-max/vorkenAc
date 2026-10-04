@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { notificationSettings, canPublish } from './vorkenSettings.js';
+import { notificationSettings, verificationSettings, canPublish } from './vorkenSettings.js';
 import fs from 'node:fs';
 import { hash, addMonths, licensed, managesGuild, validDiscordInvite, validIds, seal, unseal, serverSlug } from './vorkenDomain.js';
 
@@ -271,7 +271,7 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
   }));
   app.get('/api/vorken/servers/:id/settings',route(async(req,res)=>{
     const u=await customer(req),s=await accessibleServer(req.params.id,u.id);
-    res.json({name:s.name,discordInvite:s.discord_invite,owned:s.customer_id===u.id,settings:notificationSettings(s.notification_settings),channels:await publishChannels(s)});
+    res.json({name:s.name,discordInvite:s.discord_invite,owned:s.customer_id===u.id,settings:notificationSettings(s.notification_settings),verification:verificationSettings(s.verification_settings),defaultVerification:verificationSettings(),channels:await publishChannels(s)});
   }));
   app.patch('/api/vorken/servers/:id/settings',csrf,route(async(req,res)=>{
     const u=await customer(req),s=await ownedServer(req.params.id,u.id),v=req.body.settings;
@@ -283,7 +283,14 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
     }
     const channels=await publishChannels(s);
     for(const id of [settings.banChannelId,settings.verifiedChannelId])if(id&&!channels.some(c=>c.id===id))fail(400,'Escolha um canal deste Discord onde o bot possa publicar.');
-    await pool.query('UPDATE vorken_servers SET notification_settings=$2 WHERE id=$1',[s.id,JSON.stringify(settings)]);
+    const verification=verificationSettings(s.verification_settings);
+    if(req.body.verification){
+      const v=req.body.verification;
+      if(typeof v.rules!=='string'||v.rules.length>2000||typeof v.introduction!=='string'||!v.introduction.trim()||v.introduction.length>180||!/^#[0-9a-f]{6}$/i.test(v.color)||!Number.isInteger(v.timeoutSeconds)||v.timeoutSeconds<60||v.timeoutSeconds>3600||v.timeoutSeconds%60)fail(400,'Regras, cor ou prazo inválidos. Use de 1 a 60 minutos.');
+      for(const key of ['banOnTimeout','banOnRefusal','banOnDisconnect','showRules'])if(typeof v[key]!=='boolean')fail(400,'Opção de verificação inválida.');
+      Object.assign(verification,{rules:v.rules,introduction:clean(v.introduction,180),color:v.color,timeoutSeconds:v.timeoutSeconds,banOnTimeout:v.banOnTimeout,banOnRefusal:v.banOnRefusal,banOnDisconnect:v.banOnDisconnect,showRules:v.showRules});
+    }
+    await pool.query('UPDATE vorken_servers SET notification_settings=$2,verification_settings=$3 WHERE id=$1',[s.id,JSON.stringify(settings),JSON.stringify(verification)]);
     await audit(pool,u.id,'notification_settings',s.id,settings);res.json({ok:true});
   }));
   app.get('/api/vorken/servers/:id/team',route(async(req,res)=>{
@@ -514,6 +521,7 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
           const ended=await db.query("UPDATE vorken_sessions SET status='ended' WHERE id=$1 AND server_id=$2 AND status IN ('pending','redeemed') RETURNING discord_user_id,ticket_channel_id",[event.sessionId,server.id]);
           if(ended.rows[0]?.ticket_channel_id) await notify(db,server.guild_id,'decision',{sessionId:event.sessionId,
             steamId:event.steamId,discordUserId:ended.rows[0].discord_user_id,channelId:ended.rows[0].ticket_channel_id,action:'cancel',reason:'Sessão encerrada pelo plugin: '+clean(event.reason||event.eventType)});
+          if(['refusal_ban','timeout_ban'].includes(event.eventType))await notify(db,server.guild_id,'public_ban',{serverId:server.id,steamId:event.steamId,playerName:clean(event.playerName,100),serverName:server.name,reason:clean(event.reason,500)});
           // Only bans with selected Vorken evidence are shared across the network.
         }
       }
@@ -554,7 +562,7 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
     await pool.query("UPDATE vorken_commands SET status='failed',result='Solicitação de telagem expirada.',completed_at=NOW() WHERE server_id=$1 AND status='pending' AND action='start' AND created_at<NOW()-interval '2 minutes'",[server.id]);
     const commands=active?(await pool.query("SELECT id,session_id AS \"sessionId\",action,steam_id AS \"steamId\",actor_id AS \"actorId\",reason FROM vorken_commands WHERE server_id=$1 AND status='pending' ORDER BY created_at LIMIT 20",[server.id])).rows:[];
     const g=(await pool.query('SELECT verification_channel_id FROM vorken_guilds WHERE id=$1',[server.guild_id])).rows[0];
-    res.json({active,accepted,acknowledged,commands,discord:server.discord_invite,channel:g?.verification_channel_id?'https://discord.com/channels/'+server.guild_id+'/'+g.verification_channel_id:'#verificacao',notifications:notificationSettings(server.notification_settings)});
+    res.json({active,accepted,acknowledged,commands,discord:server.discord_invite,channel:g?.verification_channel_id?'https://discord.com/channels/'+server.guild_id+'/'+g.verification_channel_id:'#verificacao',notifications:notificationSettings(server.notification_settings),verification:verificationSettings(server.verification_settings)});
   }));
 
   return { pool, entitlement, serverActive, ownedServer, queue, decision, tx, notify, publicUrl, audit };

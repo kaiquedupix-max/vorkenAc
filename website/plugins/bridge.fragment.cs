@@ -2,6 +2,12 @@
         private const string Installation = "__VORKEN_INSTALLATION__";
         private bool bridgeActive;
         private BridgeNotifications bridgeNotifications = new BridgeNotifications();
+        private BridgeVerification bridgeVerification = new BridgeVerification();
+        private class BridgeVerification
+        {
+            public int timeoutSeconds = 300;
+            public bool banOnTimeout = false, banOnRefusal = true, banOnDisconnect = true;
+        }
         private class BridgeNotifications
         {
             public bool rustStarted = true, rustVerified = true, rustBans = true;
@@ -47,6 +53,7 @@
         {
             public bool active;
             public BridgeNotifications notifications;
+            public BridgeVerification verification;
             public string discord, channel;
             public List<string> accepted, acknowledged;
             public List<BridgeCommand> commands;
@@ -122,6 +129,9 @@
                     if (players != null) lastPlayersSent = DateTime.UtcNow;
                     bridgeActive = data.active;
                     bridgeNotifications = data.notifications ?? bridgeNotifications;
+                    bridgeVerification = data.verification ?? bridgeVerification;
+                    settings.PrazoEmSegundos = Math.Max(60, Math.Min(3600, bridgeVerification.timeoutSeconds));
+                    settings.BanirAutomaticamenteAoExpirar = bridgeVerification.banOnTimeout;
                     if (data.accepted != null) bridge.Events.RemoveAll(e => data.accepted.Contains(e.id));
                     if (data.acknowledged != null) foreach (string id in data.acknowledged) bridge.Receipts.Remove(id);
                     settings.Discord = data.discord ?? settings.Discord;

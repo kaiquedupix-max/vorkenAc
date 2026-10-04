@@ -8,7 +8,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Vorken", "Kaique", "2.0.2")]
+    [Info("Vorken", "Kaique", "2.0.3")]
     [Description("Telagem administrativa integrada ao Vorken/Discord com codigo individual, conexao HTTPS independente, sem RCON.")]
     public class Vorken : RustPlugin
     {
@@ -88,6 +88,12 @@ namespace Oxide.Plugins
         private const string Installation = "__VORKEN_INSTALLATION__";
         private bool bridgeActive;
         private BridgeNotifications bridgeNotifications = new BridgeNotifications();
+        private BridgeVerification bridgeVerification = new BridgeVerification();
+        private class BridgeVerification
+        {
+            public int timeoutSeconds = 300;
+            public bool banOnTimeout = false, banOnRefusal = true, banOnDisconnect = true;
+        }
         private class BridgeNotifications
         {
             public bool rustStarted = true, rustVerified = true, rustBans = true;
@@ -133,6 +139,7 @@ namespace Oxide.Plugins
         {
             public bool active;
             public BridgeNotifications notifications;
+            public BridgeVerification verification;
             public string discord, channel;
             public List<string> accepted, acknowledged;
             public List<BridgeCommand> commands;
@@ -208,6 +215,9 @@ namespace Oxide.Plugins
                     if (players != null) lastPlayersSent = DateTime.UtcNow;
                     bridgeActive = data.active;
                     bridgeNotifications = data.notifications ?? bridgeNotifications;
+                    bridgeVerification = data.verification ?? bridgeVerification;
+                    settings.PrazoEmSegundos = Math.Max(60, Math.Min(3600, bridgeVerification.timeoutSeconds));
+                    settings.BanirAutomaticamenteAoExpirar = bridgeVerification.banOnTimeout;
                     if (data.accepted != null) bridge.Events.RemoveAll(e => data.accepted.Contains(e.id));
                     if (data.acknowledged != null) foreach (string id in data.acknowledged) bridge.Receipts.Remove(id);
                     settings.Discord = data.discord ?? settings.Discord;
@@ -632,7 +642,7 @@ namespace Oxide.Plugins
 
             if (rawArgs == null || rawArgs.Length != 1)
             {
-                arg.ReplyWith("[GF_VERIFICACAO_LOOKUP] NOT_FOUND");
+                arg.ReplyWith("[VORKEN_LOOKUP] NOT_FOUND");
                 return;
             }
 
@@ -641,7 +651,7 @@ namespace Oxide.Plugins
 
             if (!IsFourDigitCode(code))
             {
-                arg.ReplyWith("[GF_VERIFICACAO_LOOKUP] NOT_FOUND");
+                arg.ReplyWith("[VORKEN_LOOKUP] NOT_FOUND");
                 return;
             }
 
@@ -674,14 +684,14 @@ namespace Oxide.Plugins
                     });
 
                 arg.ReplyWith(
-                    "[GF_VERIFICACAO_LOOKUP] " +
+                    "[VORKEN_LOOKUP] " +
                     payload
                 );
 
                 return;
             }
 
-            arg.ReplyWith("[GF_VERIFICACAO_LOOKUP] NOT_FOUND");
+            arg.ReplyWith("[VORKEN_LOOKUP] NOT_FOUND");
         }
 
         private void Execute(
@@ -973,7 +983,7 @@ namespace Oxide.Plugins
 
                     if (settings.BanirAutomaticamenteAoExpirar && bridgeActive)
                         BanForTimeout(pair.Key, s);
-                    else EmitEvent("timeout_prompt", pair.Key, s);
+                    else End(pair.Key, "Prazo de verificacao expirado. Entre em contato com a administracao.");
 
                     continue;
                 }
@@ -1141,7 +1151,7 @@ namespace Oxide.Plugins
                     ? "CODIGO ACEITO!\n" +
                       "Volte ao Discord e abra a sala privada criada pelo bot.\n" +
                       "Clique no link do Vorken, baixe, execute como administrador e aguarde."
-                    : "1. ENTRE NO DISCORD GUERRA FRIA\n" +
+                    : "1. ENTRE NO DISCORD DO SEU SERVIDOR\n" +
                       "2. ABRA O CANAL " +
                       Clean(settings.CanalVerificacao) +
                       "\n" +
@@ -1327,7 +1337,7 @@ namespace Oxide.Plugins
                 {
                     Text =
                     {
-                        Text = "DISCORD GUERRA FRIA",
+                        Text = "DISCORD DO SEU SERVIDOR",
                         FontSize = 30,
                         Align = TextAnchor.MiddleCenter,
                         Color = "0.10 1 0.80 1"
@@ -1353,7 +1363,7 @@ namespace Oxide.Plugins
                             " e envie SOMENTE o codigo " +
                             EnsureCode(session) +
                             ".\n" +
-                            "Voce tem 5 minutos. A vorken e obrigatoria; recusar ou expirar gera ban permanente.",
+                            "Voce tem " + (settings.PrazoEmSegundos / 60) + " minutos. Consulte as regras de verificacao do seu servidor no Discord.",
                         FontSize = 19,
                         Align = TextAnchor.MiddleCenter,
                         Color = "0.95 0.95 0.95 1"
@@ -1623,7 +1633,8 @@ namespace Oxide.Plugins
                 !session.ConfirmandoRecusa)
                 return;
 
-            BanForRefusal(player, session);
+            if (bridgeVerification.banOnRefusal) BanForRefusal(player, session);
+            else End(player.userID, "Verificacao encerrada por recusa. Aguarde a administracao.");
         }
 
         private void BanForTimeout(
@@ -1639,7 +1650,7 @@ namespace Oxide.Plugins
 
             string reason =
                 string.IsNullOrWhiteSpace(settings.MotivoDoBan)
-                    ? "Nao enviou o codigo de vorken no Discord dentro de 5 minutos."
+                    ? "Nao enviou o codigo de vorken no Discord dentro do prazo."
                     : Clean(settings.MotivoDoBan);
 
             ServerUsers.Set(
@@ -1679,7 +1690,7 @@ namespace Oxide.Plugins
 
             Staff(
                 id +
-                " banido automaticamente por nao validar o codigo em 5 minutos."
+                " banido automaticamente por nao validar o codigo dentro do prazo."
             );
 
             if (player != null &&
@@ -1814,6 +1825,12 @@ namespace Oxide.Plugins
                     player.userID,
                     out session))
                 return;
+
+            if (!bridgeActive || !bridgeVerification.banOnDisconnect)
+            {
+                End(player.userID, null);
+                return;
+            }
 
             ulong id = player.userID;
 
