@@ -11,6 +11,7 @@
   "homepage": "https://vorkenac.guerrafriarust.com.br",
   "type": "module",
   "scripts": {
+    "prestart": "node build-vorken-plugin.mjs",
     "start": "node server.js",
     "test": "node --test"
   },
