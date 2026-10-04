@@ -128,7 +128,7 @@
                     if (player != null && player.IsConnected && !player.IsNpc)
                         players.Add(new BridgePlayer { steamId = player.UserIDString, name = player.displayName });
             }
-            string payload = JsonConvert.SerializeObject(new { version = "2.0.5", events = events, receipts = receipts, players = players });
+            string payload = JsonConvert.SerializeObject(new { version = "2.0.6", events = events, receipts = receipts, players = players });
             webrequest.Enqueue(ApiBase + "/api/vorken/plugin/sync", payload, (status, response) => {
                 syncPending = false;
                 if (unloading) return;

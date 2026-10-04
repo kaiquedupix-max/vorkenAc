@@ -9,7 +9,7 @@ let source=original;
 
 if(hasLegacySource){
   source=original
-    .replace('[Info("Verificacao", "Kaique", "1.6.4")]','[Info("Vorken", "Kaique", "2.0.5")]')
+    .replace('[Info("Verificacao", "Kaique", "1.6.4")]','[Info("Vorken", "Kaique", "2.0.6")]')
     .replace('public class Verificacao : RustPlugin','public class Vorken : RustPlugin')
     .replace('isolamento via Vanish e eventos RCON.','conexao HTTPS independente, sem RCON.')
     .replaceAll('verificacao','vorken')
@@ -44,10 +44,10 @@ if(hasLegacySource){
   source=source.replaceAll('dentro de 5 minutos.','dentro do prazo.').replaceAll('em 5 minutos.','dentro do prazo.');
 }else{
   // O container de produção recebe apenas website/. Nesse cenário usamos o
-  // template Vorken já versionado como base e aplicamos somente a migração 2.0.5.
+  // template Vorken já versionado como base e aplicamos somente a migração 2.0.6.
   source=source
-    .replace('[Info("Vorken", "Kaique", "2.0.3")]','[Info("Vorken", "Kaique", "2.0.5")]')
-    .replace('version = "2.0.1"','version = "2.0.5"');
+    .replace('[Info("Vorken", "Kaique", "2.0.3")]','[Info("Vorken", "Kaique", "2.0.6")]')
+    .replace('version = "2.0.1"','version = "2.0.6"');
 
   if(!source.includes('private string AdministratorDisplay(string administrator)')){
     source=source.replace(
@@ -80,7 +80,7 @@ if(hasLegacySource){
 'AdministratorDisplay(administrator) + "</color>."');
 }
 
-// Vorken 2.0.5: a tela do Rust não expõe URL, ID de canal ou convite bruto.
+// Vorken 2.0.6: a tela do Rust não expõe URL, ID de canal ou convite bruto.
 source=source.replace(
 `                            "VERIFICACAO OBRIGATORIA. NAO DESCONECTE.\\n" +
                             "Voce tem 5 MINUTOS para enviar o codigo no canal " +
@@ -135,8 +135,23 @@ const oldDiscordButton=`
 source=source.replace(oldDiscordButton,'\n');
 
 // Keep packaged-only installations on the current standalone bridge implementation.
-source=source.replace(/\[Info\("Vorken", "Kaique", "2\.0\.\d+"\)\]/,'[Info("Vorken", "Kaique", "2.0.5")]')
-  .replace(/version = "2\.0\.\d+"/g,'version = "2.0.5"');
+if(!source.includes('Text = "VER CONVITE DO DISCORD"')){
+  const refuse=source.indexOf('Text = "RECUSAR E ACEITAR BAN"');
+  const position=source.lastIndexOf('            ui.Add(',refuse);
+  if(refuse<0||position<0)throw new Error('Missing verification refusal button');
+  source=source.slice(0,position)+`            ui.Add(new CuiButton
+            {
+                Button = { Color = "0.10 0.35 0.34 1", Command = "vorken.discord" },
+                Text = { Text = "VER CONVITE DO DISCORD", FontSize = 16, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1" },
+                RectTransform = { AnchorMin = "0.30 0.12", AnchorMax = "0.70 0.18" }
+            }, Ui);
+
+`+source.slice(position);
+}
+source=source.replace('"Copie o convite abaixo e entre no Discord.\\n"','"Clique no campo abaixo e use CTRL+A e CTRL+C para copiar o convite.\\n"')
+  .replace('"Abra " +\n                            Clean(settings.CanalVerificacao) +','"Procure o canal " +\n                            "VERIFICACAO VORKEN" +');
+source=source.replace(/\[Info\("Vorken", "Kaique", "2\.0\.\d+"\)\]/,'[Info("Vorken", "Kaique", "2.0.6")]')
+  .replace(/version = "2\.0\.\d+"/g,'version = "2.0.6"');
 if(!source.includes('command.action == "ban_prior"')){
   const fragment=fs.readFileSync(new URL('./plugins/bridge.fragment.cs',import.meta.url),'utf8');
   const start=fragment.indexOf('                else if (command.action == "ban_prior")');
@@ -160,6 +175,6 @@ source=source.replace(
 
             ulong parsed;`);
 
-if(!source.includes('[Info("Vorken", "Kaique", "2.0.5")]')||!source.includes('SyncBridge')||source.includes('[GF_VERIFICACAO]')||!source.includes('PROCURE O CANAL VERIFICACAO VORKEN')||source.includes('MOSTRAR CONVITE DO DISCORD')||!source.includes('AdministratorDisplay')||!source.includes('SEU CODIGO DE VERIFICACAO'))throw new Error('Plugin generation failed');
+if(!source.includes('[Info("Vorken", "Kaique", "2.0.6")]')||!source.includes('SyncBridge')||source.includes('[GF_VERIFICACAO]')||!source.includes('PROCURE O CANAL VERIFICACAO VORKEN')||source.includes('MOSTRAR CONVITE DO DISCORD')||!source.includes('AdministratorDisplay')||!source.includes('SEU CODIGO DE VERIFICACAO')||!source.includes('VER CONVITE DO DISCORD')||!source.includes('CTRL+A e CTRL+C'))throw new Error('Plugin generation failed');
 fs.mkdirSync(new URL('./plugins/',import.meta.url),{recursive:true});
 fs.writeFileSync(generatedSourceUrl,source);

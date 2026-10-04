@@ -8,7 +8,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Vorken", "Kaique", "2.0.5")]
+    [Info("Vorken", "Kaique", "2.0.6")]
     [Description("Telagem administrativa integrada ao Vorken/Discord com codigo individual, conexao HTTPS independente, sem RCON.")]
     public class Vorken : RustPlugin
     {
@@ -214,7 +214,7 @@ namespace Oxide.Plugins
                     if (player != null && player.IsConnected && !player.IsNpc)
                         players.Add(new BridgePlayer { steamId = player.UserIDString, name = player.displayName });
             }
-            string payload = JsonConvert.SerializeObject(new { version = "2.0.5", events = events, receipts = receipts, players = players });
+            string payload = JsonConvert.SerializeObject(new { version = "2.0.6", events = events, receipts = receipts, players = players });
             webrequest.Enqueue(ApiBase + "/api/vorken/plugin/sync", payload, (status, response) => {
                 syncPending = false;
                 if (unloading) return;
@@ -1231,6 +1231,13 @@ namespace Oxide.Plugins
             );
 
 
+            ui.Add(new CuiButton
+            {
+                Button = { Color = "0.10 0.35 0.34 1", Command = "vorken.discord" },
+                Text = { Text = "VER CONVITE DO DISCORD", FontSize = 16, Align = TextAnchor.MiddleCenter, Color = "1 1 1 1" },
+                RectTransform = { AnchorMin = "0.30 0.12", AnchorMax = "0.70 0.18" }
+            }, Ui);
+
             ui.Add(
                 new CuiButton
                 {
@@ -1364,9 +1371,9 @@ namespace Oxide.Plugins
                     Text =
                     {
                         Text =
-                            "Copie o convite abaixo e entre no Discord.\n" +
-                            "Abra " +
-                            Clean(settings.CanalVerificacao) +
+                            "Clique no campo abaixo e use CTRL+A e CTRL+C para copiar o convite.\n" +
+                            "Procure o canal " +
+                            "VERIFICACAO VORKEN" +
                             " e envie SOMENTE o codigo " +
                             EnsureCode(session) +
                             ".\n" +

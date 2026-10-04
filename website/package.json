@@ -13,7 +13,7 @@
   "scripts": {
     "prestart": "node build-vorken-plugin.mjs",
     "start": "node server.js",
-    "test": "node --check vorkenBot.js && node --check vorkenSettings.js && node --check build-vorken-plugin.mjs && node build-vorken-plugin.mjs && VORKEN_PLUGIN_SOURCE=generated node build-vorken-plugin.mjs && node -e \"const fs=require('fs');const s=fs.readFileSync('plugins/Vorken.cs','utf8');if(!s.includes('[Info(\\\"Vorken\\\", \\\"Kaique\\\", \\\"2.0.5\\\")]')||!s.includes('PROCURE O CANAL VERIFICACAO VORKEN')||s.includes('MOSTRAR CONVITE DO DISCORD')||!s.includes('AdministratorDisplay')||!s.includes('SEU CODIGO DE VERIFICACAO'))process.exit(1)\" && node --test"
+    "test": "node --check vorkenBot.js && node --check vorkenSettings.js && node --check build-vorken-plugin.mjs && node build-vorken-plugin.mjs && VORKEN_PLUGIN_SOURCE=generated node build-vorken-plugin.mjs && node -e \"const fs=require('fs');const s=fs.readFileSync('plugins/Vorken.cs','utf8');if(!s.includes('[Info(\\\"Vorken\\\", \\\"Kaique\\\", \\\"2.0.6\\\")]')||!s.includes('PROCURE O CANAL VERIFICACAO VORKEN')||s.includes('MOSTRAR CONVITE DO DISCORD')||!s.includes('AdministratorDisplay')||!s.includes('SEU CODIGO DE VERIFICACAO'))process.exit(1)\" && node --test"
   },
   "dependencies": {
     "archiver": "^7.0.1",

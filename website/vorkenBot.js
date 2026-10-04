@@ -346,7 +346,8 @@ export async function startVorkenBot(platform){
             const actor=i.user.id+'|'+clean(member.displayName||i.user.username,80);
             if(action==='confirm'){
               const server=(await db.query('SELECT plugin_version FROM vorken_servers WHERE id=$1',[p.serverId])).rows[0];
-              if(!server?.plugin_version?.startsWith('2.0.5'))throw new Error('Atualize o plugin deste servidor para Vorken 2.0.5 antes de usar este botão.');
+              const version=/^(\d+)\.(\d+)\.(\d+)$/.exec(server?.plugin_version||'');
+              if(!version||!(Number(version[1])>2||Number(version[1])===2&&(Number(version[2])>0||Number(version[3])>=5)))throw new Error('Atualize o plugin deste servidor para Vorken 2.0.5 ou superior antes de usar este botão.');
               const reason=clean('Banimento anterior: '+(p.bans||[]).map(b=>b.server_name+': '+b.reason).join('; '),500);
               p.commandId=await queue(db,p.serverId,'ban_prior',p.steamId,actor,null,reason);
             }else if(action==='start'){
