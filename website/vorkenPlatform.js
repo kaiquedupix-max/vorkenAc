@@ -468,12 +468,14 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
   }));
   app.get('/api/vorken/admin/bans',requireAdmin,route(async(req,res)=>{
     const offset=Math.max(0,Number.parseInt(req.query.offset,10)||0),q=clean(req.query.q,100);
-    const r=await pool.query(`SELECT b.*,s.name AS server_name,COALESCE(v.player_name,b.player_name) AS player_name,
+    const r=await pool.query(`SELECT b.*,s.name AS server_name,COALESCE(v.player_name,b.player_name,legacy.player_name) AS player_name,
+      COALESCE((SELECT name FROM vorken_customers WHERE discord_id=legacy.administrator_id),legacy.administrator_id) AS verification_administrator,
       COALESCE(NULLIF(split_part(c.actor_id,'|',2),''),(SELECT name FROM vorken_customers WHERE discord_id=split_part(c.actor_id,'|',1)),c.actor_id) AS administrator,
       COALESCE(v.analysis_id,b.legacy_analysis_id) AS analysis_id,COUNT(*) OVER()::int AS total
       FROM vorken_bans b JOIN vorken_servers s ON s.id=b.server_id LEFT JOIN vorken_sessions v ON v.id=b.session_id
+      LEFT JOIN LATERAL(SELECT player_name,administrator_id FROM guerra_fria_verifications WHERE analysis_id=b.legacy_analysis_id ORDER BY id DESC LIMIT 1)legacy ON TRUE
       LEFT JOIN LATERAL(SELECT actor_id FROM vorken_commands WHERE (session_id=b.session_id AND action='deny' OR id=b.command_id) AND status='applied' ORDER BY completed_at DESC LIMIT 1)c ON TRUE
-      WHERE $1='' OR b.steam_id ILIKE '%'||$1||'%' OR s.name ILIKE '%'||$1||'%' OR b.reason ILIKE '%'||$1||'%' OR v.player_name ILIKE '%'||$1||'%'
+      WHERE $1='' OR b.steam_id ILIKE '%'||$1||'%' OR s.name ILIKE '%'||$1||'%' OR b.reason ILIKE '%'||$1||'%' OR COALESCE(v.player_name,b.player_name,legacy.player_name) ILIKE '%'||$1||'%'
       ORDER BY b.created_at DESC,b.id LIMIT 100 OFFSET $2`,[q,offset]);
     res.json({bans:r.rows,total:r.rows[0]?.total||0,offset});
   }));

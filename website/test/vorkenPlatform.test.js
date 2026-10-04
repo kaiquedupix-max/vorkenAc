@@ -52,7 +52,8 @@ test('platform routes isolate customers, confirm decisions and activate payments
   await db.exec(`CREATE TABLE analyses(id BIGSERIAL PRIMARY KEY,public_token TEXT,label TEXT,status TEXT DEFAULT 'waiting',
     expires_at TIMESTAMPTZ,processing_stage TEXT DEFAULT 'waiting',external_source TEXT,external_player_id TEXT,external_discord_user_id TEXT,
     external_verification_code TEXT,external_ticket_channel_id TEXT,external_decision TEXT,external_decision_at TIMESTAMPTZ,external_decision_result TEXT);
-    CREATE TABLE scan_findings(id BIGSERIAL PRIMARY KEY,analysis_id BIGINT,title TEXT,severity TEXT,artifact_type TEXT,artifact_value TEXT,evidence JSONB);`);
+    CREATE TABLE scan_findings(id BIGSERIAL PRIMARY KEY,analysis_id BIGINT,title TEXT,severity TEXT,artifact_type TEXT,artifact_value TEXT,evidence JSONB);
+    CREATE TABLE guerra_fria_verifications(id BIGSERIAL PRIMARY KEY,analysis_id BIGINT,player_name TEXT,administrator_id TEXT);`);
   await initVorkenPlatform(pool);
   const secret='test-session-secret-that-is-at-least-32-bytes';
   const oldEnv={SESSION_SECRET:process.env.SESSION_SECRET,MERCADO_PAGO_ACCESS_TOKEN:process.env.MERCADO_PAGO_ACCESS_TOKEN,MERCADO_PAGO_WEBHOOK_SECRET:process.env.MERCADO_PAGO_WEBHOOK_SECRET,VORKEN_DISCORD_BOT_TOKEN:process.env.VORKEN_DISCORD_BOT_TOKEN,VORKEN_DISCORD_CLIENT_ID:process.env.VORKEN_DISCORD_CLIENT_ID};
