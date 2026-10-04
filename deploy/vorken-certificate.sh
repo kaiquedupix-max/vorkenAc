@@ -15,7 +15,7 @@ docker run --rm \
   -e HOSTINGER_TTL=300 \
   goacme/lego:v4.28.0 \
   --path /state --email "$email" --accept-tos \
-  --dns hostinger --dns.resolvers 1.1.1.1:53 --domains vorken.xyz --domains '*.vorken.xyz' "$operation"
+  --dns hostinger --dns.resolvers 1.1.1.1:53 --dns.disable-cp --domains vorken.xyz --domains '*.vorken.xyz' "$operation"
 openssl x509 -in /etc/vorken/acme/certificates/vorken.xyz.crt -noout -checkend 86400
 nginx -t
 systemctl reload nginx
