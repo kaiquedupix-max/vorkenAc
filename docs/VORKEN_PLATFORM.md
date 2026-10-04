@@ -60,6 +60,7 @@ O download contém chave exclusiva apenas dessa instalação. Guardar como crede
 - PGlite não valida locks distribuídos; os locks de Postgres são no-ops no harness local. Validar múltiplas réplicas em Postgres real antes de escalar.
 - Painéis revisados em navegador desktop/mobile, em prévia isolada com dados explicitamente de demonstração.
 - O plugin C# ainda precisa de compilação e teste dentro do Rust/uMod real, onde existem as assemblies do jogo. Não foi testado um banimento real.
+- A sintaxe C# do plugin gerado foi validada com o parser Roslyn; isso não substitui a compilação com as assemblies de Rust/uMod.
 - Discord e Mercado Pago precisam das credenciais reais e testes de integração antes de vender.
 - DNS/HTTPS e deploy do Coolify não foram alterados nesta entrega.
 

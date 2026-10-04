@@ -39,10 +39,12 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
     if (!current || current.until < now) limits.set(key, { count:1, until:now+60000 });
     else if (++current.count > count) fail(429,'Muitas tentativas. Aguarde um minuto.');
   };
-  const csrf = async (req,res,next) => {
-    if (req.get('x-vorken-request') !== 'portal' || !await origins(req))
-      return res.status(403).json({ message:'Atualize a página e tente novamente.' });
-    next();
+  const csrf = (req,res,next) => {
+    origins(req).then(valid=>{
+      if (req.get('x-vorken-request') !== 'portal' || !valid)
+        return res.status(403).json({ message:'Atualize a página e tente novamente.' });
+      next();
+    }).catch(()=>res.status(503).json({message:'Serviço temporariamente indisponível.'}));
   };
   const tx = async fn => {
     const c = await pool.connect();
