@@ -13,7 +13,7 @@
   "scripts": {
     "prestart": "node build-vorken-plugin.mjs",
     "start": "node server.js",
-    "test": "node --test"
+    "test": "node --check vorkenBot.js && node --check vorkenSettings.js && node --check build-vorken-plugin.mjs && node build-vorken-plugin.mjs && node --test"
   },
   "dependencies": {
     "archiver": "^7.0.1",
