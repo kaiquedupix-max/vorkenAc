@@ -314,7 +314,7 @@ export async function startVorkenBot(platform){
       const server=await licensedServer(message.guildId,matches[0].server_id);
       const session=await redeem(server,code,message.author.id);
       const ticket=await ensureTicket(session);
-      if(ticket)await privateCodeFeedback(message.author,'✅ Código validado. Sua sala privada está pronta: https://discord.com/channels/'+message.guildId+'/'+ticket.id);
+      if(ticket)await privateCodeFeedback(message.author,'✅ Código validado! Sua sala privada de verificação foi criada: <#'+ticket.id+'>.\nEntre no canal e clique em **Baixar Vorken** para fazer o download do scanner.\n🔗 https://discord.com/channels/'+message.guildId+'/'+ticket.id);
       else await privateCodeFeedback(message.author,'✅ Código validado. Sua sala privada está sendo criada.');
     }catch(error){await privateCodeFeedback(message.author,error.message||'Não foi possível validar o código.');}
   });
