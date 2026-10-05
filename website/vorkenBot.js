@@ -314,8 +314,10 @@ export async function startVorkenBot(platform){
       const server=await licensedServer(message.guildId,matches[0].server_id);
       const session=await redeem(server,code,message.author.id);
       const ticket=await ensureTicket(session);
-      if(ticket)await message.channel.send({content:'✅ <@'+message.author.id+'>, código validado! Sua sala privada de verificação foi criada: <#'+ticket.id+'>.\nEntre no canal e clique em **Baixar Vorken** para fazer o download do scanner.',allowedMentions:{parse:[],users:[message.author.id]}});
-      else await message.channel.send({content:'✅ <@'+message.author.id+'>, código validado. Sua sala privada está sendo criada.',allowedMentions:{parse:[],users:[message.author.id]}});
+      const confirmation=await message.channel.send({content:ticket
+        ?'✅ <@'+message.author.id+'>, código validado! Sua sala privada de verificação foi criada: <#'+ticket.id+'>.\nEntre no canal e clique em **Baixar Vorken** para fazer o download do scanner.'
+        :'✅ <@'+message.author.id+'>, código validado. Sua sala privada está sendo criada.',allowedMentions:{parse:[],users:[message.author.id]}});
+      await pool.query('INSERT INTO vorken_code_messages(message_id,channel_id,session_id) VALUES($1,$2,$3)',[confirmation.id,message.channelId,session.id]);
     }catch(error){await privateCodeFeedback(message.author,error.message||'Não foi possível validar o código.');}
   });
 
@@ -441,6 +443,18 @@ export async function startVorkenBot(platform){
     const db=await pool.connect();
     try{
       if(!(await db.query('SELECT pg_try_advisory_lock(827463) AS locked')).rows[0].locked)return;
+      const finishedMessages=await db.query(`SELECT m.* FROM vorken_code_messages m JOIN vorken_sessions s ON s.id=m.session_id
+        WHERE s.status NOT IN ('pending','redeemed','deciding') LIMIT 50`);
+      for(const m of finishedMessages.rows){
+        try{
+          const channel=await client.channels.fetch(m.channel_id);
+          if(channel?.isTextBased())await channel.messages.delete(m.message_id);
+          await db.query('DELETE FROM vorken_code_messages WHERE message_id=$1',[m.message_id]);
+        }catch(error){
+          if(error.code===10008||error.code===10003)await db.query('DELETE FROM vorken_code_messages WHERE message_id=$1',[m.message_id]);
+          else console.error('Vorken limpeza de confirmação:',error.code||error.name);
+        }
+      }
       const configured=await db.query('SELECT * FROM vorken_guilds');
       const knownGuilds=new Set(configured.rows.map(g=>g.id));
       for(const guild of client.guilds.cache.values()){

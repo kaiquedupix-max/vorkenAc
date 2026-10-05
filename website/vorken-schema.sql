@@ -35,6 +35,10 @@ CREATE TABLE IF NOT EXISTS vorken_sessions (
 ALTER TABLE vorken_servers ADD COLUMN IF NOT EXISTS online_players JSONB NOT NULL DEFAULT '[]';
 ALTER TABLE vorken_servers ADD COLUMN IF NOT EXISTS players_updated_at TIMESTAMPTZ;
 CREATE UNIQUE INDEX IF NOT EXISTS vorken_active_code ON vorken_sessions(server_id,code) WHERE status IN ('pending','redeemed','deciding');
+CREATE TABLE IF NOT EXISTS vorken_code_messages (
+ message_id TEXT PRIMARY KEY, channel_id TEXT NOT NULL,
+ session_id UUID NOT NULL REFERENCES vorken_sessions(id)
+);
 CREATE TABLE IF NOT EXISTS vorken_commands (
  id UUID PRIMARY KEY, server_id UUID NOT NULL REFERENCES vorken_servers(id), session_id UUID REFERENCES vorken_sessions(id),
  action TEXT NOT NULL CHECK(action IN ('start','attend','approve','deny')), steam_id TEXT NOT NULL, actor_id TEXT,
