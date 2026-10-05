@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { ensureVerifiedRole } from './vorkenRoles.js';
 import { notificationSettings, publicNotice, verificationEmbed } from './vorkenSettings.js';
 import {
   Client, GatewayIntentBits, PermissionFlagsBits as P, ChannelType,
@@ -136,7 +137,7 @@ export async function startVorkenBot(platform){
         if(existing.name!==name||existing.color!==color||(guild.features.includes('ROLE_ICONS')&&existing.unicodeEmoji!==emoji))await existing.edit(appearance);
         return existing;
       };
-      const verified=await role(stored.verified_role_id,'✅ Verificado','Verificado',0x2ecc71,'✅');
+      const verified=await ensureVerifiedRole(guild,stored.verified_role_id);
       const screening=await role(stored.screening_role_id,'🔎 Em telagem','Em telagem',0xf39c12,'🔎');
       const staffRoles=guild.roles.cache.filter(r=>r.id!==guild.id&&!r.managed&&(r.permissions.has(P.Administrator)||r.permissions.has(P.BanMembers)));
       const botId=client.user.id;
