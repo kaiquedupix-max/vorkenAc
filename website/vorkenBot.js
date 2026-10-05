@@ -125,8 +125,9 @@ export async function startVorkenBot(platform){
   async function setup(guild){
     if(pendingSetups.has(guild.id))return pendingSetups.get(guild.id);
     const promise=(async()=>{
-      const stored=(await pool.query('SELECT * FROM vorken_guilds WHERE id=$1',[guild.id])).rows[0];
-      if(!stored)return null;
+      // Prepare Discord channels on installation, even before the customer links the guild.
+      // This does not create a customer, license or authorization in the panel.
+      const stored=(await pool.query('SELECT * FROM vorken_guilds WHERE id=$1',[guild.id])).rows[0]||{id:guild.id};
       await guild.roles.fetch();await guild.channels.fetch();
       const role=async(id,name,legacyName,color,emoji)=>{
         const existing=guild.roles.cache.get(id)||guild.roles.cache.find(r=>!r.managed&&(r.name===name||r.name===legacyName));
@@ -152,7 +153,9 @@ export async function startVorkenBot(platform){
       const instructions=await channel(previousInstructions,'verificacao',ChannelType.GuildText,[
         {id:guild.id,allow:[P.ViewChannel,P.ReadMessageHistory,P.SendMessages],deny:[P.AttachFiles,P.EmbedLinks]},
         {id:botId,allow:[P.ViewChannel,P.SendMessages,P.ReadMessageHistory,P.EmbedLinks,P.ManageMessages]}]);
-      const alerts=await channel(stored.alerts_channel_id,'vorken-alertas',ChannelType.GuildText,privateOverwrites);
+      const previousAlerts=stored.alerts_channel_id||guild.channels.cache.find(c=>c.type===ChannelType.GuildText&&c.parentId===category.id&&normalize(c.name)==='vorken-alertas')?.id;
+      const alerts=await channel(previousAlerts,'vorken-alertas',ChannelType.GuildText,privateOverwrites);
+      if(alerts.parentId!==category.id)await alerts.setParent(category.id,{lockPermissions:false});
       await alerts.permissionOverwrites.set(privateOverwrites);
       if(instructions.parentId!==category.id)await instructions.setParent(category.id,{lockPermissions:false});
       await instructions.permissionOverwrites.edit(guild.id,{ViewChannel:true,ReadMessageHistory:true,SendMessages:true,AttachFiles:false,EmbedLinks:false});
