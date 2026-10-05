@@ -443,8 +443,7 @@ export async function startVorkenBot(platform){
     const db=await pool.connect();
     try{
       if(!(await db.query('SELECT pg_try_advisory_lock(827463) AS locked')).rows[0].locked)return;
-      const finishedMessages=await db.query(`SELECT m.* FROM vorken_code_messages m JOIN vorken_sessions s ON s.id=m.session_id
-        WHERE s.status NOT IN ('pending','redeemed','deciding') LIMIT 50`);
+      const finishedMessages=await db.query('SELECT * FROM vorken_code_messages WHERE delete_after<=NOW() ORDER BY delete_after LIMIT 50');
       for(const m of finishedMessages.rows){
         try{
           const channel=await client.channels.fetch(m.channel_id);

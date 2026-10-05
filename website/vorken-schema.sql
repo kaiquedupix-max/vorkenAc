@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS vorken_code_messages (
  message_id TEXT PRIMARY KEY, channel_id TEXT NOT NULL,
  session_id UUID NOT NULL REFERENCES vorken_sessions(id)
 );
+ALTER TABLE vorken_code_messages ADD COLUMN IF NOT EXISTS delete_after TIMESTAMPTZ NOT NULL DEFAULT (NOW() + interval '1 minute');
 CREATE TABLE IF NOT EXISTS vorken_commands (
  id UUID PRIMARY KEY, server_id UUID NOT NULL REFERENCES vorken_servers(id), session_id UUID REFERENCES vorken_sessions(id),
  action TEXT NOT NULL CHECK(action IN ('start','attend','approve','deny')), steam_id TEXT NOT NULL, actor_id TEXT,
