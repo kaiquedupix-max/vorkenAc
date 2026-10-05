@@ -441,6 +441,14 @@ export async function startVorkenBot(platform){
     try{
       if(!(await db.query('SELECT pg_try_advisory_lock(827463) AS locked')).rows[0].locked)return;
       const configured=await db.query('SELECT * FROM vorken_guilds');
+      const knownGuilds=new Set(configured.rows.map(g=>g.id));
+      for(const guild of client.guilds.cache.values()){
+        if(knownGuilds.has(guild.id))continue;
+        const normalized=name=>name.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+        const category=guild.channels.cache.find(c=>c.type===ChannelType.GuildCategory&&normalized(c.name)==='verificacao vorken');
+        const instructions=category&&guild.channels.cache.find(c=>c.type===ChannelType.GuildText&&c.parentId===category.id&&normalized(c.name)==='verificacao');
+        if(!category||!instructions)await setup(guild).catch(e=>console.error('Vorken instalação:',e.code||e.name));
+      }
       for(const config of configured.rows){
         const guild=await client.guilds.fetch(config.id).catch(()=>null);
         if(guild&&(!config.verified_role_id||!guild.channels.cache.has(config.verification_channel_id)||!guild.channels.cache.has(config.category_id)))await setup(guild).catch(e=>console.error('Vorken setup:',e.code||e.name));
