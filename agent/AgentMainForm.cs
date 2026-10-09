@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Runtime.InteropServices;
@@ -7,13 +7,11 @@ using System.Windows.Forms;
 
 namespace Vorken.Agent;
 
-internal sealed class AgentMainForm : Form
+internal sealed partial class AgentMainForm : Form
 {
     private const string PrivacyUrl = "https://vorkenac.guerrafriarust.com.br/privacy";
     private const string TermsUrl = "https://vorkenac.guerrafriarust.com.br/terms";
-    private const uint SndAsync = 0x0001;
-    private const uint SndNodefault = 0x0002;
-    private const uint SndAlias = 0x00010000;
+    private readonly UiAudio _uiAudio = new();
 
     private readonly string[] _args;
     private readonly AnimatedSurface _surface = new();
@@ -55,21 +53,21 @@ internal sealed class AgentMainForm : Form
     private int _devicesSeen;
 
     // Same core palette used by website/public/styles.css.
-    private static readonly Color Background = Color.FromArgb(7, 10, 13);       // #070a0d
-    private static readonly Color Header = Color.FromArgb(7, 10, 13);           // #070a0d
-    private static readonly Color Surface = Color.FromArgb(13, 18, 23);         // #0d1217
-    private static readonly Color SurfaceAlt = Color.FromArgb(17, 24, 32);      // #111820
-    private static readonly Color Border = Color.FromArgb(32, 43, 53);          // #202b35
-    private static readonly Color BorderBright = Color.FromArgb(38, 184, 142);  // #26b88e
-    private static readonly Color Accent = Color.FromArgb(83, 240, 189);        // #53f0bd
-    private static readonly Color AccentSoft = Color.FromArgb(38, 184, 142);    // #26b88e
+    private static readonly Color Background = Color.FromArgb(11, 17, 27);       // #070a0d
+    private static readonly Color Header = Color.FromArgb(11, 17, 27);           // #070a0d
+    private static readonly Color Surface = Color.FromArgb(16, 27, 43);         // #0d1217
+    private static readonly Color SurfaceAlt = Color.FromArgb(20, 34, 56);      // #111820
+    private static readonly Color Border = Color.FromArgb(35, 53, 78);          // #202b35
+    private static readonly Color BorderBright = Color.FromArgb(59, 130, 246);  // #26b88e
+    private static readonly Color Accent = Color.FromArgb(37, 99, 235);        // #53f0bd
+    private static readonly Color AccentSoft = Color.FromArgb(59, 130, 246);    // #26b88e
     private static readonly Color Blue = Color.FromArgb(99, 169, 255);          // #63a9ff
     private static readonly Color TextPrimary = Color.FromArgb(238, 244, 247);  // #eef4f7
     private static readonly Color TextSecondary = Color.FromArgb(130, 146, 159);// #82929f
     private static readonly Color TextDim = Color.FromArgb(101, 121, 133);      // #657985
     private static readonly Color Warning = Color.FromArgb(255, 200, 87);       // #ffc857
     private static readonly Color Danger = Color.FromArgb(255, 102, 117);       // #ff6675
-    private static readonly Color Success = Color.FromArgb(83, 240, 189);       // #53f0bd
+    private static readonly Color Success = Color.FromArgb(82, 219, 174);       // #53f0bd
 
 
     private static readonly ManualToolDefinition[] ManualTools =
@@ -178,8 +176,8 @@ internal sealed class AgentMainForm : Form
         }
 
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(1280, 900);
-        MinimumSize = new Size(1160, 820);
+        ClientSize = new Size(1440, 900);
+        MinimumSize = new Size(1280, 800);
         BackColor = Background;
         ForeColor = TextPrimary;
         Font = new Font("Segoe UI", 10F, FontStyle.Regular, GraphicsUnit.Point);
@@ -188,6 +186,8 @@ internal sealed class AgentMainForm : Form
         Opacity = 0d;
 
         BuildShell();
+        WireUiSounds(this);
+        FormClosed += (_, _) => _uiAudio.Dispose();
         ShowLanguageGate();
 
         _motionTimer.Interval = 24;
@@ -224,18 +224,19 @@ internal sealed class AgentMainForm : Form
 
         _header.Dock = DockStyle.Top;
         _header.Height = 88;
-        _header.BackColor = Header;
+        _header.BackColor = Color.FromArgb(11, 20, 33);
         _header.MouseDown += Header_MouseDown;
+        AttachRoundedRegion(_header, 16);
 
-        var brandMark = new Label
+        var brandMark = new PictureBox
         {
-            Text = "V",
+            Image = LoadBrandMark(),
+            SizeMode = PictureBoxSizeMode.Zoom,
             AutoSize = false,
             Size = new Size(52, 52),
-            Location = new Point(40, 18),
-            TextAlign = ContentAlignment.MiddleCenter,
-            BackColor = Accent,
-            ForeColor = Color.FromArgb(2, 23, 25),
+            Location = new Point(28, 14),
+            BackColor = Color.Transparent,
+            ForeColor = Color.FromArgb(255, 255, 255),
             Font = new Font("Segoe UI", 22F, FontStyle.Bold)
         };
 
@@ -245,8 +246,8 @@ internal sealed class AgentMainForm : Form
         {
             Text = "VORKEN",
             AutoSize = true,
-            Location = new Point(110, 17),
-            Font = new Font("Segoe UI", 17F, FontStyle.Bold),
+            Location = new Point(88, 21),
+            Font = new Font("Segoe UI", 21F, FontStyle.Bold),
             ForeColor = TextPrimary,
             BackColor = Color.Transparent
         };
@@ -255,14 +256,14 @@ internal sealed class AgentMainForm : Form
         {
             Text = "ANTI CHEAT",
             AutoSize = true,
-            Location = new Point(112, 50),
-            Font = new Font("Consolas", 8.5F, FontStyle.Bold),
+            Location = new Point(226, 31),
+            Font = new Font("Consolas", 9F, FontStyle.Bold),
             ForeColor = Accent,
             BackColor = Color.Transparent
         };
 
-        _nav.Location = new Point(300, 20);
-        _nav.Size = new Size(680, 58);
+        _nav.Location = new Point(330, 22);
+        _nav.Size = new Size(840, 48);
         _nav.BackColor = Color.Transparent;
         _nav.Visible = false;
 
@@ -271,7 +272,7 @@ internal sealed class AgentMainForm : Form
         AddNavButton("≡", L("Resultados", "Resultados", "Results"), 2, () =>
         {
             if (_lastRun is not null)
-                ShowResultsView(_lastRun);
+                ShowDetailedResultsView(_lastRun);
         });
         AddNavButton("◷", L("Histórico", "Historial", "History"), 3, ShowHistoryView);
         AddNavButton("⊞", L("Análise Manual", "Análisis Manual", "Manual Analysis"), 4, ShowManualAnalysisView);
@@ -283,9 +284,9 @@ internal sealed class AgentMainForm : Form
         _headerStatus.Size = new Size(140, 36);
         _headerStatus.Location = new Point(1020, 35);
         _headerStatus.TextAlign = ContentAlignment.MiddleCenter;
-        _headerStatus.Font = new Font("Consolas", 8.5F, FontStyle.Bold);
+        _headerStatus.Font = new Font("Consolas", 9F, FontStyle.Bold);
         _headerStatus.ForeColor = Accent;
-        _headerStatus.BackColor = Color.FromArgb(6, 31, 36);
+        _headerStatus.BackColor = Color.FromArgb(20, 40, 71);
         AttachRoundedRegion(_headerStatus, 8);
         _headerStatus.Cursor = Cursors.Default;
         _headerStatus.Click += async (_, _) =>
@@ -294,16 +295,16 @@ internal sealed class AgentMainForm : Form
                 await StopRemoteSupportAsync();
         };
 
-        var minButton = MakeWindowButton("—", 1162);
+        var minButton = MakeWindowButton("—", _header.ClientSize.Width - 120);
         minButton.Click += (_, _) => WindowState = FormWindowState.Minimized;
 
-        var maxButton = MakeWindowButton("□", 1200);
+        var maxButton = MakeWindowButton("□", _header.ClientSize.Width - 82);
         maxButton.Click += (_, _) =>
             WindowState = WindowState == FormWindowState.Maximized
                 ? FormWindowState.Normal
                 : FormWindowState.Maximized;
 
-        var exitButton = MakeWindowButton("×", 1238);
+        var exitButton = MakeWindowButton("×", _header.ClientSize.Width - 44);
         exitButton.Click += (_, _) => Close();
 
         var divider = new Panel
@@ -325,80 +326,83 @@ internal sealed class AgentMainForm : Form
 
         _surface.Dock = DockStyle.Fill;
         _surface.BackColor = Background;
+        AttachRoundedRegion(_surface, 16);
 
         outer.Controls.Add(_surface);
         outer.Controls.Add(_header);
         Controls.Add(outer);
 
-        Resize += (_, _) =>
+        void LayoutShell(object? sender, EventArgs args)
         {
-            _headerStatus.Left = Math.Max(860, ClientSize.Width - 260);
-            minButton.Left = ClientSize.Width - 118;
-            maxButton.Left = ClientSize.Width - 80;
-            exitButton.Left = ClientSize.Width - 42;
-        };
+            _headerStatus.Left = Math.Max(840, ClientSize.Width - 260);
+            _nav.Left = ClientSize.Width >= 1360 ? 330 : 240;
+            brandCaption.Visible = ClientSize.Width >= 1360;
+            LayoutGuidedNavigation();
+            minButton.Left = _header.ClientSize.Width - 120;
+            maxButton.Left = _header.ClientSize.Width - 82;
+            exitButton.Left = _header.ClientSize.Width - 44;
+            minButton.BringToFront();
+            maxButton.BringToFront();
+            exitButton.BringToFront();
+        }
+        Resize += LayoutShell;
+        _header.SizeChanged += LayoutShell;
+        LayoutShell(this, EventArgs.Empty);
     }
 
-    private Button MakeWindowButton(string text, int x)
+    private GuidedWindowButton MakeWindowButton(string text, int x)
     {
-        var button = new Button
+        var button = new GuidedWindowButton
         {
+            Kind = text == "\u00d7" ? 2 : text == "\u25a1" ? 1 : 0,
             Text = text,
-            Location = new Point(x, 2),
-            Size = new Size(38, 30),
-            FlatStyle = FlatStyle.Flat,
-            BackColor = Color.Transparent,
+            AccessibleName = text == "×" ? "Fechar" : text == "□" ? "Maximizar ou restaurar" : "Minimizar",
+            Location = new Point(x, 10),
+            Size = new Size(30, 24),
+            BackColor = _header.BackColor,
             ForeColor = TextPrimary,
-            Font = new Font("Segoe UI", 11F),
             TabStop = false
         };
-        button.FlatAppearance.BorderSize = 0;
-        button.FlatAppearance.MouseOverBackColor = Color.FromArgb(20, 45, 55);
-        AttachRoundedRegion(button, 10);
-        EnhanceButton(button);
+        button.MouseEnter += (_, _) => PlayUiHover();
+        button.Click += (_, _) => PlayUiClick();
         return button;
     }
 
     private void AddNavButton(string icon, string text, int index, Action action)
     {
-        var button = new Button
+        var button = new GuidedNavButton
         {
-            Text = icon + Environment.NewLine + text,
+            Text = text,
+            Symbol = index,
             Tag = index,
-            Location = new Point(index * 96, 0),
-            Size = new Size(92, 58),
+            Location = new Point(index * 118, 0),
+            Size = new Size(114, 42),
             FlatStyle = FlatStyle.Flat,
             BackColor = Color.Transparent,
             ForeColor = TextSecondary,
-            Font = new Font("Segoe UI", 8.6F),
+            Font = new Font("Segoe UI", 10.5F),
             Cursor = Cursors.Hand
         };
         button.FlatAppearance.BorderSize = 0;
-        button.FlatAppearance.MouseOverBackColor = Color.FromArgb(8, 35, 42);
-        AttachRoundedRegion(button, 12);
-        EnhanceButton(button);
         button.Click += (_, _) =>
         {
             SetActiveNav(index);
             action();
         };
         _nav.Controls.Add(button);
+        LayoutGuidedNavigation();
     }
 
     private void SetActiveNav(int index)
     {
         foreach (Control control in _nav.Controls)
         {
-            if (control is not Button button)
+            if (control is not GuidedNavButton button)
                 continue;
 
             bool active = Convert.ToInt32(button.Tag) == index;
-            button.ForeColor = active ? Accent : TextSecondary;
-            button.BackColor = active ? Color.FromArgb(7, 44, 49) : Color.Transparent;
-            button.FlatAppearance.BorderSize = active ? 1 : 0;
-            // ButtonBase/FlatAppearance rejeita BorderColor com alpha transparente.
-            // Mantemos uma cor opaca mesmo quando a borda está com tamanho zero.
-            button.FlatAppearance.BorderColor = active ? AccentSoft : Border;
+            button.Selected = active;
+            button.Invalidate();
         }
     }
 
@@ -424,9 +428,23 @@ internal sealed class AgentMainForm : Form
             if (control is Button button && button.Tag is int index &&
                 index >= 0 && index < labels.Length)
             {
-                button.Text = icons[index] + Environment.NewLine + labels[index];
+                button.Text = labels[index];
             }
         }
+        LayoutGuidedNavigation();
+    }
+
+    private void LayoutGuidedNavigation()
+    {
+        _nav.Width = Math.Max(600, _header.ClientSize.Width - _nav.Left - 144);
+        int x = 0;
+        foreach (var button in _nav.Controls.OfType<GuidedNavButton>())
+        {
+            int width = TextRenderer.MeasureText(button.Text, button.Font, Size.Empty, TextFormatFlags.SingleLine | TextFormatFlags.NoPadding).Width + 62;
+            button.Bounds = new Rectangle(x, 0, width, 54);
+            x += width + 2;
+        }
+        _nav.Height = 54;
     }
 
     private void ShowLanguageGate()
@@ -494,7 +512,7 @@ internal sealed class AgentMainForm : Form
         var panel = new BorderedPanel
         {
             Bounds = new Rectangle(x, 90, 346, 340),
-            BackColor = selected ? Color.FromArgb(7, 38, 42) : Color.FromArgb(5, 20, 26),
+            BackColor = selected ? Color.FromArgb(20, 40, 71) : Surface,
             BorderColor = selected ? AccentSoft : Border,
             CornerRadius = 18
         };
@@ -617,7 +635,7 @@ internal sealed class AgentMainForm : Form
         scrollHint.TextAlign = ContentAlignment.MiddleRight;
         termsCard.Controls.Add(scrollHint);
 
-        var officialTerms = new Button
+        var officialTerms = new GuidedActionButton
         {
             Text = L("Termos oficiais ↗", "Términos oficiales ↗", "Official terms ↗"),
             Bounds = new Rectangle(22, 562, 170, 34)
@@ -626,7 +644,7 @@ internal sealed class AgentMainForm : Form
         officialTerms.Click += (_, _) => OpenUrl(TermsUrl);
         termsCard.Controls.Add(officialTerms);
 
-        var privacy = new Button
+        var privacy = new GuidedActionButton
         {
             Text = L("Privacidade ↗", "Privacidad ↗", "Privacy ↗"),
             Bounds = new Rectangle(204, 562, 154, 34)
@@ -702,7 +720,7 @@ internal sealed class AgentMainForm : Form
             actionCard.Controls.Add(row);
         }
 
-        var acceptButton = new Button
+        var acceptButton = new GuidedActionButton
         {
             Text = L("Role até o final para liberar", "Desplácese hasta el final", "Scroll to the end to unlock"),
             Bounds = new Rectangle(24, 488, 286, 62),
@@ -827,216 +845,6 @@ internal sealed class AgentMainForm : Form
         termsBox.Focus();
     }
 
-    private void ShowConsentView()
-    {
-        _surface.Controls.Clear();
-        _surface.Mode = AnimatedSurfaceMode.Idle;
-        _nav.Visible = false;
-        _finished = false;
-
-        var badge = MakeBadge("PLAYER INTEGRITY   ·   EVIDENCE FIRST");
-        badge.Location = new Point(46, 32);
-
-        var title = MakeLabel(
-            L("Análise técnica\ncom evidência real.", "Análisis técnico\ncon evidencia real.", "Technical analysis\nwith real evidence."),
-            new Rectangle(46, 78, 700, 120),
-            35F,
-            TextPrimary,
-            FontStyle.Bold);
-        title.Paint += (_, e) => { };
-
-        var accentTitle = new Label
-        {
-            Text = L("com evidência real.", "con evidencia real.", "with real evidence."),
-            AutoSize = true,
-            Location = new Point(46, 133),
-            Font = new Font("Segoe UI", 35F, FontStyle.Bold),
-            ForeColor = Accent,
-            BackColor = Color.Transparent
-        };
-
-        title.Text = L("Análise técnica", "Análisis técnico", "Technical analysis");
-
-        var description = MakeLabel(
-            L(
-                "O Vorken realiza uma análise técnica e forense para revisar\nindícios de trapaça em seu ambiente de forma segura e objetiva.\nMenos ruído. Mais evidência real.",
-                "Vorken realiza un análisis técnico y forense para revisar\nindicios de trampas de forma segura y objetiva.\nMenos ruido. Más evidencia real.",
-                "Vorken performs a technical forensic analysis to review\ncheating indicators safely and objectively.\nLess noise. More real evidence."),
-            new Rectangle(48, 196, 700, 88),
-            11.4F,
-            TextSecondary);
-
-        var analysisCard = MakeCard(new Rectangle(44, 286, 710, 365));
-        analysisCard.Controls.Add(MakeSectionTitle(L("☷   O QUE SERÁ ANALISADO", "☷   QUÉ SE ANALIZARÁ", "☷   WHAT WILL BE ANALYZED"), 20, 18));
-
-        string[] items = AgentLocalization.Current switch
-        {
-            AgentLanguage.Spanish =>
-            [
-                "USB, dispositivos seriales y hardware|Historial de conexión, dispositivos y controladores.",
-                "Prefetch, BAM y caché del sistema|Ejecución de archivos, actividad reciente y rastros.",
-                "Descargas y origen de archivos|Archivos obtenidos, firmas digitales e integridad.",
-                "Procesos, servicios y módulos|Procesos activos, módulos cargados e inyecciones.",
-                "Ejecución correlacionada|Línea de tiempo y correlación de eventos relevantes.",
-                "Integridad del entorno|Modificaciones, hooks y entorno de ejecución."
-            ],
-            AgentLanguage.English =>
-            [
-                "USB, serial devices and related hardware|Connection history, devices and drivers.",
-                "Prefetch, BAM and system cache|File execution, recent activity and system traces.",
-                "Downloads and file origins|Downloaded files, digital signatures and integrity.",
-                "Processes, services and modules|Running processes, loaded modules and injections.",
-                "Correlated execution|Timeline and correlation of relevant events.",
-                "Environment integrity|Changes, hooks and execution environment checks."
-            ],
-            _ =>
-            [
-                "USB, dispositivos seriais e hardware relacionado|Histórico de conexão, dispositivos e drivers.",
-                "Prefetch, BAM e cache do sistema|Execução de arquivos, atividade recente e rastros no sistema.",
-                "Downloads e origem de arquivos|Arquivos obtidos, assinaturas digitais e integridade.",
-                "Processos, serviços e módulos|Processos em execução, módulos carregados e injeções.",
-                "Execução correlacionada|Linha do tempo e correlação de eventos relevantes.",
-                "Integridade do ambiente|Verificação de modificações, hooks e ambiente de execução."
-            ]
-        };
-
-        string[] icons = { "↕", "▤", "⇩", "⚙", "⌘", "◆" };
-        for (int i = 0; i < items.Length; i++)
-        {
-            string[] parts = items[i].Split('|');
-            AddFeatureRow(analysisCard, icons[i], parts[0], parts[1], 20, 54 + (i * 49), 660);
-        }
-
-        var privacy = new BorderedPanel
-        {
-            Bounds = new Rectangle(44, 664, 710, 80),
-            BackColor = Color.FromArgb(25, 23, 10),
-            BorderColor = Color.FromArgb(118, 86, 23)
-        };
-        privacy.Controls.Add(new Label
-        {
-            Text = "▣",
-            Location = new Point(18, 22),
-            Size = new Size(28, 28),
-            Font = new Font("Segoe UI Symbol", 15F, FontStyle.Bold),
-            ForeColor = Warning,
-            BackColor = Color.Transparent
-        });
-        privacy.Controls.Add(MakeLabel(
-            L("PRIVACIDADE E SEUS DADOS", "PRIVACIDAD Y SUS DATOS", "PRIVACY AND YOUR DATA"),
-            new Rectangle(55, 12, 300, 20),
-            8.3F,
-            Warning,
-            FontStyle.Bold));
-        privacy.Controls.Add(MakeLabel(
-            L(
-                "Não coletamos senhas, cookies, mensagens, fotos ou documentos pessoais.\nA análise é focada exclusivamente em evidências técnicas relacionadas à trapaça.",
-                "No recopilamos contraseñas, cookies, mensajes, fotos ni documentos personales.\nEl análisis se centra exclusivamente en evidencias técnicas relacionadas con trampas.",
-                "We do not collect passwords, cookies, messages, photos or personal documents.\nThe analysis focuses exclusively on technical evidence related to cheating."),
-            new Rectangle(55, 34, 620, 40),
-            8.8F,
-            TextSecondary));
-
-        var consentPanel = new BorderedPanel
-        {
-            Bounds = new Rectangle(44, 754, 710, 54),
-            BackColor = Color.FromArgb(5, 29, 31),
-            BorderColor = Color.FromArgb(25, 112, 102),
-            CornerRadius = 14
-        };
-        consentPanel.Controls.Add(MakeLabel(
-            L("✓  TERMOS ACEITOS", "✓  TÉRMINOS ACEPTADOS", "✓  TERMS ACCEPTED"),
-            new Rectangle(18, 9, 210, 18),
-            8.1F,
-            Accent,
-            FontStyle.Bold,
-            "Consolas"));
-        consentPanel.Controls.Add(MakeLabel(
-            L(
-                "A análise continua sob demanda e só começa quando você clicar em iniciar.",
-                "El análisis sigue siendo bajo demanda y solo comienza al pulsar iniciar.",
-                "The analysis remains on demand and only starts when you click start."),
-            new Rectangle(18, 29, 470, 18),
-            7.5F,
-            TextSecondary));
-
-        var privacyLink = MakeLink(L("Privacidade ↗", "Privacidad ↗", "Privacy ↗"), 518, 8, () => OpenUrl(PrivacyUrl));
-        var termsLink = MakeLink(L("Rever termos ↗", "Revisar términos ↗", "Review terms ↗"), 518, 29, ShowTermsGate);
-        consentPanel.Controls.Add(privacyLink);
-        consentPanel.Controls.Add(termsLink);
-
-        var scannerCard = MakeCard(new Rectangle(786, 34, 440, 710));
-        scannerCard.Controls.Add(MakeLabel(
-            "SECURE SESSION",
-            new Rectangle(26, 28, 190, 22),
-            8.5F,
-            Accent,
-            FontStyle.Bold,
-            "Consolas"));
-        scannerCard.Controls.Add(MakeLabel(
-            "VORKEN SCANNER",
-            new Rectangle(26, 60, 300, 38),
-            18F,
-            TextPrimary,
-            FontStyle.Bold));
-        scannerCard.Controls.Add(MakeLabel(
-            L("Scanner sob demanda.", "Escáner bajo demanda.", "On-demand scanner."),
-            new Rectangle(26, 96, 330, 24),
-            11F,
-            TextPrimary));
-        scannerCard.Controls.Add(MakeLabel(
-            L(
-                "Coleta e análise de evidências técnicas\npara uma revisão baseada em evidências.",
-                "Recopilación y análisis de evidencias técnicas\npara una revisión basada en evidencias.",
-                "Technical evidence collection and analysis\nfor an evidence-based review."),
-            new Rectangle(26, 132, 360, 56),
-            10.2F,
-            TextSecondary));
-
-        var radar = new ScannerPulseControl
-        {
-            Location = new Point(26, 195),
-            Size = new Size(388, 270),
-            BackColor = Color.FromArgb(4, 17, 23),
-            Scanning = false,
-            Caption = "READY TO SCAN"
-        };
-        scannerCard.Controls.Add(radar);
-
-        scannerCard.Controls.Add(MakeMiniStatus("MODE", "◈   ON DEMAND", "ANÁLISE SOB DEMANDA", 26, 480, 188));
-        scannerCard.Controls.Add(MakeMiniStatus("EXECUTION", "▣   USER MODE", "AMBIENTE ATUAL", 226, 480, 188));
-
-        _startButton.Text = L("▶  Iniciar análise   →", "▶  Iniciar análisis   →", "▶  Start analysis   →");
-        _startButton.Bounds = new Rectangle(26, 590, 388, 64);
-        StylePrimaryButton(_startButton);
-        _startButton.Enabled = _termsAccepted;
-        _startButton.BackColor = _termsAccepted
-            ? Accent
-            : Color.FromArgb(33, 78, 75);
-        _startButton.Click -= AcceptButton_Click;
-        _startButton.Click += AcceptButton_Click;
-        scannerCard.Controls.Add(_startButton);
-
-        scannerCard.Controls.Add(MakeLabel(
-            "SCANNER SEGURO   ·   RÁPIDO   ·   SEM RUÍDO",
-            new Rectangle(68, 668, 310, 20),
-            7.4F,
-            TextDim,
-            FontStyle.Bold,
-            "Consolas"));
-
-        _surface.Controls.Add(badge);
-        _surface.Controls.Add(title);
-        _surface.Controls.Add(accentTitle);
-        _surface.Controls.Add(description);
-        _surface.Controls.Add(analysisCard);
-        _surface.Controls.Add(privacy);
-        _surface.Controls.Add(consentPanel);
-        _surface.Controls.Add(scannerCard);
-
-        SetHeaderState("READY", Accent);
-    }
-
     private async void AcceptButton_Click(object? sender, EventArgs e)
     {
         if (_running || !_termsAccepted)
@@ -1078,260 +886,6 @@ internal sealed class AgentMainForm : Form
         _lastRun = result;
 
         ShowResultsView(result);
-    }
-
-    private void ShowProgressView()
-    {
-        _surface.Controls.Clear();
-        _surface.Mode = AnimatedSurfaceMode.Scanning;
-        _nav.Visible = false;
-        _stepStateLabels.Clear();
-
-        var badge = MakeBadge(L(
-            "SCAN EM ANDAMENTO   ·   EVIDÊNCIAS EM TEMPO REAL",
-            "ANÁLISIS EN CURSO   ·   EVIDENCIAS EN TIEMPO REAL",
-            "SCAN IN PROGRESS   ·   REAL-TIME EVIDENCE"));
-        badge.Location = new Point(48, 30);
-
-        _surface.Controls.Add(badge);
-        _surface.Controls.Add(MakeLabel(
-            L("Coleta técnica", "Recopilación técnica", "Technical collection"),
-            new Rectangle(48, 75, 680, 58),
-            35F,
-            TextPrimary,
-            FontStyle.Bold));
-        _surface.Controls.Add(MakeLabel(
-            L("em andamento.", "en curso.", "in progress."),
-            new Rectangle(48, 126, 680, 58),
-            35F,
-            Accent,
-            FontStyle.Bold));
-        _surface.Controls.Add(MakeLabel(
-            L(
-                "O Vorken está coletando e correlacionando evidências técnicas\ndo seu sistema. Mantenha esta janela aberta até a conclusão.",
-                "Vorken está recopilando y correlacionando evidencias técnicas\nde su sistema. Mantenga esta ventana abierta hasta finalizar.",
-                "Vorken is collecting and correlating technical evidence\nfrom your system. Keep this window open until completion."),
-            new Rectangle(50, 189, 760, 58),
-            11.4F,
-            TextSecondary));
-
-        var progressCard = MakeCard(new Rectangle(44, 262, 790, 104));
-        progressCard.Controls.Add(MakeSectionTitle(L("PROGRESSO DA ANÁLISE", "PROGRESO DEL ANÁLISIS", "ANALYSIS PROGRESS"), 20, 14));
-
-        _progressTrack.Bounds = new Rectangle(20, 48, 655, 18);
-        _progressTrack.BackColor = Color.FromArgb(9, 41, 48);
-        _progressTrack.Controls.Clear();
-        AttachRoundedRegion(_progressTrack, 9);
-
-        _progressFill.Bounds = new Rectangle(0, 0, 20, 18);
-        _progressFill.BackColor = Accent;
-        AttachRoundedRegion(_progressFill, 9);
-        _progressTrack.Controls.Add(_progressFill);
-
-        _progressPercentLabel.Text = "3%";
-        _progressPercentLabel.Bounds = new Rectangle(690, 37, 78, 38);
-        _progressPercentLabel.Font = new Font("Segoe UI", 18F, FontStyle.Bold);
-        _progressPercentLabel.ForeColor = Accent;
-        _progressPercentLabel.TextAlign = ContentAlignment.MiddleRight;
-        _progressPercentLabel.BackColor = Color.Transparent;
-
-        _progressEtaLabel.Text = L("Correlacionando evidências do sistema...", "Correlacionando evidencias del sistema...", "Correlating system evidence...");
-        _progressEtaLabel.Bounds = new Rectangle(20, 72, 700, 22);
-        _progressEtaLabel.Font = new Font("Segoe UI", 8.5F);
-        _progressEtaLabel.ForeColor = TextSecondary;
-        _progressEtaLabel.BackColor = Color.Transparent;
-
-        progressCard.Controls.Add(_progressTrack);
-        progressCard.Controls.Add(_progressPercentLabel);
-        progressCard.Controls.Add(_progressEtaLabel);
-        _surface.Controls.Add(progressCard);
-
-        var stagesCard = MakeCard(new Rectangle(44, 380, 400, 360));
-        stagesCard.Controls.Add(MakeSectionTitle(L("☷   ETAPAS DA ANÁLISE", "☷   ETAPAS DEL ANÁLISIS", "☷   ANALYSIS STAGES"), 18, 15));
-
-        string[] stages = AgentLocalization.Current switch
-        {
-            AgentLanguage.Spanish =>
-            [
-                "Sesión validada|Verificación de integridad de sesión y entorno.",
-                "Integridad del entorno|Análisis de procesos, controladores y hooks.",
-                "Historial de ejecución|Prefetch, BAM, eventos y registros.",
-                "Dispositivos USB|Dispositivos seriales e historial de conexión.",
-                "Descargas y origen|Archivos obtenidos, caché y navegador.",
-                "Procesos y módulos|Procesos activos y módulos cargados.",
-                "Correlación de evidencias|Cruce de datos y detección de patrones.",
-                "Preparando informe|Generación del informe técnico."
-            ],
-            AgentLanguage.English =>
-            [
-                "Session validated|Session and environment integrity check.",
-                "Environment integrity|Processes, drivers and hooks analysis.",
-                "Execution history|Prefetch, BAM, events and registry data.",
-                "USB devices|Serial devices and connection history.",
-                "Downloads and origin|Downloaded files, cache and browser data.",
-                "Processes and modules|Running processes and loaded modules.",
-                "Evidence correlation|Cross-checking data and detecting patterns.",
-                "Preparing report|Generating the technical report."
-            ],
-            _ =>
-            [
-                "Sessão validada|Verificação de integridade da sessão e ambiente.",
-                "Integridade do ambiente|Análise de processos, drivers e hooks.",
-                "Histórico de execução|Prefetch, BAM, eventos e registros.",
-                "Dispositivos USB|Dispositivos seriais e histórico de conexão.",
-                "Downloads e origem|Arquivos obtidos, cache e navegador.",
-                "Processos e módulos|Processos em execução, módulos carregados.",
-                "Correlação de evidências|Cruzamento de dados e detecção de padrões.",
-                "Preparando relatório|Geração do relatório técnico."
-            ]
-        };
-
-        for (int i = 0; i < stages.Length; i++)
-        {
-            string[] parts = stages[i].Split('|');
-            var state = AddStageRow(stagesCard, i, parts[0], parts[1], 18, 52 + (i * 41));
-            _stepStateLabels.Add(state);
-        }
-
-        var streamCard = MakeCard(new Rectangle(456, 380, 378, 360));
-        streamCard.Controls.Add(MakeSectionTitle(L("▤   FLUXO DE EVIDÊNCIAS (TEMPO REAL)", "▤   FLUJO DE EVIDENCIAS (EN VIVO)", "▤   EVIDENCE STREAM (LIVE)"), 16, 15));
-        var liveBadge = new Label
-        {
-            Text = L("● AO VIVO", "● EN VIVO", "● LIVE"),
-            Bounds = new Rectangle(286, 12, 76, 24),
-            TextAlign = ContentAlignment.MiddleCenter,
-            BackColor = Color.FromArgb(4, 45, 48),
-            ForeColor = Accent,
-            Font = new Font("Consolas", 7.3F, FontStyle.Bold)
-        };
-        AttachRoundedRegion(liveBadge, 7);
-        streamCard.Controls.Add(liveBadge);
-
-        _activityBox.Bounds = new Rectangle(14, 48, 350, 296);
-        _activityBox.Multiline = true;
-        _activityBox.ReadOnly = true;
-        _activityBox.ScrollBars = RichTextBoxScrollBars.Vertical;
-        _activityBox.WordWrap = false;
-        _activityBox.DetectUrls = false;
-        _activityBox.HideSelection = false;
-        _activityBox.BackColor = Color.FromArgb(5, 9, 12);
-        _activityBox.ForeColor = TextSecondary;
-        _activityBox.BorderStyle = BorderStyle.None;
-        _activityBox.Font = new Font("Consolas", 8.1F);
-        AttachRoundedRegion(_activityBox, 8);
-        _activityBox.Clear();
-        streamCard.Controls.Add(_activityBox);
-
-        _surface.Controls.Add(stagesCard);
-        _surface.Controls.Add(streamCard);
-
-        var scannerCard = MakeCard(new Rectangle(858, 32, 366, 708));
-        scannerCard.Controls.Add(MakeLabel(
-            L("SESSÃO SEGURA", "SESIÓN SEGURA", "SECURE SESSION"),
-            new Rectangle(22, 26, 180, 20),
-            8.3F,
-            Accent,
-            FontStyle.Bold,
-            "Consolas"));
-        scannerCard.Controls.Add(MakeLabel(
-            "Vorken Scanner",
-            new Rectangle(22, 58, 290, 38),
-            18F,
-            TextPrimary,
-            FontStyle.Bold));
-        scannerCard.Controls.Add(MakeLabel(
-            L("Análise técnica em andamento.", "Análisis técnico en curso.", "Technical analysis in progress."),
-            new Rectangle(22, 95, 300, 24),
-            10.8F,
-            TextPrimary));
-        scannerCard.Controls.Add(MakeLabel(
-            L(
-                "Coletando, analisando e correlacionando\nevidências para gerar um relatório seguro\ne confiável.",
-                "Recopilando, analizando y correlacionando\nevidencias para generar un informe seguro\ny confiable.",
-                "Collecting, analyzing and correlating\nevidence to generate a secure and\nreliable report."),
-            new Rectangle(22, 130, 310, 64),
-            9.4F,
-            TextSecondary));
-
-        var radar = new ScannerPulseControl
-        {
-            Location = new Point(22, 208),
-            Size = new Size(322, 250),
-            BackColor = Color.FromArgb(4, 17, 23),
-            Scanning = true,
-            Caption = L("ESCANEANDO SISTEMA", "ESCANEANDO EL SISTEMA", "SCANNING SYSTEM")
-        };
-        scannerCard.Controls.Add(radar);
-
-        _elapsedLabel.Text = "00 min 00 s";
-        _artifactCountLabel.Text = L("0 itens", "0 elementos", "0 items");
-        _deviceCountLabel.Text = L("0 dispositivos", "0 dispositivos", "0 devices");
-
-        scannerCard.Controls.Add(MakeStatBox("◷", L("TEMPO DECORRIDO", "TIEMPO TRANSCURRIDO", "ELAPSED TIME"), _elapsedLabel, 22, 474));
-        scannerCard.Controls.Add(MakeStatBox("▤", L("ARQUIVOS ANALISADOS", "ARCHIVOS ANALIZADOS", "FILES ANALYZED"), _artifactCountLabel, 188, 474));
-        scannerCard.Controls.Add(MakeStatBox("↕", L("DISPOSITIVOS REVISADOS", "DISPOSITIVOS REVISADOS", "DEVICES REVIEWED"), _deviceCountLabel, 22, 548));
-        scannerCard.Controls.Add(MakeStaticStatBox("◈", L("MODO DE ANÁLISE", "MODO DE ANÁLISIS", "ANALYSIS MODE"), "ON DEMAND", L("SOB DEMANDA", "BAJO DEMANDA", "ON DEMAND"), 188, 548));
-
-        var keepOpen = new BorderedPanel
-        {
-            Bounds = new Rectangle(22, 618, 322, 76),
-            BackColor = Color.FromArgb(30, 25, 8),
-            BorderColor = Color.FromArgb(129, 94, 23)
-        };
-        keepOpen.Controls.Add(MakeLabel("●", new Rectangle(15, 16, 22, 22), 12F, Warning, FontStyle.Bold));
-        keepOpen.Controls.Add(MakeLabel(
-            L("Mantenha esta janela aberta", "Mantenga esta ventana abierta", "Keep this window open"),
-            new Rectangle(44, 10, 250, 23),
-            8.7F,
-            Warning,
-            FontStyle.Bold));
-        keepOpen.Controls.Add(MakeLabel(
-            L(
-                "A análise continuará em segundo plano e o\nrelatório será preparado automaticamente.",
-                "El análisis continuará en segundo plano y el\ninforme se preparará automáticamente.",
-                "The analysis will continue in the background and\nthe report will be prepared automatically."),
-            new Rectangle(44, 34, 258, 42),
-            8.1F,
-            TextSecondary));
-        scannerCard.Controls.Add(keepOpen);
-
-        _surface.Controls.Add(scannerCard);
-
-        var footer = new BorderedPanel
-        {
-            Bounds = new Rectangle(44, 752, 1180, 46),
-            BackColor = Color.FromArgb(5, 18, 24),
-            BorderColor = Border,
-            CornerRadius = 10
-        };
-        footer.Controls.Add(MakeFooterItem("◆", L("SCANNER ATIVO", "ESCÁNER ACTIVO", "SCANNER ACTIVE"), L("Coleta e análise de evidências em tempo real.", "Recopilación y análisis de evidencias en vivo.", "Real-time evidence collection and analysis."), 12));
-        footer.Controls.Add(MakeFooterItem("▣", L("SESSÃO SEGURA", "SESIÓN SEGURA", "SECURE SESSION"), L("Dados protegidos", "Datos protegidos", "Protected data"), 415));
-        footer.Controls.Add(MakeFooterItem("▣", L("SEM IMPACTO", "SIN IMPACTO", "LOW IMPACT"), L("Uso otimizado de recursos", "Uso optimizado de recursos", "Optimized resource usage"), 705));
-
-        var cancel = new Button
-        {
-            Text = L("■  Cancelar análise", "■  Cancelar análisis", "■  Cancel analysis"),
-            Bounds = new Rectangle(1000, 8, 166, 30)
-        };
-        StyleGhostButton(cancel);
-        cancel.Click += (_, _) =>
-        {
-            MessageBox.Show(
-                this,
-                L(
-                    "Para preservar a integridade da coleta, feche a janela e confirme a interrupção caso realmente deseje cancelar.",
-                    "Para preservar la integridad de la recopilación, cierre la ventana y confirme la interrupción si realmente desea cancelar.",
-                    "To preserve collection integrity, close the window and confirm the interruption if you really want to cancel."),
-                "Vorken",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Information);
-        };
-        footer.Controls.Add(cancel);
-        _surface.Controls.Add(footer);
-
-        SetHeaderState(L("ANALISANDO", "ANALIZANDO", "ANALYZING"), Accent);
-        UpdateStageStates(0);
-        UpdateProgressUi();
     }
 
     private void ScanTimer_Tick(object? sender, EventArgs e)
@@ -1392,6 +946,7 @@ internal sealed class AgentMainForm : Form
             _activityBox.ScrollToCaret();
         }
 
+        UpdateGuidedCheck(line);
         ParseArtifactCount(clean);
         AdvanceScanForMessage(clean);
     }
@@ -1406,34 +961,34 @@ internal sealed class AgentMainForm : Form
 
         int timestampEnd = Math.Min(11, line.Length);
 
-        _activityBox.SelectionColor = TextDim;
+        _activityBox.SelectionColor = Color.FromArgb(159, 191, 232);
         _activityBox.AppendText(line[..timestampEnd]);
 
         if (tagStart >= timestampEnd && tagEnd > tagStart)
         {
             if (tagStart > timestampEnd)
             {
-                _activityBox.SelectionColor = TextSecondary;
+                _activityBox.SelectionColor = Color.FromArgb(180, 205, 238);
                 _activityBox.AppendText(line[timestampEnd..tagStart]);
             }
 
             string tag = line[tagStart..(tagEnd + 1)];
             _activityBox.SelectionColor = ActivityTagColor(tag);
-            _activityBox.AppendText(tag);
+            _activityBox.AppendText((tag.Contains("OK") ? "✓   " : tag.Contains("ERR") ? "×   " : tag.Contains("WARN") ? "!   " : "i   ") + tag);
 
             if (tagEnd + 1 < line.Length)
             {
-                _activityBox.SelectionColor = TextSecondary;
+                _activityBox.SelectionColor = Color.FromArgb(180, 205, 238);
                 _activityBox.AppendText(line[(tagEnd + 1)..]);
             }
         }
         else if (timestampEnd < line.Length)
         {
-            _activityBox.SelectionColor = TextSecondary;
+            _activityBox.SelectionColor = Color.FromArgb(180, 205, 238);
             _activityBox.AppendText(line[timestampEnd..]);
         }
 
-        _activityBox.SelectionColor = TextSecondary;
+        _activityBox.SelectionColor = Color.FromArgb(180, 205, 238);
         _activityBox.AppendText(Environment.NewLine);
     }
 
@@ -1602,7 +1157,7 @@ internal sealed class AgentMainForm : Form
         }
     }
 
-    private void ShowResultsView(AgentRunResult result)
+    private void ShowDetailedResultsView(AgentRunResult result)
     {
         if (InvokeRequired)
         {
@@ -1687,14 +1242,14 @@ internal sealed class AgentMainForm : Form
 
         _surface.Controls.Add(MakeLabel(
             resultHeadline,
-            new Rectangle(44, 70, 650, 58),
-            33F,
+            new Rectangle(44, 70, 720, 58),
+            24F,
             TextPrimary,
             FontStyle.Bold));
         _surface.Controls.Add(MakeLabel(
             resultSubheadline,
-            new Rectangle(44, 119, 650, 56),
-            33F,
+            new Rectangle(44, 119, 720, 44),
+            14F,
             success ? resultAccent : Danger,
             FontStyle.Bold));
         _surface.Controls.Add(MakeLabel(
@@ -1715,7 +1270,7 @@ internal sealed class AgentMainForm : Form
             10.4F,
             TextSecondary));
 
-        var statusCard = MakeCard(new Rectangle(674, 38, 552, 182));
+        var statusCard = MakeCard(new Rectangle(800, 38, 426, 182));
         statusCard.Controls.Add(MakeLabel(
             L("STATUS DA ANÁLISE", "ESTADO DEL ANÁLISIS", "ANALYSIS STATUS"),
             new Rectangle(22, 18, 210, 22),
@@ -1744,54 +1299,6 @@ internal sealed class AgentMainForm : Form
             8.8F,
             TextSecondary));
 
-        var decision = new BorderedPanel
-        {
-            Bounds = new Rectangle(333, 18, 197, 140),
-            BackColor = Color.FromArgb(24, 18, 8),
-            BorderColor = filterError
-                ? Color.FromArgb(150, 96, 20)
-                : hasCritical
-                    ? Color.FromArgb(125, 35, 48)
-                    : hasReview
-                        ? Color.FromArgb(150, 96, 20)
-                        : autoApproved
-                            ? Accent
-                            : Border
-        };
-        decision.Controls.Add(MakeLabel(
-            !success
-                ? "STATUS:\nREPETIR\nANÁLISE"
-                : filterError
-                    ? "ERRO NOS\nFILTROS\nREVISAR"
-                    : hasCritical
-                        ? "POSSÍVEL\nTRAPACEIRO\nDETECTADO"
-                        : hasReview
-                            ? "ATIVIDADES\nINCOMUNS\nLOCALIZADAS"
-                            : autoApproved
-                                ? "STATUS:\nVERIFICADO\nAUTOMÁTICO"
-                                : "STATUS:\nANÁLISE\nLIMPA",
-            new Rectangle(18, 18, 165, 66),
-            10.1F,
-            filterError ? Warning : hasCritical ? Danger : hasReview ? Warning : autoApproved ? Accent : TextPrimary,
-            FontStyle.Bold));
-        decision.Controls.Add(MakeLabel(
-            !success
-                ? "O envio não foi concluído."
-                : filterError
-                    ? "Classificação incompleta.\nSem liberação automática."
-                    : hasCritical
-                        ? "Aguarde análise\nadministrativa."
-                        : hasReview
-                            ? "Revisão administrativa\nnecessária."
-                            : autoApproved
-                                ? "Jogador liberado\nautomaticamente."
-                                : detailsReleased
-                                    ? "Detalhes liberados\npela administração."
-                                    : "Nenhum item suspeito.",
-            new Rectangle(18, 96, 165, 38),
-            8.3F,
-            TextSecondary));
-        statusCard.Controls.Add(decision);
         _surface.Controls.Add(statusCard);
 
         if (detailsReleased)
@@ -1817,17 +1324,19 @@ internal sealed class AgentMainForm : Form
         else
         {
             var lockedCard = MakeCard(new Rectangle(28, 258, 1198, 292));
-            lockedCard.BorderColor = filterError ? Warning : hasCritical ? Danger : hasReview ? Warning : Accent;
+            lockedCard.BorderColor = !success ? Danger : filterError ? Warning : hasCritical ? Danger : hasReview ? Warning : Accent;
 
             lockedCard.Controls.Add(MakeLabel(
-                filterError ? "!" : hasCritical ? "⚠" : hasReview ? "!" : "✓",
+                !success ? "!" : filterError ? "!" : hasCritical ? "⚠" : hasReview ? "!" : "✓",
                 new Rectangle(30, 44, 80, 80),
                 36F,
-                filterError ? Warning : hasCritical ? Danger : hasReview ? Warning : Accent,
+                !success ? Danger : filterError ? Warning : hasCritical ? Danger : hasReview ? Warning : Accent,
                 FontStyle.Bold));
 
             lockedCard.Controls.Add(MakeLabel(
-                filterError
+                !success
+                    ? "Análise interrompida"
+                    : filterError
                     ? "Falha parcial nos filtros"
                     : hasCritical
                         ? "Possível trapaceiro detectado"
@@ -1842,7 +1351,9 @@ internal sealed class AgentMainForm : Form
                 FontStyle.Bold));
 
             lockedCard.Controls.Add(MakeLabel(
-                filterError
+                !success
+                    ? "A verificação não foi concluída. Consulte os registros e tente novamente com seu consentimento."
+                    : filterError
                     ? "Os filtros não terminaram corretamente. Esta análise não é considerada limpa e exige revisão administrativa."
                     : hasCritical
                         ? $"Foi registrado {criticalCount} item crítico em vermelho. " +
@@ -2015,7 +1526,7 @@ internal sealed class AgentMainForm : Form
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Color.FromArgb(8, 18, 24),
                 ForeColor = TextPrimary,
-                Font = new Font("Segoe UI", 8.6F),
+                Font = new Font("Segoe UI", 10.5F),
                 Cursor = Cursors.Hand
             };
             row.FlatAppearance.BorderColor = color;
@@ -2200,51 +1711,8 @@ internal sealed class AgentMainForm : Form
 
     private void ShowAnalysisSummaryView()
     {
-        if (_lastRun is null)
-        {
-            ShowConsentView();
-            return;
-        }
-
-        _surface.Controls.Clear();
-        _surface.Mode = AnimatedSurfaceMode.Complete;
-        _nav.Visible = true;
-        SetActiveNav(1);
-
-        var badge = MakeBadge("ANÁLISE   ·   ATIVIDADE TÉCNICA");
-        badge.Location = new Point(44, 34);
-        _surface.Controls.Add(badge);
-        _surface.Controls.Add(MakeLabel(
-            "Atividade da coleta",
-            new Rectangle(44, 78, 800, 56),
-            31F,
-            TextPrimary,
-            FontStyle.Bold));
-        _surface.Controls.Add(MakeLabel(
-            "Registro técnico da sessão concluída.",
-            new Rectangle(47, 135, 600, 28),
-            10.5F,
-            TextSecondary));
-
-        var logCard = MakeCard(new Rectangle(44, 190, 1180, 570));
-        logCard.Controls.Add(MakeSectionTitle("FLUXO DE EVIDÊNCIAS", 20, 18));
-
-        var box = new TextBox
-        {
-            Bounds = new Rectangle(20, 55, 1140, 495),
-            Multiline = true,
-            ReadOnly = true,
-            ScrollBars = ScrollBars.Vertical,
-            BackColor = Color.FromArgb(3, 12, 18),
-            ForeColor = Color.FromArgb(159, 183, 189),
-            BorderStyle = BorderStyle.None,
-            Font = new Font("Consolas", 9F),
-            Text = string.Join(Environment.NewLine, _activityLines)
-        };
-        logCard.Controls.Add(box);
-        _surface.Controls.Add(logCard);
-
-        SetHeaderState("CONCLUÍDO", Accent);
+        if (_lastRun is null) { ShowConsentView(); SetActiveNav(1); return; }
+        ShowResultsView(_lastRun); SetActiveNav(1);
     }
 
     private void ShowHistoryView()
@@ -2281,7 +1749,7 @@ internal sealed class AgentMainForm : Form
                 new Rectangle(24, 58, 760, 120),
                 11F,
                 TextPrimary));
-            var open = new Button
+            var open = new GuidedActionButton
             {
                 Text = "Abrir relatório  →",
                 Bounds = new Rectangle(920, 78, 210, 48)
@@ -2330,8 +1798,8 @@ internal sealed class AgentMainForm : Form
         var notice = new BorderedPanel
         {
             Bounds = new Rectangle(44, 178, 1180, 58),
-            BackColor = Color.FromArgb(15, 24, 16),
-            BorderColor = Color.FromArgb(71, 97, 45),
+            BackColor = Color.FromArgb(12, 29, 47),
+            BorderColor = Color.FromArgb(40, 69, 105),
             CornerRadius = 10
         };
 
@@ -2350,20 +1818,9 @@ internal sealed class AgentMainForm : Form
 
         _surface.Controls.Add(notice);
 
-        var toolsPanel = new FlowLayoutPanel
-        {
-            Bounds = new Rectangle(44, 252, 1180, 550),
-            AutoScroll = true,
-            BackColor = Color.Transparent,
-            FlowDirection = FlowDirection.LeftToRight,
-            WrapContents = true,
-            Padding = new Padding(0, 0, 8, 10)
-        };
-
-        foreach (ManualToolDefinition tool in ManualTools)
-            toolsPanel.Controls.Add(MakeManualToolCard(tool));
-
-        _surface.Controls.Add(toolsPanel);
+        var toolsHost = new GuidedScrollHost { Bounds = new Rectangle(44, 252, 1180, 550), Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right };
+        foreach (ManualToolDefinition tool in ManualTools) toolsHost.Content.Controls.Add(MakeManualToolCard(tool));
+        _surface.Controls.Add(toolsHost);
         SetHeaderState("MANUAL", Accent);
     }
 
@@ -2373,7 +1830,7 @@ internal sealed class AgentMainForm : Form
         {
             Size = new Size(558, 118),
             Margin = new Padding(0, 0, 14, 14),
-            BackColor = Color.FromArgb(6, 20, 28),
+            BackColor = Color.FromArgb(16, 29, 49),
             BorderColor = Border
         };
 
@@ -2407,7 +1864,7 @@ internal sealed class AgentMainForm : Form
             "Consolas");
         status.TextAlign = ContentAlignment.MiddleRight;
 
-        var downloadButton = new Button
+        var downloadButton = new GuidedActionButton
         {
             Text = "⇩  Baixar e executar",
             Bounds = new Rectangle(380, 51, 158, 42)
@@ -2659,9 +2116,9 @@ internal sealed class AgentMainForm : Form
         setup.Controls.Add(MakeSectionTitle(L("INICIAR UMA SESSÃO", "INICIAR UNA SESIÓN", "START A SESSION"), 22, 18));
         setup.Controls.Add(MakeLabel(L("Administrador disponível", "Administrador disponible", "Available administrator"), new Rectangle(24, 64, 360, 24), 9.5F, TextSecondary, FontStyle.Bold));
 
-        var admins = new ComboBox
+        var admins = new GuidedComboBox
         {
-            Bounds = new Rectangle(24, 92, 470, 40),
+            Bounds = new Rectangle(24, 92, 470, 38),
             DropDownStyle = ComboBoxStyle.DropDownList,
             BackColor = SurfaceAlt,
             ForeColor = TextPrimary,
@@ -2670,7 +2127,7 @@ internal sealed class AgentMainForm : Form
         };
         setup.Controls.Add(admins);
 
-        var refresh = new Button { Text = L("Atualizar", "Actualizar", "Refresh"), Bounds = new Rectangle(512, 91, 120, 42) };
+        var refresh = new GuidedActionButton { Text = L("Atualizar", "Actualizar", "Refresh"), Bounds = new Rectangle(512, 91, 120, 42) };
         StyleGhostButton(refresh);
         setup.Controls.Add(refresh);
 
@@ -2710,9 +2167,9 @@ internal sealed class AgentMainForm : Form
         };
         setup.Controls.Add(consent);
 
-        var start = new Button { Text = L("SOLICITAR CONEXÃO", "SOLICITAR CONEXIÓN", "REQUEST CONNECTION"), Bounds = new Rectangle(24, 385, 250, 48) };
+        var start = new GuidedActionButton { Text = L("SOLICITAR CONEXÃO", "SOLICITAR CONEXIÓN", "REQUEST CONNECTION"), Bounds = new Rectangle(24, 385, 250, 48) };
         StylePrimaryButton(start);
-        var stop = new Button { Text = L("PARAR AGORA", "DETENER AHORA", "STOP NOW"), Bounds = new Rectangle(290, 385, 190, 48), Enabled = _remoteSupport?.IsActive == true };
+        var stop = new GuidedActionButton { Text = L("PARAR AGORA", "DETENER AHORA", "STOP NOW"), Bounds = new Rectangle(290, 385, 190, 48), Enabled = _remoteSupport?.IsActive == true };
         StyleGhostButton(stop);
         stop.ForeColor = Danger;
         setup.Controls.Add(start);
@@ -2722,7 +2179,7 @@ internal sealed class AgentMainForm : Form
             _remoteSupport?.IsActive == true
                 ? L("Sessão ativa.", "Sesión activa.", "Session active.")
                 : L("Nenhuma transmissão ativa.", "No hay transmisión activa.", "No active screen sharing."),
-            new Rectangle(24, 445, 690, 25), 9.2F,
+            new Rectangle(24, 438, 714, 46), 10F,
             _remoteSupport?.IsActive == true ? Warning : TextDim, FontStyle.Bold);
         setup.Controls.Add(_remoteStatusLabel);
         _surface.Controls.Add(setup);
@@ -2825,7 +2282,7 @@ internal sealed class AgentMainForm : Form
         bool sessionOpen = active || _remoteSupport is not null;
         _headerStatus.Text = sessionOpen ? "■  PARAR SUPORTE" : "●  READY";
         _headerStatus.ForeColor = sessionOpen ? Color.White : Accent;
-        _headerStatus.BackColor = sessionOpen ? Danger : Color.FromArgb(6, 31, 36);
+        _headerStatus.BackColor = sessionOpen ? Danger : Color.FromArgb(20, 40, 71);
         _headerStatus.Cursor = sessionOpen ? Cursors.Hand : Cursors.Default;
     }
 
@@ -2865,7 +2322,7 @@ internal sealed class AgentMainForm : Form
             10.2F,
             TextSecondary));
 
-        var privacy = new Button
+        var privacy = new GuidedActionButton
         {
             Text = L("Política de Privacidade ↗", "Política de Privacidad ↗", "Privacy Policy ↗"),
             Bounds = new Rectangle(24, 252, 220, 44)
@@ -2874,7 +2331,7 @@ internal sealed class AgentMainForm : Form
         privacy.Click += (_, _) => OpenUrl(PrivacyUrl);
         card.Controls.Add(privacy);
 
-        var terms = new Button
+        var terms = new GuidedActionButton
         {
             Text = L("Rever termos no app", "Revisar términos", "Review terms"),
             Bounds = new Rectangle(260, 252, 190, 44)
@@ -2883,7 +2340,7 @@ internal sealed class AgentMainForm : Form
         terms.Click += (_, _) => ShowTermsGate();
         card.Controls.Add(terms);
 
-        var language = new Button
+        var language = new GuidedActionButton
         {
             Text = L("🌐  Alterar idioma", "🌐  Cambiar idioma", "🌐  Change language"),
             Bounds = new Rectangle(466, 252, 190, 44)
@@ -2892,7 +2349,7 @@ internal sealed class AgentMainForm : Form
         language.Click += (_, _) => ShowLanguageGate();
         card.Controls.Add(language);
 
-        var sound = new Button
+        var sound = new GuidedActionButton
         {
             Text = _soundEnabled
                 ? L("🔊  Sons da interface: ligados", "🔊  Sonidos: activados", "🔊  Interface sounds: on")
@@ -2993,7 +2450,7 @@ internal sealed class AgentMainForm : Form
         return new VorkenCard
         {
             Bounds = bounds,
-            BackColor = Color.FromArgb(6, 20, 28),
+            BackColor = Color.FromArgb(16, 29, 49),
             BorderColor = Border
         };
     }
@@ -3005,7 +2462,7 @@ internal sealed class AgentMainForm : Form
             Text = "●  " + text,
             AutoSize = true,
             Padding = new Padding(12, 6, 12, 6),
-            BackColor = Color.FromArgb(6, 35, 36),
+            BackColor = Color.FromArgb(20, 45, 81),
             ForeColor = Accent,
             Font = new Font("Consolas", 8.2F, FontStyle.Bold)
         };
@@ -3135,7 +2592,7 @@ internal sealed class AgentMainForm : Form
         var panel = new BorderedPanel
         {
             Bounds = new Rectangle(x, y, width, 92),
-            BackColor = Color.FromArgb(5, 18, 24),
+            BackColor = Color.FromArgb(16, 29, 49),
             BorderColor = Border
         };
 
@@ -3166,7 +2623,7 @@ internal sealed class AgentMainForm : Form
         var panel = new BorderedPanel
         {
             Bounds = new Rectangle(x, y, 154, 62),
-            BackColor = Color.FromArgb(5, 18, 24),
+            BackColor = Color.FromArgb(16, 29, 49),
             BorderColor = Border
         };
         panel.Controls.Add(MakeLabel(icon, new Rectangle(12, 13, 25, 26), 13F, Accent, FontStyle.Bold));
@@ -3190,7 +2647,7 @@ internal sealed class AgentMainForm : Form
         var panel = new BorderedPanel
         {
             Bounds = new Rectangle(x, y, 154, 62),
-            BackColor = Color.FromArgb(5, 18, 24),
+            BackColor = Color.FromArgb(16, 29, 49),
             BorderColor = Border
         };
         panel.Controls.Add(MakeLabel(icon, new Rectangle(12, 13, 25, 26), 13F, Accent, FontStyle.Bold));
@@ -3217,27 +2674,28 @@ internal sealed class AgentMainForm : Form
     {
         _headerStatus.Text = "●  " + state;
         _headerStatus.ForeColor = color;
-        _headerStatus.BackColor = Color.FromArgb(6, 31, 36);
+        _headerStatus.BackColor = Color.FromArgb(20, 40, 71);
     }
 
     private void StylePrimaryButton(Button button)
     {
+        if (button is GuidedActionButton guided) guided.Primary = true;
         button.FlatStyle = FlatStyle.Flat;
         button.FlatAppearance.BorderSize = 1;
-        button.FlatAppearance.BorderColor = Color.FromArgb(98, 255, 224);
-        button.FlatAppearance.MouseDownBackColor = Color.FromArgb(29, 205, 174);
+        button.FlatAppearance.BorderColor = Color.FromArgb(79, 143, 255);
+        button.FlatAppearance.MouseDownBackColor = Color.FromArgb(29, 78, 216);
         button.BackColor = Accent;
-        button.ForeColor = Color.FromArgb(1, 26, 29);
+        button.ForeColor = Color.FromArgb(255, 255, 255);
         button.Font = new Font("Segoe UI", 12F, FontStyle.Bold);
         button.Cursor = Cursors.Hand;
         button.TabStop = true;
-        AttachRoundedRegion(button, 14);
+        if (button is not GuidedActionButton) AttachRoundedRegion(button, 14);
         EnhanceButton(button);
 
         button.MouseEnter += (_, _) =>
         {
             if (button.Enabled)
-                button.BackColor = Color.FromArgb(108, 247, 202);
+                button.BackColor = Color.FromArgb(59, 130, 246);
         };
 
         button.MouseLeave += (_, _) =>
@@ -3249,15 +2707,16 @@ internal sealed class AgentMainForm : Form
 
     private void StyleGhostButton(Button button)
     {
+        if (button is GuidedActionButton guided) guided.Primary = false;
         button.FlatStyle = FlatStyle.Flat;
         button.FlatAppearance.BorderColor = BorderBright;
         button.FlatAppearance.BorderSize = 1;
-        button.BackColor = Color.FromArgb(5, 17, 23);
+        button.BackColor = Color.FromArgb(16, 29, 49);
         button.ForeColor = TextPrimary;
-        button.Font = new Font("Segoe UI", 8.2F, FontStyle.Bold);
+        button.Font = new Font("Segoe UI", 10F, FontStyle.Bold);
         button.Cursor = Cursors.Hand;
-        button.FlatAppearance.MouseDownBackColor = Color.FromArgb(10, 53, 60);
-        AttachRoundedRegion(button, 13);
+        button.FlatAppearance.MouseDownBackColor = Color.FromArgb(25, 55, 100);
+        if (button is not GuidedActionButton) AttachRoundedRegion(button, 13);
         EnhanceButton(button);
 
         Color normalBack = button.BackColor;
@@ -3265,7 +2724,7 @@ internal sealed class AgentMainForm : Form
 
         button.MouseEnter += (_, _) =>
         {
-            button.BackColor = Color.FromArgb(8, 35, 42);
+            button.BackColor = Color.FromArgb(25, 49, 84);
             button.ForeColor = Accent;
             button.FlatAppearance.BorderColor = AccentSoft;
         };
@@ -3302,39 +2761,21 @@ internal sealed class AgentMainForm : Form
         };
     }
 
-    private void PlayUiHover()
+    private void WireUiSounds(Control control)
     {
-        if (!_soundEnabled)
-            return;
-
-        try
-        {
-            PlaySound(
-                "MenuPopup",
-                IntPtr.Zero,
-                SndAlias | SndAsync | SndNodefault);
-        }
-        catch
-        {
-        }
+        if (control is Button button) EnhanceButton(button);
+        control.ControlAdded -= OnSoundControlAdded;
+        control.ControlAdded += OnSoundControlAdded;
+        foreach (Control child in control.Controls) WireUiSounds(child);
     }
 
-    private void PlayUiClick()
+    private void OnSoundControlAdded(object? sender, ControlEventArgs e)
     {
-        if (!_soundEnabled)
-            return;
-
-        try
-        {
-            PlaySound(
-                "MenuCommand",
-                IntPtr.Zero,
-                SndAlias | SndAsync | SndNodefault);
-        }
-        catch
-        {
-        }
+        if (e.Control is not null) WireUiSounds(e.Control);
     }
+
+    private void PlayUiHover() { if (_soundEnabled) _uiAudio.Hover(); }
+    private void PlayUiClick() { if (_soundEnabled) _uiAudio.Click(); }
 
     private static string BuildFindingRowText(AgentFindingSnapshot finding)
     {
@@ -3465,11 +2906,7 @@ internal sealed class AgentMainForm : Form
     [DllImport("user32.dll")]
     private static extern IntPtr SendMessage(IntPtr hWnd, int msg, int wParam, int lParam);
 
-    [DllImport("winmm.dll", CharSet = CharSet.Unicode)]
-    private static extern bool PlaySound(
-        string? pszSound,
-        IntPtr hmod,
-        uint fdwSound);
+
 }
 
 internal sealed record ManualToolDefinition(
@@ -3517,14 +2954,14 @@ internal static class VorkenGeometry
 
 internal sealed class BorderFrame : Panel
 {
-    internal Color BorderColor { get; set; } = Color.FromArgb(24, 117, 141);
+    internal Color BorderColor { get; set; } = Color.FromArgb(55, 88, 135);
     internal int CornerRadius { get; set; } = 18;
 
     internal BorderFrame()
     {
         DoubleBuffered = true;
         ResizeRedraw = true;
-        Padding = new Padding(1);
+        Padding = new Padding(3, 3, 3, 3);
     }
 
     protected override void OnResize(EventArgs eventargs)
@@ -3544,10 +2981,10 @@ internal sealed class BorderFrame : Panel
 
         using GraphicsPath path =
             VorkenGeometry.CreateRoundedRectangle(
-                new Rectangle(0, 0, Width - 1, Height - 1),
+                new Rectangle(1, 1, Width - 3, Height - 3),
                 CornerRadius);
 
-        using var pen = new Pen(BorderColor, 1);
+        using var pen = new Pen(BorderColor, 1.5F);
         e.Graphics.DrawPath(pen, path);
     }
 
@@ -3569,7 +3006,7 @@ internal sealed class BorderFrame : Panel
 
 internal class BorderedPanel : Panel
 {
-    internal Color BorderColor { get; set; } = Color.FromArgb(21, 61, 76);
+    internal Color BorderColor { get; set; } = Color.FromArgb(35, 53, 78);
     internal int CornerRadius { get; set; } = 14;
 
     internal BorderedPanel()
@@ -3626,19 +3063,13 @@ internal sealed class VorkenCard : BorderedPanel
         Cursor = Cursors.Default;
     }
 
-    protected override void OnMouseEnter(EventArgs e)
+    protected override void OnPaintBackground(PaintEventArgs e)
     {
-        base.OnMouseEnter(e);
-        BorderColor = Color.FromArgb(31, 103, 119);
-        Invalidate();
+        if (Width < 2 || Height < 2) return;
+        using var background = new LinearGradientBrush(ClientRectangle, Color.FromArgb(13, 31, 49), Color.FromArgb(7, 19, 32), 24F);
+        e.Graphics.FillRectangle(background, ClientRectangle);
     }
 
-    protected override void OnMouseLeave(EventArgs e)
-    {
-        base.OnMouseLeave(e);
-        BorderColor = Color.FromArgb(21, 61, 76);
-        Invalidate();
-    }
 }
 
 internal sealed class AnimatedSurface : Panel
@@ -3650,7 +3081,7 @@ internal sealed class AnimatedSurface : Panel
     {
         DoubleBuffered = true;
         ResizeRedraw = true;
-        BackColor = Color.FromArgb(4, 10, 15);
+        BackColor = Color.FromArgb(11, 17, 27);
     }
 
     protected override void OnPaintBackground(PaintEventArgs e)
@@ -3660,65 +3091,14 @@ internal sealed class AnimatedSurface : Panel
 
         using (var background = new LinearGradientBrush(
             ClientRectangle,
-            Color.FromArgb(4, 10, 15),
-            Color.FromArgb(4, 17, 24),
+            Color.FromArgb(11, 17, 27),
+            Color.FromArgb(16, 28, 47),
             LinearGradientMode.Vertical))
         {
             g.FillRectangle(background, ClientRectangle);
         }
 
-        using (var gridPen = new Pen(Color.FromArgb(10, 43, 239, 201), 1))
-        {
-            const int spacing = 32;
 
-            for (int x = 0; x < Width; x += spacing)
-                g.DrawLine(gridPen, x, 0, x, Height);
-
-            for (int y = 0; y < Height; y += spacing)
-                g.DrawLine(gridPen, 0, y, Width, y);
-        }
-
-        float glowX =
-            Width * 0.75f +
-            (float)Math.Sin(Motion * 0.45f) * 28f;
-
-        float glowY =
-            Height * 0.28f +
-            (float)Math.Cos(Motion * 0.32f) * 20f;
-
-        int glowR = Mode == AnimatedSurfaceMode.Error ? 255 : 43;
-        int glowG = Mode == AnimatedSurfaceMode.Error ? 72 : 239;
-        int glowB = Mode == AnimatedSurfaceMode.Error ? 88 : 201;
-
-        for (int layer = 8; layer >= 1; layer--)
-        {
-            int size = 92 + (layer * 48);
-            int alpha = Math.Max(2, 18 - (layer * 2));
-
-            using var glowBrush =
-                new SolidBrush(Color.FromArgb(alpha, glowR, glowG, glowB));
-
-            g.FillEllipse(
-                glowBrush,
-                glowX - (size / 2f),
-                glowY - (size / 2f),
-                size,
-                size);
-        }
-
-        if (Mode == AnimatedSurfaceMode.Scanning)
-        {
-            float normalized =
-                (float)((Math.Sin(Motion * 1.05f) + 1d) / 2d);
-
-            int y =
-                (int)(100 + normalized * Math.Max(100, Height - 190));
-
-            using var scanPen =
-                new Pen(Color.FromArgb(80, 43, 239, 201), 1);
-
-            g.DrawLine(scanPen, 24, y, Width - 24, y);
-        }
     }
 }
 
@@ -3831,7 +3211,7 @@ internal sealed class ScannerPulseControl : Control
             g.FillEllipse(centerBrush, dx - 3, dy - 3, 6, 6);
         }
 
-        using var textBrush = new SolidBrush(Color.FromArgb(43, 239, 201));
+        using var textBrush = new SolidBrush(Color.FromArgb(37, 99, 235));
         using var font = new Font("Consolas", 7.4F, FontStyle.Bold);
         g.DrawString(Caption, font, textBrush, 8, Height - 25);
 

@@ -1,4 +1,4 @@
-import express from "express";
+﻿import express from "express";
 import compression from "compression";
 import cookieParser from "cookie-parser";
 import crypto from "node:crypto";
@@ -19,6 +19,7 @@ import {
   isArtifactProtectedFromLearning,
 } from "./detectionPolicyV4.js";
 import { initRemoteSupportDb, installRemoteSupport } from "./remoteSupport.js";
+import { initFleetDb, installFleet, clientReportVisibility } from "./serverFleet.js";
 
 const { Pool } = pg;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -8786,12 +8787,17 @@ app.post("/api/admin/analyses", requireAdmin, async (req, res) => {
     return res.status(400).json({ error: "invalid_label", message: "Informe um nome para a análise." });
   }
 
+  const serverId = req.body?.serverId == null || req.body.serverId === '' ? null : Number(req.body.serverId);
+  if (serverId !== null && (!Number.isSafeInteger(serverId) || serverId <= 0))
+    return res.status(400).json({message: "Servidor inválido."});
+  if (serverId !== null && !(await pool.query('SELECT id FROM fleet_servers WHERE id=$1', [serverId])).rows.length)
+    return res.status(400).json({message: "Servidor não encontrado."});
   const token = analysisToken();
   const result = await pool.query(
-    `INSERT INTO analyses(public_token, label, expires_at)
-     VALUES ($1,$2,NOW() + ($3 || ' hours')::interval)
+    `INSERT INTO analyses(public_token, label, expires_at, fleet_server_id)
+     VALUES ($1,$2,NOW() + ($3 || ' hours')::interval,$4)
      RETURNING *`,
-    [token, label, String(ttlHours)]
+    [token, label, String(ttlHours), serverId]
   );
 
   const analysis = result.rows[0];
@@ -9240,6 +9246,7 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
        processing_stage,
        processing_message,
        client_report_released,
+       fleet_server_id,
        external_source,
        external_player_id,
        external_discord_user_id,
@@ -9355,6 +9362,9 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
     publicAgentProcessingMessage(
       internalDetailStage,
       analysis.status);
+
+  const visibility = await clientReportVisibility(pool, analysis);
+  analysis.client_report_automatic = visibility.automatic;
 
   const analysisInternal = {
     filter_status: "local_filters",
@@ -10513,8 +10523,7 @@ app.get("/api/agent/:token/result", async (req, res) => {
       [analysis.id]
     );
 
-    const detailsReleased =
-      analysis.client_report_released === true;
+    const {released: detailsReleased} = await clientReportVisibility(pool, analysis);
 
     const allFindings =
       findingsResult.rows.map((item) => ({
@@ -10747,6 +10756,8 @@ const remoteSupport = installRemoteSupport(app, {
   requireSiteAdmin: requireAdmin,
 });
 
+installFleet(app, { pool, requireAdmin });
+
 app.get("/admin", (_req, res) => {
   res.sendFile(path.join(__dirname, "public", "admin.html"));
 });
@@ -10770,6 +10781,7 @@ app.get("*", (_req, res) => {
 initDb()
   .then(async () => {
     await initRemoteSupportDb(pool);
+    await initFleetDb(pool);
     await disableLearnedArtifactsNowInCatalog();
     await backfillPreviouslyApprovedAnalyses();
 

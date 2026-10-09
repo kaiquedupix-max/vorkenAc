@@ -11,14 +11,14 @@ namespace Vorken.RemoteAdmin;
 
 internal sealed class RemoteAdminForm : Form
 {
-    private static readonly Color Background = Color.FromArgb(4, 10, 15);
-    private static readonly Color Surface = Color.FromArgb(7, 22, 29);
-    private static readonly Color Accent = Color.FromArgb(43, 239, 201);
+    private static readonly Color Background = Color.FromArgb(11, 17, 27);
+    private static readonly Color Surface = Color.FromArgb(16, 27, 43);
+    private static readonly Color Accent = Color.FromArgb(37, 99, 235);
     private static readonly Color TextPrimary = Color.FromArgb(240, 247, 248);
     private static readonly Color TextSecondary = Color.FromArgb(160, 183, 191);
     private static readonly Color Danger = Color.FromArgb(255, 72, 88);
-    private static readonly Color Border = Color.FromArgb(21, 61, 76);
-    private static readonly Color BorderBright = Color.FromArgb(24, 117, 141);
+    private static readonly Color Border = Color.FromArgb(35, 53, 78);
+    private static readonly Color BorderBright = Color.FromArgb(55, 88, 135);
 
     private readonly AdminSurface _content = new() { Dock = DockStyle.Fill };
     private readonly Label _shellStatus = new();
@@ -71,7 +71,7 @@ internal sealed class RemoteAdminForm : Form
     private void BuildShell()
     {
         var frame = new AdminFrame { Dock = DockStyle.Fill, BackColor = Background, BorderColor = BorderBright };
-        var header = new Panel { Dock = DockStyle.Top, Height = 88, BackColor = Color.FromArgb(5, 15, 22) };
+        var header = new Panel { Dock = DockStyle.Top, Height = 88, BackColor = Color.FromArgb(12, 21, 35) };
         header.MouseDown += HeaderMouseDown;
 
         var mark = new PictureBox
@@ -89,7 +89,7 @@ internal sealed class RemoteAdminForm : Form
 
         var section = LabelAt("◉   CENTRAL DE SUPORTE", 330, 27, 310, 36, 9F, TextSecondary, FontStyle.Bold);
         section.TextAlign = ContentAlignment.MiddleCenter;
-        section.BackColor = Color.FromArgb(6, 25, 32);
+        section.BackColor = Color.FromArgb(20, 36, 59);
         ApplyRounded(section, 10);
         header.Controls.Add(section);
 
@@ -97,7 +97,7 @@ internal sealed class RemoteAdminForm : Form
         _shellStatus.TextAlign = ContentAlignment.MiddleCenter;
         _shellStatus.Font = new Font("Consolas", 8.5F, FontStyle.Bold);
         _shellStatus.ForeColor = TextSecondary;
-        _shellStatus.BackColor = Color.FromArgb(6, 31, 36);
+        _shellStatus.BackColor = Color.FromArgb(20, 40, 71);
         _shellStatus.SetBounds(1010, 27, 150, 36);
         ApplyRounded(_shellStatus, 9);
         header.Controls.Add(_shellStatus);
@@ -163,7 +163,7 @@ internal sealed class RemoteAdminForm : Form
         card.Controls.Add(remember); card.Controls.Add(login); card.Controls.Add(message);
         _content.Controls.Add(card);
 
-        var info = new AdminCard { Bounds = new Rectangle(692, 185, 535, 470), BackColor = Color.FromArgb(5, 18, 24) };
+        var info = new AdminCard { Bounds = new Rectangle(692, 185, 535, 470), BackColor = Color.FromArgb(16, 29, 49) };
         info.Controls.Add(LabelAt("SESSÕES SOB CONTROLE", 28, 26, 430, 30, 12F, Accent, FontStyle.Bold));
         info.Controls.Add(LabelAt("Solicitações direcionadas exigem aceite. Sessões ao vivo podem ser acompanhadas por outros administradores somente para visualização.", 28, 66, 465, 60, 10F, TextSecondary));
         info.Controls.Add(SecurityRow("01", "Consentimento duplo", "O jogador solicita e o administrador aceita.", 28, 148));
@@ -207,13 +207,13 @@ internal sealed class RemoteAdminForm : Form
         _content.Controls.Add(LabelAt("Solicitações e sessão ao vivo", 38, 64, 650, 48, 25F, TextPrimary, FontStyle.Bold));
         _content.Controls.Add(LabelAt("Conectado como " + displayName, 41, 110, 500, 24, 9.2F, TextSecondary));
 
-        var presence = new AdminCard { Bounds = new Rectangle(1000, 29, 245, 92), BackColor = Color.FromArgb(5, 18, 24) };
+        var presence = new AdminCard { Bounds = new Rectangle(1000, 29, 245, 92), BackColor = Color.FromArgb(16, 29, 49) };
         presence.Controls.Add(LabelAt("STATUS DE ATENDIMENTO", 18, 13, 210, 20, 7.4F, TextSecondary, FontStyle.Bold));
         var available = new CheckBox { Text = "Disponível", Checked = true, Bounds = new Rectangle(18, 40, 190, 34), ForeColor = Accent, BackColor = Color.Transparent, Font = new Font("Segoe UI", 10F, FontStyle.Bold), Cursor = Cursors.Hand };
         presence.Controls.Add(available);
         _content.Controls.Add(presence);
 
-        var left = new AdminCard { Bounds = new Rectangle(38, 155, 350, 530), BackColor = Color.FromArgb(5, 18, 24) };
+        var left = new AdminCard { Bounds = new Rectangle(38, 155, 350, 530), BackColor = Color.FromArgb(16, 29, 49) };
         left.Controls.Add(LabelAt("SOLICITAÇÕES", 22, 18, 280, 30, 11F, TextPrimary, FontStyle.Bold));
         left.Controls.Add(LabelAt("Selecione uma conexão pendente", 22, 47, 280, 22, 8.4F, TextSecondary));
         _requestList = new ListBox { Bounds = new Rectangle(22, 82, 306, 310), BackColor = Color.FromArgb(3, 13, 18), ForeColor = TextPrimary, BorderStyle = BorderStyle.None, Font = new Font("Segoe UI", 9.5F), ItemHeight = 52, DrawMode = DrawMode.OwnerDrawFixed };
@@ -739,13 +739,13 @@ internal sealed class RemoteAdminForm : Form
 
     private static Button Button(string text, int x, int y, int w, int h, Color color)
     {
-        var b = new Button { Text = text, Bounds = new Rectangle(x, y, w, h), BackColor = color, ForeColor = color == Accent ? Color.FromArgb(2, 20, 20) : Color.White, FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 9F, FontStyle.Bold), Cursor = Cursors.Hand };
+        var b = new Button { Text = text, Bounds = new Rectangle(x, y, w, h), BackColor = color, ForeColor = color == Accent ? Color.White : Color.White, FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 9F, FontStyle.Bold), Cursor = Cursors.Hand };
         b.FlatAppearance.BorderSize = color == Accent ? 1 : 0;
-        b.FlatAppearance.BorderColor = color == Accent ? Color.FromArgb(98, 255, 224) : color;
-        b.FlatAppearance.MouseDownBackColor = color == Accent ? Color.FromArgb(29, 205, 174) : Color.FromArgb(190, 45, 58);
+        b.FlatAppearance.BorderColor = color == Accent ? Color.FromArgb(79, 143, 255) : color;
+        b.FlatAppearance.MouseDownBackColor = color == Accent ? Color.FromArgb(29, 78, 216) : Color.FromArgb(190, 45, 58);
         ApplyRounded(b, 12);
         Color normal = b.BackColor;
-        b.MouseEnter += (_, _) => b.BackColor = color == Accent ? Color.FromArgb(81, 250, 215) : Color.FromArgb(235, 66, 82);
+        b.MouseEnter += (_, _) => b.BackColor = color == Accent ? Color.FromArgb(59, 130, 246) : Color.FromArgb(235, 66, 82);
         b.MouseLeave += (_, _) => b.BackColor = normal;
         return b;
     }
@@ -846,7 +846,7 @@ internal static class AdminGeometry
 
 internal class AdminFrame : Panel
 {
-    internal Color BorderColor { get; set; } = Color.FromArgb(24, 117, 141);
+    internal Color BorderColor { get; set; } = Color.FromArgb(55, 88, 135);
     internal int CornerRadius { get; set; } = 18;
     internal AdminFrame() { DoubleBuffered = true; ResizeRedraw = true; Padding = new Padding(1); }
     protected override void OnResize(EventArgs e) { base.OnResize(e); UpdateRegion(); }
@@ -869,19 +869,19 @@ internal class AdminFrame : Panel
 
 internal sealed class AdminCard : AdminFrame
 {
-    internal AdminCard() { CornerRadius = 16; BorderColor = Color.FromArgb(21, 61, 76); }
+    internal AdminCard() { CornerRadius = 16; BorderColor = Color.FromArgb(35, 53, 78); }
     protected override void OnMouseEnter(EventArgs e) { base.OnMouseEnter(e); BorderColor = Color.FromArgb(31, 103, 119); Invalidate(); }
-    protected override void OnMouseLeave(EventArgs e) { base.OnMouseLeave(e); BorderColor = Color.FromArgb(21, 61, 76); Invalidate(); }
+    protected override void OnMouseLeave(EventArgs e) { base.OnMouseLeave(e); BorderColor = Color.FromArgb(35, 53, 78); Invalidate(); }
 }
 
 internal sealed class AdminSurface : Panel
 {
-    internal AdminSurface() { DoubleBuffered = true; ResizeRedraw = true; BackColor = Color.FromArgb(4, 10, 15); }
+    internal AdminSurface() { DoubleBuffered = true; ResizeRedraw = true; BackColor = Color.FromArgb(11, 17, 27); }
     protected override void OnPaintBackground(PaintEventArgs e)
     {
-        using var gradient = new LinearGradientBrush(ClientRectangle, Color.FromArgb(4, 10, 15), Color.FromArgb(4, 17, 24), LinearGradientMode.Vertical);
+        using var gradient = new LinearGradientBrush(ClientRectangle, Color.FromArgb(11, 17, 27), Color.FromArgb(16, 28, 47), LinearGradientMode.Vertical);
         e.Graphics.FillRectangle(gradient, ClientRectangle);
-        using var grid = new Pen(Color.FromArgb(10, 43, 239, 201), 1);
+        using var grid = new Pen(Color.FromArgb(5, 37, 99, 235), 1);
         for (int x = 0; x < Width; x += 32) e.Graphics.DrawLine(grid, x, 0, x, Height);
         for (int y = 0; y < Height; y += 32) e.Graphics.DrawLine(grid, 0, y, Width, y);
     }

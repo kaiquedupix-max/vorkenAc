@@ -8,7 +8,7 @@
     <Nullable>enable</Nullable>
     <AssemblyName>Vorken.RemoteAdmin</AssemblyName>
     <RootNamespace>Vorken.RemoteAdmin</RootNamespace>
-    <Version>1.0.3</Version>
+    <Version>1.1.0</Version>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
@@ -19,9 +19,9 @@
     <RepositoryUrl>https://github.com/kaiquedupix-max/vorkenAc</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <Copyright>Copyright © Vorken 2026. Todos os direitos reservados.</Copyright>
-    <AssemblyVersion>1.0.3.0</AssemblyVersion>
-    <FileVersion>1.0.3.0</FileVersion>
-    <InformationalVersion>1.0.3</InformationalVersion>
+    <AssemblyVersion>1.1.0.0</AssemblyVersion>
+    <FileVersion>1.1.0.0</FileVersion>
+    <InformationalVersion>1.1.0</InformationalVersion>
     <ApplicationIcon>..\agent\assets\vorken.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>

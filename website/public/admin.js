@@ -813,6 +813,9 @@ function severityLabel(value) {
 }
 
 function setLoggedIn(logged) {
+  document.body.classList.toggle("desk-authenticated", logged);
+  document.getElementById("deskTopbar")?.classList.toggle("hidden", !logged);
+  window.dispatchEvent(new CustomEvent("vorken:auth", {detail: {logged}}));
   loginView.classList.toggle("hidden", logged);
   dashboardView.classList.toggle("hidden", !logged);
   logoutBtn.classList.toggle("hidden", !logged);
@@ -878,6 +881,7 @@ document.getElementById("analysisForm").addEventListener("submit", async (event)
       body: JSON.stringify({
         label: document.getElementById("analysisLabel").value,
         ttlHours: Number(document.getElementById("analysisTtl").value),
+        serverId: document.getElementById("analysisServer").value || null,
       }),
     });
 
@@ -1019,8 +1023,11 @@ async function queueGuerraFriaDecision(action) {
   if (!currentReportId || !currentDecisionSelectable)
     return;
 
-  const isBan =
-    action === "ban";
+  const isBan = action === "ban";
+  if (isBan && window.vorkenFleet?.selectedClientId) {
+    await window.vorkenFleet.banAnalysis({analysisId: currentReportId, evidenceIds: [...selectedBanEvidenceIds], steamIds: currentDetectedSteamIds});
+    return;
+  }
 
   let reason =
     isBan
@@ -1217,6 +1224,7 @@ document.getElementById("rebuildFindingsBtn").addEventListener("click", async ()
 
 async function loadAnalyses() {
   const data = await api("/api/admin/analyses");
+  window.dispatchEvent(new CustomEvent("vorken:analyses", {detail: data.analyses}));
   lastAnalysesRefreshAt = Date.now();
   analysesBody.innerHTML = "";
 
@@ -1416,6 +1424,7 @@ async function openReport(id, options = {}) {
       : safeArray(rows).length;
   };
   currentReportPayload = payload;
+  window.dispatchEvent(new CustomEvent("vorken:report", {detail: {analysis, report, findings}}));
   const collectionCounts =
     payload.uiCollectionCounts && typeof payload.uiCollectionCounts === "object"
       ? payload.uiCollectionCounts
@@ -1533,9 +1542,11 @@ async function openReport(id, options = {}) {
 
   const clientToggle = document.getElementById("clientReportToggleBtn");
   if (clientToggle) {
-    clientToggle.textContent = currentClientReportReleased
-      ? "Ocultar detalhes do cliente"
-      : "Liberar detalhes ao cliente";
+    clientToggle.disabled = analysis.client_report_automatic === true;
+    clientToggle.title = analysis.client_report_automatic ? "Altere a disponibilidade nas configurações deste servidor para exigir liberação manual." : "";
+    clientToggle.textContent = analysis.client_report_automatic
+      ? "Relatório automático pelo servidor"
+      : currentClientReportReleased ? "Ocultar detalhes do cliente" : "Liberar detalhes ao cliente";
     clientToggle.classList.toggle("release-active", currentClientReportReleased);
   }
 
@@ -2320,6 +2331,12 @@ async function openReport(id, options = {}) {
         ${evidence.note ? '<div class="kv"><span>Motivo</span><span>' + escapeHtml(evidence.note) + '</span></div>' : ""}
         ${Object.keys(evidence).length ? '<div class="kv"><span>Evidência</span><span>Resumo técnico carregado. A evidência bruta permanece preservada no relatório original.</span></div>' : ""}
       `;
+      const inspect = document.createElement("button");
+      inspect.type = "button";
+      inspect.className = "desk-inspect-button";
+      inspect.textContent = "Inspecionar evidência ↗";
+      inspect.addEventListener("click", () => window.dispatchEvent(new CustomEvent("vorken:inspect", {detail: finding})));
+      element.appendChild(inspect);
       const checkbox = element.querySelector(".ban-evidence-checkbox");
       checkbox?.addEventListener("change", () => {
         const findingId = Number(checkbox.dataset.findingId);
@@ -4332,6 +4349,9 @@ let activeSessionFilter = "all";
 
 function switchAdminTab(name) {
   const panels = {
+    clients: document.getElementById("clientsPanel"),
+    servers: document.getElementById("serversPanel"),
+    bans: document.getElementById("bansPanel"),
     sessions: document.getElementById("sessionsPanel"),
     scanner: document.getElementById("scannerPanel"),
     admins: document.getElementById("remoteAdminsPanel"),
