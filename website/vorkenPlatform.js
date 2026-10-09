@@ -225,7 +225,8 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
       if(!uuid(req.params.serverId))fail(400,'Servidor inválido.');
       const s=(await db.query('SELECT * FROM vorken_servers WHERE id=$1'+(owner?'':' AND '+accessSql('vorken_servers')),owner?[req.params.serverId]:[req.params.serverId,u.id])).rows[0];
       if(!s)fail(404,'Servidor não encontrado.');
-      return {s,actor:owner?'owner':'customer:'+u.id};
+      const initiator=owner?await customer(req).catch(e=>{if(e.status===401)return null;throw e;}):await customer(req);
+      return {s,actor:initiator?initiator.discord_id+'|'+clean(initiator.name,80):'owner'};
     };
     app.get(base,...auth,route(async(req,res)=>{
       const u=await identity(req);
@@ -254,7 +255,10 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
         const pending=await db.query(`SELECT id FROM vorken_sessions WHERE server_id=$1 AND steam_id=$2 AND status IN ('pending','redeemed','deciding')
           UNION ALL SELECT id FROM vorken_commands WHERE server_id=$1 AND steam_id=$2 AND action='start' AND status='pending'`,[s.id,req.body.steamId]);
         if(pending.rows.length)fail(409,'Esse jogador já tem uma telagem em andamento.');
-        const command=await queue(db,s.id,'start',req.body.steamId,actor);
+        const discordId=actor.split('|')[0];
+        const member=/^\d{17,20}$/.test(discordId)?await botApi('/guilds/'+s.guild_id+'/members/'+discordId).catch(()=>null):null;
+        const display=member?.nick||member?.user?.global_name||member?.user?.username;
+        const command=await queue(db,s.id,'start',req.body.steamId,display?discordId+'|'+clean(display,80):actor);
         await audit(db,actor,'screening_requested',s.id,{steamId:req.body.steamId,commandId:command});return command;
       });res.json({commandId:id,message:'Telagem enviada. Aguardando confirmação do Rust.'});
     }));
@@ -649,7 +653,7 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
           if(!await serverActive(server,db)) continue;
           const expiry=new Date(event.expiresAt); if(!Number.isFinite(expiry.getTime())) continue;
           await db.query(`INSERT INTO vorken_sessions(id,server_id,steam_id,player_name,code,administrator_id,expires_at)
-            VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(id) DO NOTHING`,[event.sessionId,server.id,event.steamId,clean(event.playerName,100),event.code,clean(event.administrator,40),expiry]);
+            VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(id) DO NOTHING`,[event.sessionId,server.id,event.steamId,clean(event.playerName,100),event.code,clean(event.administrator,160),expiry]);
         } else if(uuid(event.sessionId)&&['session_end','refusal_ban','timeout_ban'].includes(event.eventType)){
           const ended=await db.query("UPDATE vorken_sessions SET status='ended' WHERE id=$1 AND server_id=$2 AND status IN ('pending','redeemed') RETURNING discord_user_id,ticket_channel_id",[event.sessionId,server.id]);
           if(ended.rows[0]?.ticket_channel_id) await notify(db,server.guild_id,'decision',{sessionId:event.sessionId,

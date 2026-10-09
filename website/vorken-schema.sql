@@ -106,3 +106,5 @@ ALTER TABLE vorken_commands ADD COLUMN IF NOT EXISTS detached_session BOOLEAN NO
 
 ALTER TABLE vorken_guilds ADD COLUMN IF NOT EXISTS instructions_message_id TEXT;
 ALTER TABLE vorken_guilds ADD COLUMN IF NOT EXISTS instructions_signature TEXT;
+
+ALTER TABLE vorken_sessions ADD COLUMN IF NOT EXISTS ticket_message_id TEXT;

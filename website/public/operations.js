@@ -5,9 +5,21 @@ for(const root of document.querySelectorAll('[data-vorken-operations]')){
     const r=await fetch(base+path,{method:body?'POST':'GET',headers:{'Content-Type':'application/json','X-Vorken-Request':'portal'},body:body?JSON.stringify(body):undefined});
     const result=await r.json();if(!r.ok)throw new Error(result.message||'Não foi possível concluir.');return result;
   };
-  root.innerHTML='<div class="card"><h2>Jogadores online · Verificação Vorken</h2><p>Selecione o servidor para iniciar telagens e revisar verificações pelo painel.</p><label>Servidor Rust<select data-server-select><option value="">Selecione um servidor</option></select></label><label>Buscar jogador<input data-player-search type="search" placeholder="Nome ou SteamID"></label><button data-reload type="button">Atualizar jogadores</button><p data-status role="status"></p><div class="table-wrap"><table><thead><tr><th>Jogador</th><th>SteamID</th><th>Telagem</th></tr></thead><tbody data-players></tbody></table></div><h3>Verificações deste servidor</h3><div data-sessions></div></div><dialog data-report><button type="button" data-close>Fechar</button><div data-report-body></div></dialog>';
+  root.innerHTML='<div class="card"><h2 data-operations-title>Jogadores online</h2><p>Selecione o servidor para iniciar telagens e revisar verificações pelo painel.</p><label>Servidor Rust<select data-server-select><option value="">Selecione um servidor</option></select></label><p data-status role="status" aria-live="polite"></p><div data-players-pane><label>Buscar jogador<input data-player-search type="search" placeholder="Nome ou SteamID"></label><button data-reload type="button">Atualizar jogadores</button><div class="table-wrap"><table><thead><tr><th>Jogador</th><th>SteamID</th><th>Telagem</th></tr></thead><tbody data-players></tbody></table></div></div><div data-analyses-pane hidden><h3>Análises e verificações</h3><p>Revise os relatórios e as provas de cada jogador deste servidor.</p><div data-sessions></div></div></div><dialog data-report><button type="button" data-close>Fechar</button><div data-report-body></div></dialog>';
   const get=name=>root.querySelector('[data-'+name+']'),status=message=>{get('status').textContent=message;};
   let initialized=false,busy=false,data=null,reportSession=null,reportServer=null;
+  function activate(tab){
+    const operational=['players','analyses'].includes(tab);
+    root.hidden=!operational;
+    document.querySelectorAll('[data-workspace-pane]').forEach(p=>p.hidden=p.dataset.workspacePane!==tab);
+    document.querySelectorAll('[data-workspace-tab]').forEach(b=>{if(b.dataset.workspaceTab===tab)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');});
+    get('players-pane').hidden=tab==='analyses';get('analyses-pane').hidden=tab!=='analyses';
+    get('operations-title').textContent=tab==='analyses'?'Análises':'Jogadores online';
+    if(operational)refresh();
+  }
+  document.querySelectorAll('[data-workspace-tab]').forEach(b=>b.addEventListener('click',()=>activate(b.dataset.workspaceTab)));
+  if(!document.querySelector('[data-workspace-tab]'))get('analyses-pane').hidden=false;
+
   window.addEventListener('message',event=>{if(event.origin===location.origin&&event.source===get('report-body').querySelector('iframe')?.contentWindow&&event.data?.type==='vorken-report-close'){get('report').close();refresh();}});
   const selected=()=>get('server-select').value;
   function renderPlayers(){
@@ -45,7 +57,7 @@ for(const root of document.querySelectorAll('[data-vorken-operations]')){
     try{
       if(b.dataset.screen){
         const serverId=selected(),result=await api('/'+serverId+'/telagem',{steamId:b.dataset.screen});
-        await refresh();status(result.message);
+        await refresh();if(document.querySelector('[data-workspace-tab]'))activate('analyses');status(result.message);
       }
       if(b.dataset.session){
         const serverId=selected(),result=await api('/'+serverId+'/sessions/'+b.dataset.session+'/report');

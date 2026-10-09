@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { createTicketQueue, ensureTicketIntro } from './vorkenTickets.js';
 import { communityVerificationEmbed, instructionMessagesToRemove } from './vorkenInstructions.js';
 import { ensureVerifiedRole } from './vorkenRoles.js';
 import { notificationSettings, publicNotice, verificationEmbed } from './vorkenSettings.js';
@@ -227,7 +228,7 @@ export async function startVorkenBot(platform){
     });
   }
 
-  async function administratorIdentity(guild,raw){
+  async function administratorIdentity(guild,raw,db=pool){
     let value=String(raw||'').trim().replace(/^discord:/i,'');
     let fallback='Administração Vorken';
     if(value.includes('|')){
@@ -238,7 +239,7 @@ export async function startVorkenBot(platform){
     }
     if(value.startsWith('customer:')){
       const customerId=value.slice('customer:'.length);
-      const row=(await pool.query('SELECT discord_id,name FROM vorken_customers WHERE id::text=$1',[customerId])).rows[0];
+      const row=(await db.query('SELECT discord_id,name FROM vorken_customers WHERE id::text=$1',[customerId])).rows[0];
       if(row){value=String(row.discord_id||'');fallback=clean(row.name,100)||fallback;}
     }
     if(SNOWFLAKE.test(value)){
@@ -248,21 +249,21 @@ export async function startVorkenBot(platform){
     return {id:null,name:fallback};
   }
 
-  async function sessionContext(sessionId){
-    const row=(await pool.query(`SELECT v.*,s.name AS server_name,s.guild_id,a.public_token
+  async function sessionContext(sessionId,db=pool){
+    const row=(await db.query(`SELECT v.*,s.name AS server_name,s.guild_id,a.public_token
       FROM vorken_sessions v JOIN vorken_servers s ON s.id=v.server_id
       LEFT JOIN analyses a ON a.id=v.analysis_id WHERE v.id=$1`,[sessionId])).rows[0];
     if(!row)return null;
     const guild=await client.guilds.fetch(row.guild_id).catch(()=>null);
     if(!guild)return null;
-    const admin=await administratorIdentity(guild,row.administrator_id);
+    const admin=await administratorIdentity(guild,row.administrator_id,db);
     const member=row.discord_user_id?await guild.members.fetch(row.discord_user_id).catch(()=>null):null;
     return {row,guild,admin,member};
   }
 
-  async function initialTicketPayload(sessionId,lang='pt'){
+  async function initialTicketPayload(sessionId,lang='pt',db=pool){
     lang=language(lang);
-    const context=await sessionContext(sessionId);
+    const context=await sessionContext(sessionId,db);
     if(!context)return null;
     const {row,admin,member}=context,copy=ticketCopy[lang];
     const embed=new EmbedBuilder().setColor(0x2bf0c9).setTitle(copy.title).setDescription(copy.description)
@@ -280,10 +281,12 @@ export async function startVorkenBot(platform){
     return {embeds:[embed],components:[rowButtons],allowedMentions:noMentions};
   }
 
-  async function ensureTicket(session){
-    const server=(await pool.query('SELECT * FROM vorken_servers WHERE id=$1',[session.server_id])).rows[0];
+  const ensureTicketById=createTicketQueue(pool,async(sessionId,db)=>{
+    const session=(await db.query('SELECT * FROM vorken_sessions WHERE id=$1',[sessionId])).rows[0];
+    if(!session||session.status!=='redeemed')return null;
+    const server=(await db.query('SELECT * FROM vorken_servers WHERE id=$1',[session.server_id])).rows[0];
     const guild=await client.guilds.fetch(server.guild_id);
-    const config=(await pool.query('SELECT * FROM vorken_guilds WHERE id=$1',[guild.id])).rows[0];
+    const config=(await db.query('SELECT * FROM vorken_guilds WHERE id=$1',[guild.id])).rows[0];
     if(!config?.category_id)return null;
     await guild.channels.fetch();
     let ticket=guild.channels.cache.get(session.ticket_channel_id)||guild.channels.cache.find(c=>c.topic==='VORKEN_SESSION:'+session.id);
@@ -292,19 +295,18 @@ export async function startVorkenBot(platform){
         {id:client.user.id,allow:[P.ViewChannel,P.SendMessages,P.ReadMessageHistory,P.ManageChannels,P.AttachFiles,P.EmbedLinks]},
         ...guild.roles.cache.filter(r=>r.id!==guild.id&&!r.managed&&(r.permissions.has(P.Administrator)||r.permissions.has(P.BanMembers))).map(r=>({id:r.id,allow:[P.ViewChannel,P.SendMessages,P.ReadMessageHistory]}))];
       if(session.discord_user_id)overwrites.push({id:session.discord_user_id,allow:[P.ViewChannel,P.SendMessages,P.ReadMessageHistory],deny:[]});
-      const admin=await administratorIdentity(guild,session.administrator_id);
+      const admin=await administratorIdentity(guild,session.administrator_id,db);
       if(admin.id&&admin.id!==session.discord_user_id)overwrites.push({id:admin.id,allow:[P.ViewChannel,P.SendMessages,P.ReadMessageHistory],deny:[]});
       ticket=await guild.channels.create({name:'vorken-'+session.steam_id.slice(-6),type:ChannelType.GuildText,parent:config.category_id,topic:'VORKEN_SESSION:'+session.id,permissionOverwrites:overwrites});
     }
     const member=session.discord_user_id?await guild.members.fetch(session.discord_user_id).catch(()=>null):null;
     if(member){await member.roles.remove(config.verified_role_id).catch(()=>{});await member.roles.add(config.screening_role_id).catch(()=>{});}
-    const recent=await ticket.messages.fetch({limit:20});
-    const already=recent.some(m=>m.author.id===client.user.id&&m.embeds.some(e=>e.title?.includes('Vorken')&&e.fields?.some(f=>f.value?.includes(session.steam_id))));
-    if(!already){const payload=await initialTicketPayload(session.id,'pt');if(payload)await ticket.send(payload);}
-    await pool.query('UPDATE vorken_sessions SET ticket_channel_id=$2 WHERE id=$1',[session.id,ticket.id]);
-    await pool.query('UPDATE analyses SET external_ticket_channel_id=$2 WHERE id=$1',[session.analysis_id,ticket.id]);
+    await db.query('UPDATE vorken_sessions SET ticket_channel_id=$2 WHERE id=$1',[session.id,ticket.id]);
+    await db.query('UPDATE analyses SET external_ticket_channel_id=$2 WHERE id=$1',[session.analysis_id,ticket.id]);
+    await ensureTicketIntro({ticket,session,botId:client.user.id,payload:await initialTicketPayload(session.id,'pt',db),save:messageId=>db.query('UPDATE vorken_sessions SET ticket_message_id=$2 WHERE id=$1',[session.id,messageId])});
     return ticket;
-  }
+  });
+  const ensureTicket=session=>ensureTicketById(session.id);
 
   async function privateCodeFeedback(user,content){
     await user.send({content,allowedMentions:noMentions}).catch(error=>{
@@ -503,7 +505,7 @@ export async function startVorkenBot(platform){
         else if(guild)await publishInstructions((await db.query('SELECT * FROM vorken_servers WHERE guild_id=$1 AND enabled ORDER BY created_at,id',[config.id])).rows,config,guild.name).catch(e=>console.error('Vorken instruções:',e.code||e.name));
       }
 
-      const tickets=await db.query("SELECT * FROM vorken_sessions WHERE status='redeemed' AND ticket_channel_id IS NULL LIMIT 10");
+      const tickets=await db.query("SELECT * FROM vorken_sessions WHERE status='redeemed' AND (ticket_channel_id IS NULL OR ticket_message_id IS NULL) LIMIT 10");
       for(const s of tickets.rows)await ensureTicket(s).catch(e=>console.error('Vorken ticket:',e.code||e.name));
 
       const progress=await db.query(`SELECT v.*,a.processing_stage,a.status AS analysis_status FROM vorken_sessions v JOIN analyses a ON a.id=v.analysis_id

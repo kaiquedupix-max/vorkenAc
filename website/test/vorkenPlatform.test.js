@@ -147,6 +147,8 @@ test('platform routes isolate customers, confirm decisions and activate payments
     assert.equal((await request('/admin/operations/'+s1)).status,401);
     assert.equal((await request('/admin/operations/'+s1,{owner:true})).data.players.length,1);
     const start=await request('/operations/'+s1+'/telagem',{body:{steamId}});assert.equal(start.status,200);
+    const queued=(await pool.query('SELECT actor_id FROM vorken_commands WHERE id=$1',[start.data.commandId])).rows[0];
+    assert.equal(queued.actor_id,'123456789012345678|Cliente '+c1);
     assert.equal((await request('/operations/'+s1+'/telagem',{body:{steamId}})).status,409);
     await pool.query("UPDATE vorken_commands SET status='applied' WHERE id=$1",[start.data.commandId]);
     await pool.query("UPDATE vorken_servers SET players_updated_at=NOW()-interval '1 minute' WHERE id=$1",[s1]);
@@ -158,11 +160,12 @@ test('platform routes isolate customers, confirm decisions and activate payments
   const sessionId=crypto.randomUUID(),analysisId=(await pool.query("INSERT INTO analyses(public_token,label,status,processing_stage,expires_at) VALUES('test-public','Test','completed','completed',NOW()+interval '8 hours') RETURNING id")).rows[0].id;
   await pool.query("INSERT INTO scan_findings(analysis_id,title,severity,artifact_type,artifact_value,evidence) VALUES($1,'Test evidence','review','file','test.exe','{}')",[analysisId]);
   const findingId=(await pool.query('SELECT id FROM scan_findings LIMIT 1')).rows[0].id;
-  const event={id:crypto.randomUUID(),sessionId,eventType:'session_started',steamId:'76561198000000000',playerName:'Player',code:'1234',expiresAt:new Date(Date.now()+300000).toISOString()};
+  const event={id:crypto.randomUUID(),sessionId,eventType:'session_started',steamId:'76561198000000000',playerName:'Player',administrator:'discord:123456789012345678|Administrador com nome completo',code:'1234',expiresAt:new Date(Date.now()+300000).toISOString()};
   await t.test('installation scopes events and accepts retries without duplicate sessions',async()=>{
     assert.equal((await request('/plugin/sync',{token:token1,body:{events:[event]}})).status,200);
     assert.equal((await request('/plugin/sync',{token:token1,body:{events:[event]}})).status,200);
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM vorken_sessions')).rows[0].n,1);
+    assert.equal((await pool.query('SELECT administrator_id FROM vorken_sessions WHERE id=$1',[sessionId])).rows[0].administrator_id,event.administrator);
     const foreign=await request('/plugin/sync',{token:token2,body:{events:[event]}});
     assert.equal(foreign.data.accepted.length,0);
     assert.equal((await request('/sessions/'+sessionId+'/report',{customerId:c2})).status,404);
