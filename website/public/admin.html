@@ -3,11 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#0b111b">
+  <meta name="theme-color" content="#061018">
   <title>Vorken Anti-Cheat</title>
   <link rel="icon" type="image/svg+xml" href="/vorken-logo.svg">
   <link rel="stylesheet" href="/styles.css?v=20260928-learning-v2">
-  <link rel="stylesheet" href="/evidence-desk.css?v=20261009-1">
+  <link rel="stylesheet" href="/evidence-desk.css?v=platform-recovery">
+  <link rel="stylesheet" href="/platform-recovery.css?v=1">
 </head>
 <body class="vorken-admin">
   <header class="vorken-shell-header">
@@ -19,26 +20,28 @@
       </span>
     </a>
 
-    <nav id="adminMainNav" class="vorken-main-nav hidden" aria-label="Navegação principal">
-      <button class="vorken-nav-button" data-admin-tab="home">⌂<span>Visão geral</span></button>
-      <button class="vorken-nav-button" data-admin-tab="servers">▤<span>Servidores</span></button>
-      <button class="vorken-nav-button active" data-admin-tab="sessions">☷<span>Evidências</span></button>
-      <button class="vorken-nav-button" data-admin-tab="scanner">◉<span>Nova análise</span></button>
-      <button class="vorken-nav-button" data-admin-tab="bans">⊘<span>Banimentos</span></button>
-      <button class="vorken-nav-button" data-admin-tab="clients">♙<span>Clientes</span></button>
-      <button class="vorken-nav-button" data-admin-tab="admins">♙<span>Administradores</span></button>
-      <button class="vorken-nav-button" data-admin-tab="settings">⚙<span>Configurações</span></button>
-    </nav>
 
-    <div id="deskTopbar" class="desk-topbar hidden"><select id="deskClientSelect" aria-label="Cliente / grupo de servidores"><option value="">Todos os servidores</option></select><small id="deskServerCount">Nenhum servidor registrado</small></div>
+
     <div class="vorken-header-actions">
-      <a class="vorken-icon-button" href="https://github.com/kaiquedupix-max/vorkenAc" target="_blank" rel="noopener" title="Repositório Vorken" aria-label="Repositório Vorken">⌘</a>
+      <a class="button ghost" href="/admin/clientes">Clientes e licenças</a>
+      <a class="button ghost" href="/admin/banimentos">Auditoria de banimentos</a>
+      <a class="vorken-icon-button" href="https://github.com/kaiquedupix-max/vorkenAc" target="_blank" rel="noopener" title="Código-fonte AGPL-3.0" aria-label="Código-fonte AGPL-3.0">⌘</a>
       <button id="adminSoundToggle" class="vorken-icon-button sound-toggle" type="button" title="Desativar sons da interface" aria-label="Desativar sons da interface" aria-pressed="true">♪</button>
       <span id="adminReadyState" class="vorken-ready-pill hidden">● READY</span>
       <button id="refreshBtn" class="vorken-icon-button hidden" type="button" title="Atualizar">↻</button>
       <button id="logoutBtn" class="vorken-icon-button hidden" type="button" title="Sair">×</button>
     </div>
   </header>
+    <nav id="adminMainNav" class="vorken-main-nav hidden" aria-label="Navegação principal">
+      <button class="vorken-nav-button" data-admin-tab="home">⌂<span>Início</span></button>
+      <button class="vorken-nav-button active" data-admin-tab="sessions">☷<span>Sessões</span></button>
+      <button class="vorken-nav-button" data-admin-tab="scanner">◉<span>Scanner</span></button>
+      <a class="vorken-nav-button" href="/admin/clientes"><span>Clientes e servidores</span></a>
+      <a class="vorken-nav-button" href="/admin/banimentos"><span>Banimentos</span></a>
+      <button class="vorken-nav-button" data-admin-tab="players">♟<span>Jogadores online</span></button>
+      <button class="vorken-nav-button" data-admin-tab="admins">♙<span>Administradores</span></button>
+      <button class="vorken-nav-button" data-admin-tab="settings">⚙<span>Configurações</span></button>
+    </nav>
 
   <main class="vorken-admin-main">
     <section id="loginView" class="vorken-login-card">
@@ -55,17 +58,12 @@
     </section>
 
     <section id="dashboardView" class="hidden vorken-dashboard">
-      <div class="desk-metrics" aria-label="Resumo das análises">
-        <div class="desk-metric"><span>▧</span><div><small>Casos pendentes</small><strong id="deskPending">0</strong><em>Aguardando análise</em></div></div>
-        <div class="desk-metric"><span>⌕</span><div><small>Em processamento</small><strong id="deskProcessing">0</strong><em>Coleta e filtros</em></div></div>
-        <div class="desk-metric"><span>!</span><div><small>Prioridade alta</small><strong id="deskCritical">0</strong><em>Revisão necessária</em></div></div>
-        <div class="desk-metric"><span>✓</span><div><small>Análises concluídas</small><strong id="deskCompleted">0</strong><em>Relatórios disponíveis</em></div></div>
-      </div>
+      <section id="playersPanel" class="vorken-tab-panel hidden" data-vorken-operations="owner"></section>
       <section id="sessionsPanel" class="vorken-tab-panel">
         <aside class="session-list-pane">
           <div class="session-pane-title">
             <div>
-              <div class="eyebrow">Fila de casos</div>
+              <div class="eyebrow">HISTÓRICO DE ANÁLISES</div>
               <p>Revise sessões anteriores e relatórios gerados.</p>
             </div>
           </div>
@@ -160,6 +158,7 @@
               </button>
             </div>
 
+            <div id="scopedDecisionNotice" class="message hidden" role="status"></div>
             <div id="analysisProcessingBanner" class="message hidden"></div>
             <div id="usbSuspiciousBanner" class="message usb-suspicious-alert hidden"></div>
 
@@ -167,19 +166,12 @@
               <div class="report-center-column">
                 <div id="reportMetrics" class="metric-grid report-summary-grid"></div>
 
-                <section id="deskEvidenceTableSection" class="desk-card" data-report-group="overview">
-                  <div class="desk-section-heading"><h2>Evidências para revisão</h2><small id="deskEvidenceTotal">Abra uma análise</small></div>
-                  <p class="desk-note">Selecione somente as provas que justificam a decisão. Clique em uma linha para inspecionar.</p>
-                  <div class="fleet-scroll"><table class="desk-evidence-table"><thead><tr><th>PROVA</th><th>ARTEFATO / CAMINHO</th><th>TIPO</th><th>GRAVIDADE</th></tr></thead><tbody id="deskEvidenceRows"></tbody></table></div>
-                </section>
-                <section class="desk-card desk-case-timeline" data-report-group="overview"><h2>Linha do tempo do caso</h2><div id="deskCaseTimeline"></div></section>
-
-                <details id="reportMetaSection" class="report-section report-meta-details" data-report-group="overview">
+                <details id="reportMetaSection" class="report-section report-meta-details" data-report-group="overview" open>
                   <summary>Resumo da sessão</summary>
                   <div id="reportMeta"></div>
                 </details>
 
-                <details id="steamAccountsSection" class="report-section report-meta-details" data-report-group="overview">
+                <details id="steamAccountsSection" class="report-section report-meta-details" data-report-group="overview" open>
                   <summary>
                     <span>Contas Steam detectadas</span>
                     <span id="steamAccountsCountBadge" class="summary-badge info">0</span>
@@ -188,7 +180,7 @@
                   <div id="steamAccountsList"></div>
                 </details>
 
-                <details id="criticalSection" class="report-section severity-group severity-critical" data-report-group="overview critical">
+                <details id="criticalSection" class="report-section severity-group severity-critical" data-report-group="overview critical" open>
                   <summary>
                     <span>Itens críticos encontrados</span>
                     <span id="criticalCountBadge" class="summary-badge danger">0</span>
@@ -196,7 +188,7 @@
                   <div id="criticalFindingsList"></div>
                 </details>
 
-                <details id="mediumSection" class="report-section severity-group severity-medium" data-report-group="overview medium">
+                <details id="mediumSection" class="report-section severity-group severity-medium" data-report-group="overview medium" open>
                   <summary>
                     <span>Itens para revisão</span>
                     <span id="mediumCountBadge" class="summary-badge warning">0</span>
@@ -371,16 +363,7 @@
             </section>
           </article>
         </section>
-        <aside class="desk-inspector" aria-label="Detalhes e políticas">
-          <section class="desk-card" id="deskEvidenceInspector"><h2>Detalhes da evidência selecionada</h2><div class="desk-empty-icon">▧</div><p>Abra uma análise e selecione “Inspecionar” em um achado para revisar seu contexto.</p><div id="deskEvidenceDetails"></div></section>
-          <section class="desk-card"><h2>Banimentos sincronizados</h2><p>Banir e desbanir em todos os servidores do mesmo cliente.</p><form id="deskPolicyForm"><label class="desk-policy-row">Associação por time<input id="deskAssociationEnabled" type="checkbox" checked></label><label class="desk-policy-row">Duração da associação <span><input id="deskAssociationDays" type="number" min="1" max="365" value="7" required aria-label="Dias de associação"> dias</span></label><label class="desk-policy-row">Notificar no chat<input id="deskNotifyChat" type="checkbox" checked></label><button class="button primary" type="submit">Salvar política</button></form><p class="desk-note">Selecione um cliente para editar. A associação considera os integrantes do time no momento do banimento.</p></section>
-          <section class="desk-card"><h2>Limite de servidores</h2><p>Apenas a administração do Vorken pode definir a cota de cada cliente.</p><form id="deskQuotaForm"><label>Servidores permitidos<input id="deskServerLimit" type="number" min="1" max="1000" value="3" required></label><button class="button primary" type="submit">Salvar limite</button></form><p class="desk-note" id="deskQuotaUsage">Selecione um cliente no topo.</p></section>
-        </aside>
       </section>
-
-      <section id="clientsPanel" class="vorken-tab-panel fleet-panel hidden"><div class="panel-heading"><div class="eyebrow">ADMINISTRAÇÃO</div><h1>Clientes e limites</h1><p>Organize os servidores por cliente e defina quantos cada um pode registrar.</p></div><div class="fleet-grid"><article class="card"><h2>Novo cliente</h2><form id="fleetClientForm" class="fleet-form"><label>Nome do cliente<input id="fleetClientName" maxlength="120" required placeholder="Ex.: Comunidade Brasil"></label><label>Limite de servidores<input id="fleetClientLimit" type="number" min="1" max="1000" value="3" required></label><button class="button primary">Cadastrar cliente</button></form></article><article class="card"><h2>Clientes cadastrados</h2><div id="fleetClientsList" class="fleet-list"></div></article></div></section>
-      <section id="serversPanel" class="vorken-tab-panel fleet-panel hidden"><div class="panel-heading"><div class="eyebrow">MULTISSERVIDOR</div><h1>Seus servidores</h1><p>Conecte os servidores Rust para sincronizar banimentos e notificações.</p></div><div class="fleet-grid"><article class="card"><h2>Registrar servidor</h2><form id="fleetServerForm" class="fleet-form"><label>Cliente<select id="fleetServerClient" required></select></label><label>Nome do servidor<input id="fleetServerName" maxlength="120" required placeholder="Ex.: Brasil • Solo / Duo"></label><button class="button primary">Registrar e gerar conexão</button></form><div id="fleetServerToken" class="message hidden"></div><div class="desk-divider"></div><h2>Conectar ao Rust</h2><p class="muted">Instale o plugin oficial no servidor e configure a URL do Vorken e a chave gerada no cadastro.</p><a class="button ghost" href="/integrations/VorkenFleet.cs" download>Baixar plugin Rust</a><p class="desk-note">O status online aparece após a primeira sincronização. Servidores desconectados recebem as ações ao reconectar.</p></article><article class="card"><h2>Servidores registrados</h2><div id="fleetServersList" class="fleet-list"></div></article></div></section>
-      <section id="bansPanel" class="vorken-tab-panel fleet-panel hidden"><div class="panel-heading"><div class="eyebrow">MODERAÇÃO</div><h1>Banimentos</h1><p>Banimentos diretos e por associação, com escopo por cliente e confirmação de sincronização.</p></div><article class="card"><div id="fleetBansList" class="fleet-scroll"></div><p class="desk-note">Para banir, abra uma análise, selecione as evidências e use “Banir jogador”. O desbanimento remove o bloqueio escolhido de todos os servidores do cliente.</p></article></section>
 
       <section id="scannerPanel" class="vorken-tab-panel hidden scanner-config-panel">
         <div class="panel-heading">
@@ -394,7 +377,6 @@
             <label>Nome / identificação
               <input id="analysisLabel" maxlength="140" placeholder="Ex.: João - Guerra Fria" required>
             </label>
-            <label>Servidor da análise<select id="analysisServer"><option value="">Sem servidor · liberação manual</option></select></label>
             <label>Validade do link
               <select id="analysisTtl">
                 <option value="6">6 horas</option>
@@ -641,7 +623,8 @@
   </dialog>
 
   <script src="/ui-polish.js?v=20260927-remote-admin-v1"></script>
-  <script src="/admin.js?v=20261009-evidence-desk"></script>
-  <script src="/evidence-desk.js?v=20261009-1"></script>
+  <script src="/admin.js?v=20261004-online-players"></script>
+  <script type="module" src="/operations.js?v=20261004"></script>
 </body>
 </html>
+

@@ -1,0 +1,21 @@
+# One-time Coolify / Traefik dynamic configuration.
+# Replace VORKEN_CONTAINER_NAME with the application container on the proxy network.
+# The letsencrypt resolver must use DNS challenge and support Hostinger.
+http:
+  routers:
+    vorken-tenants:
+      rule: 'HostRegexp(`[a-z0-9-]+\.vorken\.xyz`)'
+      entryPoints:
+        - https
+      service: vorken-tenants
+      tls:
+        certResolver: letsencrypt
+        domains:
+          - main: vorken.xyz
+            sans:
+              - '*.vorken.xyz'
+  services:
+    vorken-tenants:
+      loadBalancer:
+        servers:
+          - url: 'http://VORKEN_CONTAINER_NAME:3000'

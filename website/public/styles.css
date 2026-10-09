@@ -1928,3 +1928,7 @@ pre.raw{max-height:420px;overflow:auto;background:#05080a;border:1px solid #1620
   contain: layout paint style;
   contain-intrinsic-size: auto 54px;
 }
+
+.scoped-report .topbar,.scoped-report .session-list-pane,.scoped-report #loginView,.scoped-report #playersPanel,.scoped-report #clientReportToggleBtn,.scoped-report #rebuildFindingsBtn,.scoped-report #hashReportBtn,.scoped-report #toggleReviewViewBtn{display:none!important}.scoped-report #sessionsPanel{display:block!important}.scoped-report .session-detail-pane{width:100%;padding:12px}.scoped-report .report-workspace-head{position:sticky;top:0;z-index:20;background:#061419;padding:12px;border-bottom:1px solid #17434b}.scoped-report .report-workspace{margin:0}
+
+.scoped-report .vorken-shell-header{display:none!important}

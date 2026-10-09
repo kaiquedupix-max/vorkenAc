@@ -1,3 +1,8 @@
+const scopedReport=new URLSearchParams(location.search).get('session');
+const scopedServer=new URLSearchParams(location.search).get('server');
+const scopedOwner=new URLSearchParams(location.search).get('owner')==='1';
+let scopedSessionState=null;
+const scopedBase=()=>scopedServer?'/api/vorken/'+(scopedOwner?'admin/operations':'operations')+'/'+encodeURIComponent(scopedServer)+'/sessions/'+encodeURIComponent(scopedReport):'/api/vorken/sessions/'+encodeURIComponent(scopedReport);
 const loginView = document.getElementById("loginView");
 const dashboardView = document.getElementById("dashboardView");
 const logoutBtn = document.getElementById("logoutBtn");
@@ -233,6 +238,19 @@ function normalizeSteamId64Input(value) {
 }
 
 async function api(url, options = {}) {
+ if(scopedReport){
+  if(url==='/api/admin/analyses/'+encodeURIComponent(scopedReport)||url==='/api/admin/analyses/'+scopedSessionState?.analysis_id){
+   const response=await fetch(scopedBase()+'/report',{...options,credentials:'same-origin'});
+   const data=await response.json();if(!response.ok)throw new Error(data.message||'Relatório indisponível.');
+   scopedSessionState=data.session;return data;
+  }
+  if(url.endsWith('/guerra-fria-decision')){
+   const body=JSON.parse(options.body||'{}');body.trustedIds=body.trustedEvidenceIds||[];
+   const response=await fetch(scopedBase()+'/decision',{...options,headers:{'Content-Type':'application/json','X-Vorken-Request':'portal'},body:JSON.stringify(body)});
+   const data=await response.json();if(!response.ok)throw new Error(data.message||'Não foi possível decidir.');return data;
+  }
+  throw new Error('Esta ação está disponível somente na administração principal.');
+ }
   const response = await fetch(url, {
     headers: {
       "Content-Type": "application/json",
@@ -881,7 +899,7 @@ document.getElementById("analysisForm").addEventListener("submit", async (event)
       body: JSON.stringify({
         label: document.getElementById("analysisLabel").value,
         ttlHours: Number(document.getElementById("analysisTtl").value),
-        serverId: document.getElementById("analysisServer").value || null,
+        serverId: document.getElementById("analysisServer")?.value || null,
       }),
     });
 
@@ -1103,8 +1121,8 @@ async function queueGuerraFriaDecision(action) {
 
     alert(
       (isBan
-        ? "Banimento confirmado pelo Guerra Fria."
-        : "Liberação confirmada pelo Guerra Fria.") +
+        ? (scopedReport ? data.message || "Banimento enviado ao Rust." : "Banimento confirmado pelo Guerra Fria.")
+        : (scopedReport ? data.message || "Liberação enviada ao Rust." : "Liberação confirmada pelo Guerra Fria.")) +
       (
         Number(data?.learnedArtifacts || 0) > 0
           ? "\n\nVorken aprendeu " +
@@ -1446,14 +1464,14 @@ async function openReport(id, options = {}) {
     analysis.client_report_released === true;
 
   currentGuerraFriaLinked =
-    ["guerra_fria", "guerra_fria_manual"].includes(analysis.external_source) &&
+    Boolean(scopedReport) || ["guerra_fria", "guerra_fria_manual"].includes(analysis.external_source) &&
     /^7656119\d{10}$/.test(
       String(analysis.external_player_id || "")
     );
 
   currentDecisionSelectable =
     analysis.status === "completed" &&
-    !analysis.external_decision;
+    !analysis.external_decision && (!scopedReport || ["redeemed", "ended"].includes(scopedSessionState?.status));
 
   currentIntegrationDecision =
     analysis.external_decision
@@ -1496,7 +1514,7 @@ async function openReport(id, options = {}) {
           " · " +
           String(decision.status || "").toUpperCase()
         : currentGuerraFriaLinked
-          ? "GUERRA FRIA · AGUARDANDO DECISÃO"
+          ? (scopedReport ? "VORKEN · DECISÃO MANUAL" : "GUERRA FRIA · AGUARDANDO DECISÃO")
           : "VORKEN · DECISÃO MANUAL";
 
     gfDecisionBadge.className =
@@ -1513,7 +1531,7 @@ async function openReport(id, options = {}) {
   }
 
   const decisionLocked =
-    analysis.status !== "completed" ||
+    !currentDecisionSelectable || analysis.status !== "completed" ||
     Boolean(
       currentIntegrationDecision &&
       ["pending","processing","completed"]
@@ -1564,6 +1582,14 @@ async function openReport(id, options = {}) {
     processingMessage: analysis.processing_message,
   });
 
+  const scopedNotice=document.getElementById('scopedDecisionNotice');
+  scopedNotice?.classList.add('hidden');
+  if(scopedNotice && scopedReport && scopedSessionState?.status==='ended' && !analysis.external_decision){
+    scopedNotice.classList.remove('hidden');
+    scopedNotice.textContent=/^2\.0\.(?:[7-9]|\d{2,})$/.test(scopedSessionState.plugin_version||'')
+      ? 'Sessão encerrada. Selecione as provas e aplique a decisão; o painel aguardará a confirmação do Rust.'
+      : 'Sessão encerrada. Você pode selecionar as provas. Para aplicar a decisão, baixe o plugin atualizado (2.0.7) em Meu painel e substitua Vorken.cs no Rust.';
+  }
   lastOpenReportProcessing =
     isProcessingStage(
       analysis.processing_stage
@@ -1907,7 +1933,7 @@ async function openReport(id, options = {}) {
     <div class="kv"><span>Computador</span><span>${escapeHtml(analysis.machine_name || "—")}</span></div>
     <div class="kv"><span>Sistema</span><span>${escapeHtml(analysis.os_version || "—")}</span></div>
     <div class="kv"><span>Agente</span><span>${escapeHtml(analysis.agent_version || "—")}</span></div>
-    ${currentGuerraFriaLinked ? '<div class="kv"><span>Guerra Fria · SteamID</span><span>' + escapeHtml(analysis.external_player_id || "—") + '</span></div>' : ""}
+    ${currentGuerraFriaLinked ? '<div class="kv"><span>SteamID do jogador</span><span>' + escapeHtml(analysis.external_player_id || "—") + '</span></div>' : ""}
     ${currentGuerraFriaLinked ? '<div class="kv"><span>Código da verificação</span><span>' + escapeHtml(analysis.external_verification_code || "—") + '</span></div>' : ""}
     ${analysis.external_evidence_url ? '<div class="kv"><span>Provas publicadas</span><span><a class="analysis-link" target="_blank" rel="noopener" href="' + escapeHtml(analysis.external_evidence_url) + '">Abrir resultados do Vorken</a></span></div>' : ""}
     <div class="kv"><span>Classificação</span><span>Filtros locais Vorken</span></div>
@@ -2525,7 +2551,7 @@ async function openReport(id, options = {}) {
   const lightDownloadRawReportBtn = document.getElementById("downloadRawReportBtn");
   if (lightDownloadRawReportBtn) {
     lightDownloadRawReportBtn.href =
-      "/api/admin/analyses/" + encodeURIComponent(id) + "/raw";
+      scopedReport ? scopedBase()+"/raw" : "/api/admin/analyses/" + encodeURIComponent(id) + "/raw";
   }
 
   reportCard.classList.remove("report-is-loading");
@@ -4354,6 +4380,7 @@ function switchAdminTab(name) {
     bans: document.getElementById("bansPanel"),
     sessions: document.getElementById("sessionsPanel"),
     scanner: document.getElementById("scannerPanel"),
+    players: document.getElementById("playersPanel"),
     admins: document.getElementById("remoteAdminsPanel"),
     settings: document.getElementById("settingsPanel"),
   };
@@ -4495,9 +4522,17 @@ async function boot() {
     await api("/api/admin/me");
     setLoggedIn(true);
     await refreshAll();
+    const requested=Number(new URLSearchParams(location.search).get("analysis"));
+    if(Number.isInteger(requested)&&requested>0)await openReportSafe(requested);
   } catch {
     setLoggedIn(false);
   }
 }
 
-boot();
+if(scopedReport){
+ document.body.classList.add('scoped-report');
+ loginView.classList.add('hidden');dashboardView.classList.remove('hidden');
+ document.getElementById('closeReportBtn').addEventListener('click',()=>parent.postMessage({type:'vorken-report-close'},location.origin));
+ openReportSafe(scopedReport).catch(error=>alert(error.message));
+}else boot();
+

@@ -170,3 +170,11 @@ test("learned trust cannot hide protected technical evidence", () => {
     false
   );
 });
+
+ test('hardware and removable inventory are critical without claiming execution',async()=>{
+ const {criticalHardwareFindings,isArtifactProtectedFromLearning}=await import('../detectionPolicyV4.js');
+ const findings=criticalHardwareFindings({serialDevices:[{name:'Arduino Uno',pnpDeviceId:'USB\\VID_2341'},{name:'MAKCU'},{name:'CH340 USB Serial'}],usbFiles:[{path:'E:\\setup.exe'},{path:'E:\\notes.txt'}]});
+ assert.equal(findings.length,3);assert(findings.every(f=>f.evidence.priorityMaximum));
+ assert.equal(findings[2].evidence.executionConfirmed,undefined);
+ assert(findings.every(f=>isArtifactProtectedFromLearning(f.artifactType,f.evidence)));
+ });

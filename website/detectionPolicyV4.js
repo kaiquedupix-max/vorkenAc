@@ -234,7 +234,7 @@ export function isArtifactProtectedFromLearning(
   // Antivirus detections must remain visible even when an administrator
   // releases the player. The release teaches away false-positive artifacts,
   // not the independent Defender history itself.
-  if (String(artifactType || "") === "defender_detection_v2")
+  if (["defender_detection_v2","hardware_board_policy","usb_executable_policy"].includes(String(artifactType || "")))
     return true;
 
   const executed = evidence.executionConfirmed === true;
@@ -266,4 +266,21 @@ export function canApplyLearnedArtifactTrust(
       evidence
     )
   );
+}
+
+export function criticalHardwareFindings(report={}){
+ const findings=[];
+ for(const device of Array.isArray(report.serialDevices)?report.serialDevices:[]){
+  const text=[device.name,device.deviceId,device.pnpDeviceId,device.manufacturer,device.pnpClass,device.service].join(' ').toLowerCase();
+  const arduino=/\barduino\b|vid_2341|vid_2a03/.test(text);
+  const makcu=/\bmakcu\b|\bmoku\b|\bmcu\b/.test(text);
+  if(!arduino&&!makcu)continue;
+  findings.push({title:'PRIORIDADE MÁXIMA: placa '+(arduino?'Arduino':'MAKCU / MCU')+' identificada',artifactType:'hardware_board_policy',artifactValue:device.pnpDeviceId||device.deviceId||device.name,evidence:{...device,priorityMaximum:true,protectedByTechnicalEngine:true,hardwarePolicy:true,note:'Placa identificada nos registros do dispositivo. Classificação crítica por política do servidor; a decisão permanece administrativa.'}});
+ }
+ for(const file of Array.isArray(report.usbFiles)?report.usbFiles:[]){
+  const name=String(file.path||file.relativePath||file.name||'');
+  if(!/\.(exe|com|scr|msi)$/i.test(name)&&!/^\.(exe|com|scr|msi)$/i.test(file.extension||''))continue;
+  findings.push({title:'PRIORIDADE MÁXIMA: executável localizado em pendrive',artifactType:'usb_executable_policy',artifactValue:name,evidence:{...file,priorityMaximum:true,protectedByTechnicalEngine:true,currentRemovable:true,note:'Executável encontrado no inventário de uma unidade removível. A presença basta para a política crítica; não implica execução confirmada.'}});
+ }
+ return findings;
 }

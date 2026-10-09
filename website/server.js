@@ -14,12 +14,15 @@ import {
   projectReportPayloadForAdmin,
 } from "./reportPayloadProjection.js";
 import {
+  criticalHardwareFindings,
   canApplyLearnedArtifactTrust,
   catalogWebTargetMatch,
   isArtifactProtectedFromLearning,
 } from "./detectionPolicyV4.js";
 import { initRemoteSupportDb, installRemoteSupport } from "./remoteSupport.js";
 import { initFleetDb, installFleet, clientReportVisibility } from "./serverFleet.js";
+import { initVorkenPlatform, installVorkenPlatform, backfillLegacyVorkenBans } from "./vorkenPlatform.js";
+import { startVorkenBot } from "./vorkenBot.js";
 
 const { Pool } = pg;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -4789,6 +4792,7 @@ async function backfillPreviouslyApprovedAnalyses() {
          a.id
        FROM analyses a
        WHERE a.external_decision='approve'
+         AND a.external_source IS DISTINCT FROM 'vorken'
          AND EXISTS (
            SELECT 1
            FROM scan_findings sf
@@ -5595,6 +5599,7 @@ async function consolidateExecutableEvidence(
 }
 
 async function addBuiltInReviewFindings(analysisId, report) {
+  for(const finding of criticalHardwareFindings(report))await insertReviewFinding(analysisId,finding.title,"critical",finding.artifactType,finding.artifactValue,finding.evidence);
   const now = Date.now();
 
   const ageDays = (value) => {
@@ -9226,9 +9231,12 @@ function compactAdminReportPayload(report) {
   };
 }
 
-app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "invalid_id" });
+async function loadRawAnalysisReport(id){
+ const result=await pool.query('SELECT payload,payload_raw,payload_encoding FROM scan_reports WHERE analysis_id=$1 ORDER BY id DESC LIMIT 1',[id]);
+ return result.rows[0]?decodeStoredRawReport(result.rows[0]):null;
+}
+
+async function loadSharedAnalysisReport(id, serverId = null) {
 
   const analysisResult = await pool.query(
     `SELECT
@@ -9262,7 +9270,7 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
     [id]
   );
   const analysis = analysisResult.rows[0];
-  if (!analysis) return res.status(404).json({ error: "analysis_not_found" });
+  if (!analysis) return null;
 
   const reportResult = await pool.query(
     `SELECT
@@ -9343,9 +9351,10 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
        FROM analyses
        WHERE machine_fingerprint = $1
          AND id <> $2
+         AND ($3::uuid IS NULL OR EXISTS (SELECT 1 FROM vorken_sessions vs WHERE vs.analysis_id=analyses.id AND vs.server_id=$3))
        ORDER BY id DESC
        LIMIT 20`,
-      [analysis.machine_fingerprint, id]
+      [analysis.machine_fingerprint, id, serverId]
     );
 
     relatedAnalyses = relatedResult.rows;
@@ -9370,7 +9379,7 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
     filter_status: "local_filters",
   };
 
-  res.json({
+  return {
     analysis,
     report: reportResult.rows[0] || null,
     findings: findingsResult.rows.map((finding) => ({
@@ -9385,7 +9394,15 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req, res) => {
     },
     relatedAnalyses,
     commonApps: commonAppCatalog,
-  });
+  };
+}
+
+app.get("/api/admin/analyses/:id", requireAdmin, async (req,res)=>{
+ const id=Number(req.params.id);
+ if(!Number.isInteger(id)||id<=0)return res.status(400).json({error:'invalid_id'});
+ const report=await loadSharedAnalysisReport(id);
+ if(!report)return res.status(404).json({error:'analysis_not_found'});
+ res.json(report);
 });
 
 app.get("/api/admin/analyses/:id/raw-hash", requireAdmin, async (req, res) => {
@@ -10774,6 +10791,28 @@ app.get("/a/:token", (_req, res) => {
   res.sendFile(path.join(__dirname, "public", "analysis.html"));
 });
 
+const vorkenPlatform = installVorkenPlatform(app, {
+  pool, publicUrl, requireAdmin, learnAnalysisArtifacts, revokeLearnedTrustForFindings, loadAnalysisReport: loadSharedAnalysisReport, loadPlayerProfiles: querySteamOfficialBatch, loadRawAnalysisReport,
+});
+app.get("/relatorio", (_req,res)=>res.sendFile(path.join(__dirname,"public","admin.html")));
+app.get('/como-funciona',(_req,res)=>res.sendFile(path.join(__dirname,'public','como-funciona.html')));
+app.get('/robots.txt',(_req,res)=>res.type('text/plain').send('User-agent: *\nDisallow: /admin\nDisallow: /api/\nDisallow: /relatorio\nDisallow: /a/\nSitemap: https://vorken.xyz/sitemap.xml\n'));
+app.get('/sitemap.xml',(_req,res)=>res.type('application/xml').send('<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'+['/','/servidor','/como-funciona','/banimentos','/privacy','/terms'].map(p=>'<url><loc>https://vorken.xyz'+p+'</loc></url>').join('')+'</urlset>'));
+app.get("/servidor", (_req, res) => {
+  res.sendFile(path.join(__dirname, "public", "servidor.html"));
+});
+app.get("/", (req, res, next) => {
+  const host = new URL(publicUrl).hostname;
+  if (process.env.VORKEN_SUBDOMAINS === "true" && req.hostname.endsWith("." + host))
+    return res.redirect("/servidor");
+  next();
+});
+app.get("/admin/clientes", (_req, res) => {
+  res.sendFile(path.join(__dirname, "public", "clientes.html"));
+});
+app.get('/admin/banimentos', (_req,res)=>res.sendFile(path.join(__dirname,'public','banimentos.html')));
+app.use("/api/vorken", (_req, res) => res.status(404).json({ message: "Recurso não encontrado." }));
+
 app.get("*", (_req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
@@ -10782,6 +10821,9 @@ initDb()
   .then(async () => {
     await initRemoteSupportDb(pool);
     await initFleetDb(pool);
+    await initVorkenPlatform(pool);
+    const importedBans=await backfillLegacyVorkenBans(pool);
+    console.log('Banimentos históricos Vorken importados:',importedBans);
     await disableLearnedArtifactsNowInCatalog();
     await backfillPreviouslyApprovedAnalyses();
 
@@ -10789,6 +10831,9 @@ initDb()
     remoteSupport.attach(server);
     server.listen(port, "0.0.0.0", () => {
       console.log("Vorken web ouvindo na porta " + port);
+    });
+    startVorkenBot(vorkenPlatform).catch(error => {
+      console.error("Falha ao conectar bot Vorken:", error.code || error.name);
     });
   })
   .catch((error) => {
