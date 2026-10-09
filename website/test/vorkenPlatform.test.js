@@ -236,6 +236,20 @@ test('platform routes isolate customers, confirm decisions and activate payments
     assert.match(html,/Proof checked/);assert.match(html,/steamcommunity.com\/profiles/);
     assert(!html.includes('Critical preserved'));assert(!html.includes('trusted_ids'));assert(!html.includes(c1));
   });
+  await t.test('public proof endpoint returns only the saved selection and omits private raw data',async()=>{
+    const ban=(await pool.query('SELECT id FROM vorken_bans WHERE active LIMIT 1')).rows[0];
+    const r=await nativeFetch(url+'/api/vorken/public/bans/'+ban.id+'/proofs');assert.equal(r.status,200);
+    const data=await r.json();assert.equal(data.proofs.length,1);assert.equal(data.proofs[0].title,'Test evidence');
+    assert(!JSON.stringify(data).includes('trusted_ids'));assert(!JSON.stringify(data).includes('administrator'));assert(!Object.hasOwn(data.proofs[0],'evidence'));
+    assert.equal((await nativeFetch(url+'/api/vorken/public/bans/not-an-id/proofs')).status,404);
+  });
+  await t.test('only owner can change individual license server quota; invalid values are rejected',async()=>{
+    assert.equal((await request('/admin/customers/'+c1+'/quota',{method:'PATCH',customerId:c1,body:{maxServers:3}})).status,401);
+    for(const maxServers of [0,101,1.5,'3'])assert.equal((await request('/admin/customers/'+c1+'/quota',{method:'PATCH',owner:true,body:{maxServers}})).status,400);
+    assert.equal((await request('/admin/customers/'+c1+'/quota',{method:'PATCH',owner:true,body:{maxServers:3}})).status,200);
+    assert.equal((await pool.query('SELECT max_servers FROM vorken_licenses WHERE customer_id=$1',[c1])).rows[0].max_servers,3);
+    await pool.query('UPDATE vorken_licenses SET max_servers=1 WHERE customer_id=$1',[c1]);
+  });
   await t.test('join on a different server queues alert with reason and selected evidence, no ban command',async()=>{
     const r=await request('/plugin/sync',{token:token2,body:{events:[{id:crypto.randomUUID(),eventType:'player_join',steamId:event.steamId,playerName:'Player'}]}});
     assert.equal(r.status,200);

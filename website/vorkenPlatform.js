@@ -155,12 +155,31 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
     const [channels,roles,member]=await Promise.all([botApi('/guilds/'+server.guild_id+'/channels'),botApi('/guilds/'+server.guild_id+'/roles'),botApi('/guilds/'+server.guild_id+'/members/'+process.env.VORKEN_DISCORD_CLIENT_ID)]);
     return channels.filter(c=>canPublish(c,server.guild_id,member,roles)).map(c=>({id:c.id,name:c.name}));
   };
+  const avatarCache=new Map();
+  app.get('/api/vorken/public/steam/:id/avatar',route(async(req,res)=>{
+    const id=String(req.params.id);if(!/^7656119\d{10}$/.test(id))fail(404,'Perfil indisponível.');
+    let entry=avatarCache.get(id);
+    if(!entry||entry.until<Date.now()){
+      let avatar='';try{
+        const r=await fetch('https://steamcommunity.com/profiles/'+id+'?xml=1',{signal:AbortSignal.timeout(5000)});
+        if(r.ok){const xml=await r.text();const match=xml.match(/<avatarMedium>\s*(?:<!\[CDATA\[)?(https:\/\/[^<\]]+)/);const value=match?.[1]?.trim();if(value){const u=new URL(value);if(['avatars.steamstatic.com','avatars.akamai.steamstatic.com','steamcdn-a.akamaihd.net','cdn.akamai.steamstatic.com'].includes(u.hostname))avatar=u.href;}}
+      }catch{}
+      entry={url:avatar,until:Date.now()+(avatar?21600000:300000)};if(avatarCache.size>=2000)avatarCache.delete(avatarCache.keys().next().value);avatarCache.set(id,entry);
+    }
+    res.set('Cache-Control','public, max-age=300');res.redirect(entry.url||'/vorken-logo.svg');
+  }));
+  app.get('/api/vorken/public/bans/:id/proofs',route(async(req,res)=>{
+    if(!uuid(req.params.id))fail(404,'Banimento não encontrado.');
+    const ban=(await pool.query('SELECT reason,evidence FROM vorken_bans WHERE id=$1 AND active',[req.params.id])).rows[0];if(!ban)fail(404,'Banimento não encontrado.');
+    const proofs=(Array.isArray(ban.evidence)?ban.evidence:[]).map(p=>({title:clean(p.title,200)||'Prova selecionada',severity:clean(p.severity,30),type:clean(p.artifact_type||p.type,80),artifact:clean(String(p.artifact_value||'').split(/[\\/]/).pop(),300),reason:clean(p.reason,500)}));
+    res.json({reason:ban.reason,proofs});
+  }));
   app.get('/banimentos',route(async(req,res)=>{
     const page=Math.max(1,Math.min(10000,Number.parseInt(req.query.page,10)||1));
-    const records=await pool.query(`SELECT b.steam_id,COALESCE(NULLIF(b.player_name,''),v.player_name,b.steam_id) AS player_name,s.name AS server_name,b.reason,b.created_at FROM vorken_bans b JOIN vorken_servers s ON s.id=b.server_id LEFT JOIN vorken_sessions v ON v.id=b.session_id WHERE b.active ORDER BY b.created_at DESC,b.id DESC LIMIT 50 OFFSET $1`,[(page-1)*50]);
+    const records=await pool.query(`SELECT b.id,jsonb_array_length(b.evidence) AS proof_count,b.steam_id,COALESCE(NULLIF(b.player_name,''),v.player_name,b.steam_id) AS player_name,s.name AS server_name,b.reason,b.created_at FROM vorken_bans b JOIN vorken_servers s ON s.id=b.server_id LEFT JOIN vorken_sessions v ON v.id=b.session_id WHERE b.active ORDER BY b.created_at DESC,b.id DESC LIMIT 50 OFFSET $1`,[(page-1)*50]);
     const escape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-    const rows=records.rows.map(b=>'<tr><td><a href="https://steamcommunity.com/profiles/'+escape(b.steam_id)+'" rel="noopener" target="_blank">'+escape(b.player_name)+'</a><small> '+escape(b.steam_id)+'</small></td><td>'+escape(b.server_name)+'</td><td>'+escape(b.reason)+'</td><td>'+escape(new Date(b.created_at).toLocaleDateString('pt-BR',{timeZone:'UTC'}))+'</td></tr>').join('');
-    const table='<div class="table-wrap"><table><thead><tr><th>Jogador / Steam</th><th>Servidor</th><th>Motivo registrado</th><th>Data</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+(rows?'':'<p>Nenhum registro nesta página.</p>')+'<nav>'+(page>1?'<a href="/banimentos?page='+(page-1)+'">Anterior</a>':'')+(records.rows.length===50?'<a href="/banimentos?page='+(page+1)+'">Próxima página</a>':'')+'</nav>';
+    const rows=records.rows.map(b=>'<tr><td><div class="ban-player"><img class="ban-avatar" loading="lazy" referrerpolicy="no-referrer" alt="" src="/api/vorken/public/steam/'+escape(b.steam_id)+'/avatar"><div><a href="https://steamcommunity.com/profiles/'+escape(b.steam_id)+'" rel="noopener" target="_blank">'+escape(b.player_name)+'</a><small> '+escape(b.steam_id)+'</small></div></div></td><td>'+escape(b.server_name)+'</td><td>'+escape(b.reason)+'</td><td>'+escape(new Date(b.created_at).toLocaleDateString('pt-BR',{timeZone:'UTC'}))+'</td><td>'+(Number(b.proof_count)>0?'<button type="button" class="button" data-ban-proofs="'+escape(b.id)+'">Ver provas ('+Number(b.proof_count)+')</button>':'<span class="muted">Sem provas anexadas</span>')+'</td></tr>').join('');
+    const table='<div class="table-wrap"><table><thead><tr><th>Jogador / Steam</th><th>Servidor</th><th>Motivo registrado</th><th>Data</th><th>Provas</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+(rows?'':'<p>Nenhum registro nesta página.</p>')+'<nav>'+(page>1?'<a href="/banimentos?page='+(page-1)+'">Anterior</a>':'')+(records.rows.length===50?'<a href="/banimentos?page='+(page+1)+'">Próxima página</a>':'')+'</nav>';
     res.type('html').send(fs.readFileSync(new URL('./public/banimentos-publicos.html',import.meta.url),'utf8').replace('<!--PUBLIC_BANS-->',table));
   }));
   const audit = (db, actor,action,target,details={}) => db.query('INSERT INTO vorken_audit(actor,action,target,details) VALUES($1,$2,$3,$4)',[actor,action,target,JSON.stringify(details)]);
@@ -557,6 +576,15 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
     if(!r.rows[0]) fail(404,'Plano não encontrado.');
     await audit(pool,'owner','plan_updated',req.params.id,{priceCents,maxServers,enabled});res.json({ok:true});
   }));
+  app.patch('/api/vorken/admin/customers/:id/quota',requireAdmin,csrf,route(async(req,res)=>{
+    const count=req.body.maxServers;if(!uuid(req.params.id)||!Number.isInteger(count)||count<1||count>100)fail(400,'Informe de 1 a 100 servidores.');
+    await tx(async db=>{
+      const license=(await db.query('SELECT max_servers FROM vorken_licenses WHERE customer_id=$1 FOR UPDATE',[req.params.id])).rows[0];
+      if(!license)fail(409,'Conceda uma licença ao cliente antes de alterar o limite.');
+      await db.query('UPDATE vorken_licenses SET max_servers=$2 WHERE customer_id=$1',[req.params.id,count]);
+      await audit(db,'owner','server_quota_updated',req.params.id,{previous:license.max_servers,maxServers:count});
+    });res.json({ok:true,maxServers:count});
+  }));
   app.post('/api/vorken/admin/customers/:id/license',requireAdmin,csrf,route(async(req,res)=>{
     if(!uuid(req.params.id)||!['grant','suspend','revoke','resume'].includes(req.body.action)) fail(400,'Ação inválida.');
     await tx(async db=>{
@@ -567,7 +595,7 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
         if(!p) fail(400,'Plano inválido.');
         const old=await entitlement(req.params.id,db),base=licensed(old)?new Date(old.license_until):new Date();
         await db.query(`INSERT INTO vorken_licenses(customer_id,plan_id,status,expires_at,max_servers) VALUES($1,$2,'active',$3,$4)
-          ON CONFLICT(customer_id) DO UPDATE SET plan_id=$2,status='active',expires_at=$3,max_servers=$4`,[req.params.id,p.id,addMonths(base,p.months),p.max_servers]);
+          ON CONFLICT(customer_id) DO UPDATE SET plan_id=$2,status='active',expires_at=$3,max_servers=GREATEST(vorken_licenses.max_servers,$4)`,[req.params.id,p.id,addMonths(base,p.months),p.max_servers]);
       } else await db.query('UPDATE vorken_licenses SET status=$2 WHERE customer_id=$1',[req.params.id,{suspend:'suspended',revoke:'revoked',resume:'active'}[req.body.action]]);
       await audit(db,'owner','license_'+req.body.action,req.params.id,{planId:req.body.planId});res.json({ok:true});
     });
