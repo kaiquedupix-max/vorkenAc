@@ -103,3 +103,6 @@ ALTER TABLE vorken_bans ADD COLUMN IF NOT EXISTS administrator_name TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS vorken_ban_legacy_record ON vorken_bans(legacy_source,legacy_record_id);
 
 ALTER TABLE vorken_commands ADD COLUMN IF NOT EXISTS detached_session BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE vorken_guilds ADD COLUMN IF NOT EXISTS instructions_message_id TEXT;
+ALTER TABLE vorken_guilds ADD COLUMN IF NOT EXISTS instructions_signature TEXT;

@@ -1,10 +1,11 @@
 import crypto from 'node:crypto';
+import { communityVerificationEmbed, instructionMessagesToRemove } from './vorkenInstructions.js';
 import { ensureVerifiedRole } from './vorkenRoles.js';
 import { notificationSettings, publicNotice, verificationEmbed } from './vorkenSettings.js';
 import {
   Client, GatewayIntentBits, PermissionFlagsBits as P, ChannelType,
   SlashCommandBuilder, MessageFlags, ActivityType, EmbedBuilder,
-  ActionRowBuilder, ButtonBuilder, ButtonStyle
+  ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder
 } from 'discord.js';
 
 const STEAM=/^7656119\d{10}$/;
@@ -107,20 +108,39 @@ export async function startVorkenBot(platform){
 
   const pendingSetups=new Map();
 
-  async function publishInstructions(server,config){
-    const channel=client.channels.cache.get(config.verification_channel_id)||await client.channels.fetch(config.verification_channel_id).catch(()=>null);
-    if(!channel?.isSendable()||channel.guildId!==server.guild_id)return;
-    const embed=verificationEmbed(server,'pt');
-    const row=instructionLanguageRow(server.id);
-    const signature=crypto.createHash('sha256').update(JSON.stringify({embed,components:row.toJSON()})).digest('hex');
-    if(server.instructions_signature===signature&&server.instructions_message_id){
-      const existing=await channel.messages.fetch(server.instructions_message_id).catch(()=>null);
-      if(existing?.author.id===client.user.id)return;
-    }
-    const payload={embeds:[embed],components:[row],allowedMentions:noMentions};
-    const existing=server.instructions_message_id?await channel.messages.fetch(server.instructions_message_id).catch(()=>null):null;
-    const message=existing?.author.id===client.user.id?await existing.edit(payload):await channel.send(payload);
-    await pool.query('UPDATE vorken_servers SET instructions_message_id=$2,instructions_signature=$3 WHERE id=$1',[server.id,message.id,signature]);
+  const pendingInstructions=new Map();
+  async function publishInstructions(servers,config,guildName){
+    if(!servers.length)return;
+    if(pendingInstructions.has(config.id))return pendingInstructions.get(config.id);
+    const job=(async()=>{
+      const channel=client.channels.cache.get(config.verification_channel_id)||await client.channels.fetch(config.verification_channel_id).catch(()=>null);
+      if(!channel?.isSendable()||channel.guildId!==config.id)return;
+      const embed=communityVerificationEmbed(servers,guildName,'pt');
+      const row=new ActionRowBuilder().addComponents(...['pt','en','es'].map((lang,i)=>new ButtonBuilder().setCustomId('vorken_guild_lang:'+lang+':'+config.id).setLabel(['Português','English','Español'][i]).setStyle(ButtonStyle.Secondary)));
+      const rows=[row];
+      // Discord allows 25 select options; menus cover up to the platform limit of 100 servers.
+      if(servers.length>1)for(let offset=0;offset<servers.length;offset+=25)rows.push(new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId('vorken_rules:'+offset+':'+config.id).setPlaceholder('Consultar regras do servidor Rust').addOptions(servers.slice(offset,offset+25).map(server=>({label:String(server.name).slice(0,100),value:server.id})))));
+      const signature=crypto.createHash('sha256').update(JSON.stringify({embed,components:rows.map(r=>r.toJSON())})).digest('hex');
+      let existing=config.instructions_message_id?await channel.messages.fetch(config.instructions_message_id).catch(()=>null):null;
+      if(existing?.author.id!==client.user.id)existing=null;
+      if(existing&&config.instructions_signature===signature)return;
+      const previous=await channel.messages.fetch({limit:100});
+      if(!existing)for(const server of servers){
+        if(!server.instructions_message_id)continue;
+        const message=previous.get(server.instructions_message_id)||await channel.messages.fetch(server.instructions_message_id).catch(()=>null);
+        if(message?.author.id===client.user.id){existing=message;break;}
+      }
+      const payload={embeds:[embed],components:rows,allowedMentions:noMentions};
+      const message=existing?await existing.edit(payload):await channel.send(payload);
+      const knownIds=servers.map(server=>server.instructions_message_id);
+      const duplicates=instructionMessagesToRemove(previous.values(),client.user.id,message.id,knownIds);
+      for(const id of knownIds)if(id&&id!==message.id&&!previous.has(id)){
+        const old=await channel.messages.fetch(id).catch(()=>null);if(old?.author.id===client.user.id)duplicates.push(old);
+      }
+      for(const duplicate of new Map(duplicates.map(m=>[m.id,m])).values())await duplicate.delete();
+      await pool.query('UPDATE vorken_guilds SET instructions_message_id=$2,instructions_signature=$3 WHERE id=$1',[config.id,message.id,signature]);
+      await pool.query('UPDATE vorken_servers SET instructions_message_id=$2,instructions_signature=$3 WHERE guild_id=$1',[config.id,message.id,signature]);
+    })();pendingInstructions.set(config.id,job);try{return await job;}finally{pendingInstructions.delete(config.id);}
   }
 
   async function setup(guild){
@@ -170,7 +190,7 @@ export async function startVorkenBot(platform){
         [guild.id,verified.id,screening.id,category.id,instructions.id,alerts.id]);
       await guild.commands.set(commands);
       const config={...stored,verification_channel_id:instructions.id};
-      for(const server of (await pool.query('SELECT * FROM vorken_servers WHERE guild_id=$1 AND enabled',[guild.id])).rows)await publishInstructions(server,config);
+      await publishInstructions((await pool.query('SELECT * FROM vorken_servers WHERE guild_id=$1 AND enabled ORDER BY created_at,id',[guild.id])).rows,config,guild.name);
       return {...stored,verified_role_id:verified.id,screening_role_id:screening.id,category_id:category.id,verification_channel_id:instructions.id,alerts_channel_id:alerts.id};
     })();
     pendingSetups.set(guild.id,promise);
@@ -328,6 +348,14 @@ export async function startVorkenBot(platform){
       const query=String(i.options.getFocused()).toLowerCase();
       await i.respond(rows.rows.filter(s=>s.name.toLowerCase().includes(query)).slice(0,25).map(s=>({name:s.name.slice(0,100),value:s.id}))).catch(()=>{});return;
     }
+    if(i.isStringSelectMenu()&&i.customId.startsWith('vorken_rules:')){
+      try{
+        const [,offset,guildId]=i.customId.split(':');if(guildId!==i.guildId)throw new Error('Comunidade inválida.');
+        const server=(await pool.query('SELECT * FROM vorken_servers WHERE id=$1 AND guild_id=$2 AND enabled',[i.values[0],i.guildId])).rows[0];
+        if(!server)throw new Error('Servidor não encontrado.');
+        await i.reply({embeds:[verificationEmbed(server,'pt')],components:[instructionLanguageRow(server.id)],flags:MessageFlags.Ephemeral,allowedMentions:noMentions});
+      }catch(error){await i.reply({content:error.message,flags:MessageFlags.Ephemeral,allowedMentions:noMentions}).catch(()=>{});}return;
+    }
     if(i.isButton()){
       try{
         if(i.customId.startsWith('vorken_prior:')){
@@ -366,6 +394,12 @@ export async function startVorkenBot(platform){
             await platform.audit(db,i.user.id,'prior_ban_'+action,p.serverId,{noticeId:id,steamId:p.steamId});
             await i.editReply(action==='confirm'?'Banimento enviado. Aguarde a confirmação do plugin.':action==='start'?'Verificação enviada ao servidor.':action==='allow'?'Jogador autorizado nesta revisão. O banimento do servidor de origem permanece registrado.':'Alerta ignorado nesta revisão.');
           });return;
+        }
+        if(i.customId.startsWith('vorken_guild_lang:')){
+          const [,lang,guildId]=i.customId.split(':');if(guildId!==i.guildId)throw new Error('Comunidade inválida.');
+          const servers=(await pool.query('SELECT * FROM vorken_servers WHERE guild_id=$1 AND enabled ORDER BY created_at,id',[guildId])).rows;
+          if(!servers.length)throw new Error('Nenhum servidor disponível.');
+          await i.reply({embeds:[communityVerificationEmbed(servers,i.guild.name,language(lang))],flags:MessageFlags.Ephemeral,allowedMentions:noMentions});return;
         }
         if(i.customId.startsWith('vorken_lang:')){
           const [,lang,id]=i.customId.split(':');
@@ -466,7 +500,7 @@ export async function startVorkenBot(platform){
       for(const config of configured.rows){
         const guild=await client.guilds.fetch(config.id).catch(()=>null);
         if(guild&&(!config.verified_role_id||!guild.channels.cache.has(config.verification_channel_id)||!guild.channels.cache.has(config.category_id)))await setup(guild).catch(e=>console.error('Vorken setup:',e.code||e.name));
-        else if(guild)for(const server of (await db.query('SELECT * FROM vorken_servers WHERE guild_id=$1 AND enabled',[config.id])).rows)await publishInstructions(server,config).catch(e=>console.error('Vorken instruções:',e.code||e.name));
+        else if(guild)await publishInstructions((await db.query('SELECT * FROM vorken_servers WHERE guild_id=$1 AND enabled ORDER BY created_at,id',[config.id])).rows,config,guild.name).catch(e=>console.error('Vorken instruções:',e.code||e.name));
       }
 
       const tickets=await db.query("SELECT * FROM vorken_sessions WHERE status='redeemed' AND ticket_channel_id IS NULL LIMIT 10");
