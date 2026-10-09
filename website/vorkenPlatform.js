@@ -215,6 +215,37 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
   }
   const notify=async (db,guildId,kind,payload) => db.query('INSERT INTO vorken_notices(id,guild_id,kind,payload) VALUES($1,$2,$3,$4)',[crypto.randomUUID(),guildId,kind,JSON.stringify(payload)]);
 
+  const verifiedMembers=new Map();
+  async function verifiedPlayers(server,players){
+    if(!players.length)return [];
+    const guild=(await pool.query('SELECT verified_role_id FROM vorken_guilds WHERE id=$1',[server.guild_id])).rows[0];
+    const links=(await pool.query(`SELECT DISTINCT ON(v.steam_id) v.steam_id,v.discord_user_id,v.status
+      FROM vorken_sessions v JOIN vorken_servers s ON s.id=v.server_id
+      WHERE s.guild_id=$1 AND s.customer_id=$2 AND v.steam_id=ANY($3::text[]) AND v.discord_user_id IS NOT NULL
+      ORDER BY v.steam_id,v.created_at DESC`,[server.guild_id,server.customer_id,players.map(p=>p.steamId)])).rows;
+    const bySteam=new Map(links.map(v=>[v.steam_id,v]));
+    const result=[];
+    for(let start=0;start<players.length;start+=5){
+      result.push(...await Promise.all(players.slice(start,start+5).map(async player=>{
+        const link=bySteam.get(player.steamId);
+        let verified=null;
+        if(link&&guild?.verified_role_id){
+          const key=server.guild_id+':'+link.discord_user_id+':'+guild.verified_role_id;
+          let cached=verifiedMembers.get(key);
+          if(!cached||cached.until<Date.now()){
+            if(verifiedMembers.size>5000)verifiedMembers.clear();
+            cached={until:Date.now()+30000,value:botApi('/guilds/'+server.guild_id+'/members/'+link.discord_user_id)
+              .then(member=>Array.isArray(member.roles)?member.roles.includes(guild.verified_role_id):null).catch(()=>null)};
+            verifiedMembers.set(key,cached);
+          }
+          verified=await cached.value;
+        }
+        return {...player,verified,previouslyApproved:link?.status==='approved'};
+      })));
+    }
+    return result;
+  }
+
   // The owner and customers share the same operations, with separate authorization.
   for(const owner of [false,true]){
     const base='/api/vorken/'+(owner?'admin/':'')+'operations';
@@ -241,7 +272,7 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
       const sessions=await pool.query(`SELECT v.id,v.steam_id,v.player_name,v.status,v.analysis_id,a.status AS analysis_status,a.processing_stage
         FROM vorken_sessions v LEFT JOIN analyses a ON a.id=v.analysis_id WHERE v.server_id=$1 ORDER BY v.created_at DESC LIMIT 100`,[s.id]);
       const commands=await pool.query("SELECT id,steam_id,status,result FROM vorken_commands WHERE server_id=$1 AND action='start' AND created_at>NOW()-interval '10 minutes' ORDER BY created_at DESC LIMIT 100",[s.id]);
-      res.set('Cache-Control','no-store').json({connected,fresh,active:await serverActive(s),updatedAt:s.players_updated_at,players:fresh?s.online_players:[],sessions:sessions.rows,commands:commands.rows});
+      res.set('Cache-Control','no-store').json({connected,fresh,active:await serverActive(s),updatedAt:s.players_updated_at,players:await verifiedPlayers(s,fresh?s.online_players:[]),sessions:sessions.rows,commands:commands.rows});
     }));
     app.post(base+'/:serverId/telagem',...auth,csrf,route(async(req,res)=>{
       if(!steam(req.body.steamId))fail(400,'SteamID inválido.');
@@ -258,6 +289,8 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
         const discordId=actor.split('|')[0];
         const member=/^\d{17,20}$/.test(discordId)?await botApi('/guilds/'+s.guild_id+'/members/'+discordId).catch(()=>null):null;
         const display=member?.nick||member?.user?.global_name||member?.user?.username;
+        const [player]=await verifiedPlayers(s,current.online_players.filter(p=>p.steamId===req.body.steamId));
+        if((player?.verified||player?.previouslyApproved)&&req.body.confirmVerified!==true)fail(409,'Este jogador já foi verificado. Confirme para iniciar outra telagem.');
         const command=await queue(db,s.id,'start',req.body.steamId,display?discordId+'|'+clean(display,80):actor);
         await audit(db,actor,'screening_requested',s.id,{steamId:req.body.steamId,commandId:command});return command;
       });res.json({commandId:id,message:'Telagem enviada. Aguardando confirmação do Rust.'});
@@ -616,8 +649,11 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
   }));
   app.patch('/api/vorken/admin/bans/:id',requireAdmin,csrf,route(async(req,res)=>{
     if(!uuid(req.params.id)||typeof req.body.active!=='boolean') fail(400,'Registro inválido.');
-    await pool.query('UPDATE vorken_bans SET active=$2 WHERE id=$1',[req.params.id,req.body.active]);
-    await audit(pool,'owner','ban_visibility',req.params.id,{active:req.body.active});res.json({ok:true});
+    await tx(async db=>{
+      const updated=await db.query('UPDATE vorken_bans SET active=$2 WHERE id=$1 RETURNING id',[req.params.id,req.body.active]);
+      if(!updated.rows.length)fail(404,'Banimento não encontrado.');
+      await audit(db,'owner','ban_visibility',req.params.id,{active:req.body.active});
+    });res.json({ok:true});
   }));
 
   app.post('/api/vorken/plugin/sync',route(async(req,res)=>{

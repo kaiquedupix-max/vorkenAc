@@ -14,3 +14,5 @@ body>header{gap:22px;flex-wrap:wrap}body>header nav{flex-wrap:wrap;align-items:c
 .vorken-admin .remote-admin-app-logo{background:linear-gradient(145deg,#347aff,#1d55df);box-shadow:0 12px 35px #2563eb28}.vorken-admin .report-empty-state .radar-placeholder{color:#80b5ff;border-color:#365b8b;background:#17365f;box-shadow:0 0 0 26px #2563eb0b,0 0 0 52px #2563eb05}
 
 .workspace-tabs{display:flex;gap:24px;border-bottom:1px solid #263f5c;margin-bottom:24px;overflow-x:auto}.workspace-tabs button{border:0;border-radius:0;background:transparent;color:#a9bfdc;padding:16px 4px;white-space:nowrap;border-bottom:3px solid transparent}.workspace-tabs button[aria-current="page"]{color:#58a6ff;border-bottom-color:#2866ff}.workspace-tabs button:hover{color:#eaf2ff;background:#102139}[hidden]{display:none!important}
+
+.verified-player{display:inline-flex;align-items:center;gap:6px;margin-left:10px;color:#38e0b0;font-size:12px;font-weight:700;white-space:nowrap}

@@ -64,6 +64,7 @@ test('platform routes isolate customers, confirm decisions and activate payments
   globalThis.fetch=async(url,options)=>{
     if(String(url).endsWith('/channels'))return Response.json([{id:'888456789012345678',name:'ban-feed',type:0},{id:'777456789012345678',name:'verificados',type:0}]);
     if(String(url).endsWith('/roles'))return Response.json([{id:'123456789012345678',permissions:'8'}]);
+    if(String(url).endsWith('/members/333456789012345678'))return Response.json({user:{id:'333456789012345678'},roles:['444456789012345678']});
     if(String(url).includes('/members/'))return Response.json({user:{id:'999456789012345678'},roles:[]});
     if(String(url).startsWith('https://discord.com/api/'))return Response.json([{id:'123456789012345678',name:'Discord de teste',owner:true}]);
     if(String(url).includes('api.mercadopago.com/v1/payments/'))return Response.json(payment);
@@ -156,6 +157,18 @@ test('platform routes isolate customers, confirm decisions and activate payments
     assert.equal((await request('/operations/'+s1+'/telagem',{body:{steamId}})).status,409);
     await request('/plugin/sync',{token:token1,body:{players:[]}});
     assert.equal((await request('/operations/'+s1)).data.players.length,0);
+  });
+  await t.test('verified Discord role marks online players and repeat screening requires explicit confirmation',async()=>{
+    const id=crypto.randomUUID(),steamId='76561198000000888';
+    await pool.query("UPDATE vorken_guilds SET verified_role_id='444456789012345678' WHERE id='123456789012345678'");
+    await pool.query("INSERT INTO vorken_sessions(id,server_id,steam_id,player_name,code,discord_user_id,status,expires_at) VALUES($1,$2,$3,'Verified player','4321','333456789012345678','approved',NOW()+interval '1 hour')",[id,s1,steamId]);
+    await request('/plugin/sync',{token:token1,body:{players:[{steamId,name:'Verified player'}]}});
+    const roster=await request('/operations/'+s1);
+    assert.equal(roster.data.players[0].verified,true);
+    assert.equal((await request('/operations/'+s1+'/telagem',{body:{steamId}})).status,409);
+    assert.equal((await request('/operations/'+s1+'/telagem',{body:{steamId,confirmVerified:true}})).status,200);
+    assert.equal((await request('/operations/'+s1,{customerId:c2})).status,404);
+    await pool.query('DELETE FROM vorken_sessions WHERE id=$1',[id]);
   });
   const sessionId=crypto.randomUUID(),analysisId=(await pool.query("INSERT INTO analyses(public_token,label,status,processing_stage,expires_at) VALUES('test-public','Test','completed','completed',NOW()+interval '8 hours') RETURNING id")).rows[0].id;
   await pool.query("INSERT INTO scan_findings(analysis_id,title,severity,artifact_type,artifact_value,evidence) VALUES($1,'Test evidence','review','file','test.exe','{}')",[analysisId]);
@@ -267,6 +280,14 @@ test('platform routes isolate customers, confirm decisions and activate payments
     assert.equal((await request('/admin/bans')).status,401);
     const audit=await request('/admin/bans',{owner:true});assert.equal(audit.status,200);assert.equal(audit.data.bans[0].reason,'Proof checked');
     assert.equal((await request('/admin/bans?q=no-such-player',{owner:true})).data.bans.length,0);
+    const ban=audit.data.bans[0],proofs=ban.evidence;
+    assert.equal((await request('/admin/bans/'+ban.id,{method:'PATCH',body:{active:false}})).status,401);
+    assert.equal((await request('/admin/bans/'+ban.id,{owner:true,method:'PATCH',body:{active:false}})).status,200);
+    const removed=(await pool.query('SELECT active,evidence FROM vorken_bans WHERE id=$1',[ban.id])).rows[0];
+    assert.equal(removed.active,false);assert.deepEqual(removed.evidence,proofs);
+    assert.equal((await request('/admin/bans/'+ban.id,{owner:true,method:'PATCH',body:{active:true}})).status,200);
+    assert.equal((await request('/admin/bans/'+crypto.randomUUID(),{owner:true,method:'PATCH',body:{active:false}})).status,404);
+
   });
   await t.test('local prior-ban action enters the audit only after Rust acknowledgement and cannot duplicate',async()=>{
     const n=(await pool.query("SELECT * FROM vorken_notices WHERE kind='prior_ban' LIMIT 1")).rows[0];

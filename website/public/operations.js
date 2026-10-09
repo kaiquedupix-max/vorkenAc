@@ -27,7 +27,7 @@ for(const root of document.querySelectorAll('[data-vorken-operations]')){
     get('players').innerHTML=(data?.players||[]).filter(p=>(p.name+' '+p.steamId).toLocaleLowerCase('pt-BR').includes(q)).map(p=>{
       const session=data.sessions.find(s=>s.steam_id===p.steamId&&['pending','redeemed','deciding'].includes(s.status));
       const command=data.commands.find(c=>c.steam_id===p.steamId);
-      return '<tr><td>'+esc(p.name)+'</td><td>'+esc(p.steamId)+'</td><td>'+(session?'Verificação em andamento':command?.status==='pending'?'Aguardando Rust':'<button type="button" data-screen="'+p.steamId+'" '+(!data.active?'disabled':'')+'>Iniciar telagem</button>')+'</td></tr>';
+      return '<tr><td>'+esc(p.name)+(p.verified?'<span class="verified-player" title="Cargo Verificado confirmado no Discord"> ✓ Verificado</span>':p.previouslyApproved?'<span class="badge" title="Aprovação anterior; cargo atual não confirmado">✓ Já aprovado</span>':'')+'</td><td>'+esc(p.steamId)+'</td><td>'+(session?'Verificação em andamento':command?.status==='pending'?'Aguardando Rust':'<button type="button" data-screen="'+p.steamId+'" '+(!data.active?'disabled':'')+'>Iniciar telagem</button>')+'</td></tr>';
     }).join('')||'<tr><td colspan="3">'+(!selected()?'Selecione um servidor.':!data?.fresh?'Aguardando lista atualizada do plugin.':'Nenhum jogador encontrado.')+'</td></tr>';
   }
   async function refresh(){
@@ -56,7 +56,10 @@ for(const root of document.querySelectorAll('[data-vorken-operations]')){
     b.disabled=true;
     try{
       if(b.dataset.screen){
-        const serverId=selected(),result=await api('/'+serverId+'/telagem',{steamId:b.dataset.screen});
+        const player=data?.players.find(p=>p.steamId===b.dataset.screen);
+        const confirmVerified=Boolean(player?.verified||player?.previouslyApproved);
+        if(confirmVerified&&!confirm('Este jogador já foi verificado. Tem certeza que quer mandar ele para verificação novamente?'))return;
+        const serverId=selected(),result=await api('/'+serverId+'/telagem',{steamId:b.dataset.screen,confirmVerified});
         await refresh();if(document.querySelector('[data-workspace-tab]'))activate('analyses');status(result.message);
       }
       if(b.dataset.session){
