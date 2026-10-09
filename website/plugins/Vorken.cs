@@ -122,7 +122,7 @@ namespace Oxide.Plugins
             if (kind == "start" && bridgeNotifications.rustStarted)
                 Server.Broadcast("<color=#FF2222>[VERIFICAÇÃO]</color> Foi iniciado um processo de verificação administrativa com o jogador <color=#FF5555>" + name + "</color>. Administrador responsável: <color=#FFD166>" + AdministratorDisplay(administrator) + "</color>.");
             else if (kind == "approve" && bridgeNotifications.rustVerified)
-                Server.Broadcast("<color=#2bf0c9>[VERIFICAÇÃO]</color> O jogador <color=#2bf0c9>" + name + "</color> foi verificado e liberado pela administração.");
+                Server.Broadcast("<color=#5AA7FF><b>[VORKEN]</b></color> <color=#38E0B0><b>VERIFICAÇÃO CONCLUÍDA</b></color>\n<color=#EAF2FF>O jogador <color=#38E0B0><b>" + name + "</b></color> foi liberado pela administração.</color>");
             else if (kind == "deny" && bridgeNotifications.rustBans)
                 Server.Broadcast("<color=#FF2222>[VORKEN SCANNER]</color> O jogador <color=#FF5555>" + name + "</color> foi banido após verificação administrativa.");
         }
