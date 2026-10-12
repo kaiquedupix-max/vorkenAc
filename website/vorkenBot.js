@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { applyDiscordBan } from './discordBans.js';
 import { createTicketQueue, ensureTicketIntro } from './vorkenTickets.js';
 import { communityVerificationEmbed, instructionMessagesToRemove } from './vorkenInstructions.js';
 import { ensureVerifiedRole } from './vorkenRoles.js';
@@ -529,6 +530,12 @@ export async function startVorkenBot(platform){
             const server=(await db.query('SELECT * FROM vorken_servers WHERE id=$1 AND guild_id=$2',[p.serverId,n.guild_id])).rows[0];
             if(!server){await db.query('UPDATE vorken_notices SET sent_at=NOW() WHERE id=$1',[n.id]);continue;}
             const settings=notificationSettings(server.notification_settings),ban=n.kind==='public_ban';
+            // Enforcement is independent of whether public announcements are enabled.
+            if(ban){
+              const banGuild=await client.guilds.fetch(n.guild_id);
+              const linked=await applyDiscordBan(db,banGuild,server.id,p.steamId,p.reason);
+              if(!linked)console.warn('Vorken ban Discord: sem conta vinculada para SteamID',p.steamId,'no servidor',server.id);
+            }
             const id=ban?settings.banChannelId:settings.verifiedChannelId;
             if(!id||!(ban?settings.discordBans:settings.discordVerified)){await db.query('UPDATE vorken_notices SET sent_at=NOW() WHERE id=$1',[n.id]);continue;}
             const channel=await client.channels.fetch(id).catch(()=>null);

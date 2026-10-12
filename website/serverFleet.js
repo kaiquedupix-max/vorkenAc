@@ -105,8 +105,8 @@ async function addBan(db, client, input, teams) {
     }
     return true;
   };
-  const added = await add(steamId, 'direct', input.expiresAt || null);
-  if (added && client.association_enabled) {
+  await add(steamId, 'direct', input.expiresAt || null);
+  if (client.association_enabled) {
     const expiresAt = new Date(Date.now() + client.association_days * 86400000);
     for (const id of associationMembers(steamId, teams)) await add(id, 'association', expiresAt);
   }

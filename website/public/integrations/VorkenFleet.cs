@@ -7,7 +7,7 @@ using Oxide.Core.Libraries;
 
 namespace Oxide.Plugins
 {
-    [Info("Vorken Fleet", "Vorken", "1.1.0")]
+    [Info("Vorken Fleet", "Vorken", "1.1.1")]
     [Description("Sincroniza banimentos e associação por time entre servidores do mesmo cliente Vorken.")]
     public class VorkenFleet : RustPlugin
     {
@@ -91,9 +91,15 @@ namespace Oxide.Plugins
             var team = manager == null ? null : manager.FindPlayersTeam(id);
             return team == null ? new List<string> { id.ToString() } : team.members.Select(member => member.ToString()).ToList();
         }
+        private void RecordVorkenBan(string playerName, ulong steamId, string reason)
+        {
+            OnPlayerBanned(playerName, steamId, "", reason, -1);
+        }
         private void OnPlayerBanned(string playerName, ulong steamId, string address, string reason, long expiry)
         {
             if (applying || state == null) return;
+            // The explicit Vorken bridge and the native hook may describe the same ban.
+            if (state.Events.Any(e => e.type == "ban" && e.steamId == steamId.ToString() && e.reason == reason && e.expiry == expiry)) return;
             state.Events.Add(new LocalEvent {id=Guid.NewGuid().ToString("N"), type="ban", steamId=steamId.ToString(), playerName=playerName, reason=reason, expiry=expiry, team=TeamFor(steamId)});
             SaveState();
             NextTick(Sync);

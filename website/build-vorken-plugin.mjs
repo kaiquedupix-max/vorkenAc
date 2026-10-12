@@ -9,7 +9,7 @@ let source=original;
 
 if(hasLegacySource){
   source=original
-    .replace('[Info("Verificacao", "Kaique", "1.6.4")]','[Info("Vorken", "Kaique", "2.0.7")]')
+    .replace('[Info("Verificacao", "Kaique", "1.6.4")]','[Info("Vorken", "Kaique", "2.0.8")]')
     .replace('public class Verificacao : RustPlugin','public class Vorken : RustPlugin')
     .replace('isolamento via Vanish e eventos RCON.','conexao HTTPS independente, sem RCON.')
     .replaceAll('verificacao','vorken')
@@ -44,10 +44,10 @@ if(hasLegacySource){
   source=source.replaceAll('dentro de 5 minutos.','dentro do prazo.').replaceAll('em 5 minutos.','dentro do prazo.');
 }else{
   // O container de produção recebe apenas website/. Nesse cenário usamos o
-  // template Vorken já versionado como base e aplicamos somente a migração 2.0.7.
+  // template Vorken já versionado como base e aplicamos somente a migração 2.0.8.
   source=source
-    .replace('[Info("Vorken", "Kaique", "2.0.3")]','[Info("Vorken", "Kaique", "2.0.7")]')
-    .replace('version = "2.0.1"','version = "2.0.7"');
+    .replace('[Info("Vorken", "Kaique", "2.0.3")]','[Info("Vorken", "Kaique", "2.0.8")]')
+    .replace('version = "2.0.1"','version = "2.0.8"');
 
   if(!source.includes('private string AdministratorDisplay(string administrator)')){
     source=source.replace(
@@ -80,7 +80,7 @@ if(hasLegacySource){
 'AdministratorDisplay(administrator) + "</color>."');
 }
 
-// Vorken 2.0.7: a tela do Rust não expõe URL, ID de canal ou convite bruto.
+// Vorken 2.0.8: a tela do Rust não expõe URL, ID de canal ou convite bruto.
 source=source.replace(
 `                            "VERIFICACAO OBRIGATORIA. NAO DESCONECTE.\\n" +
                             "Voce tem 5 MINUTOS para enviar o codigo no canal " +
@@ -150,8 +150,8 @@ if(!source.includes('Text = "VER CONVITE DO DISCORD"')){
 }
 source=source.replace('"Copie o convite abaixo e entre no Discord.\\n"','"Clique no campo abaixo e use CTRL+A e CTRL+C para copiar o convite.\\n"')
   .replace('"Abra " +\n                            Clean(settings.CanalVerificacao) +','"Procure o canal " +\n                            "VERIFICACAO VORKEN" +');
-source=source.replace(/\[Info\("Vorken", "Kaique", "2\.0\.\d+"\)\]/,'[Info("Vorken", "Kaique", "2.0.7")]')
-  .replace(/version = "2\.0\.\d+"/g,'version = "2.0.7"');
+source=source.replace(/\[Info\("Vorken", "Kaique", "2\.0\.\d+"\)\]/,'[Info("Vorken", "Kaique", "2.0.8")]')
+  .replace(/version = "2\.0\.\d+"/g,'version = "2.0.8"');
 if(!source.includes('command.action == "ban_prior"')){
   const fragment=fs.readFileSync(new URL('./plugins/bridge.fragment.cs',import.meta.url),'utf8');
   const start=fragment.indexOf('                else if (command.action == "ban_prior")');
@@ -182,6 +182,58 @@ source=source.replace(
 
             ulong parsed;`);
 
-if(!source.includes('[Info("Vorken", "Kaique", "2.0.7")]')||!source.includes('SyncBridge')||source.includes('[GF_VERIFICACAO]')||!source.includes('PROCURE O CANAL VERIFICACAO VORKEN')||source.includes('MOSTRAR CONVITE DO DISCORD')||!source.includes('AdministratorDisplay')||!source.includes('SEU CODIGO DE VERIFICACAO')||!source.includes('VER CONVITE DO DISCORD')||!source.includes('CTRL+A e CTRL+C'))throw new Error('Plugin generation failed');
+if(!source.includes('[Info("Vorken", "Kaique", "2.0.8")]')||!source.includes('SyncBridge')||source.includes('[GF_VERIFICACAO]')||!source.includes('PROCURE O CANAL VERIFICACAO VORKEN')||source.includes('MOSTRAR CONVITE DO DISCORD')||!source.includes('AdministratorDisplay')||!source.includes('SEU CODIGO DE VERIFICACAO')||!source.includes('VER CONVITE DO DISCORD')||!source.includes('CTRL+A e CTRL+C'))throw new Error('Plugin generation failed');
+// Keep Rust chat on one line, without glyphs that some chat plugins render as '?'.
+source = source.replace(/Server\.Broadcast\("<color=#5AA7FF>[^\n]+VERIFICAÇÃO CONCLUÍDA[^\n]+\);/g,
+  'Server.Broadcast("<color=#5AA7FF><b>[VORKEN]</b></color> <color=#38E0B0><b>VERIFICACAO CONCLUIDA</b></color> O jogador <color=#38E0B0>" + name + "</color> foi verificado e liberado pela administracao.");');
+
+// Direct bans also apply the local association policy, without requiring Fleet.
+if (!source.includes('public int DiasDoBanPorAssociacao')) {
+  source = source.replace('        private class Settings\n        {', '        private class Settings\n        {\n            public bool BanirTimePorAssociacao = true;\n            public int DiasDoBanPorAssociacao = 7;\n            public bool NotificarAssociacaoNoChat = true;');
+}
+// Replace the earlier Fleet-only bridge when building from generated source.
+const oldBridgeStart = source.indexOf('        private void SetVorkenBan(');
+if (oldBridgeStart >= 0) {
+  const oldBridgeEnd = source.indexOf('        private void Init()', oldBridgeStart);
+  if (oldBridgeEnd < 0) throw new Error('Missing Init after ban bridge');
+  source = source.slice(0, oldBridgeStart) + source.slice(oldBridgeEnd);
+}
+if (!source.includes('private void SetVorkenBan(')) {
+  source = source.replaceAll('ServerUsers.Set(', 'SetVorkenBan(');
+  source = source.replace('        private void Init()', `        private void SetVorkenBan(ulong steamId, ServerUsers.UserGroup group, string playerName, string reason)
+        {
+            var manager = RelationshipManager.ServerInstance;
+            var team = manager == null ? null : manager.FindPlayersTeam(steamId);
+            var members = team == null ? new List<ulong>() : new List<ulong>(team.members);
+            ServerUsers.Set(steamId, group, playerName, reason);
+            if (group != ServerUsers.UserGroup.Banned) return;
+            if (settings.BanirTimePorAssociacao)
+            {
+                int days = Math.Max(1, Math.Min(365, settings.DiasDoBanPorAssociacao));
+                long expiry = DateTimeOffset.UtcNow.AddDays(days).ToUnixTimeSeconds();
+                foreach (ulong member in members)
+                {
+                    if (member == steamId) continue;
+                    var existing = ServerUsers.Get(member);
+                    if (existing != null && existing.group == ServerUsers.UserGroup.Banned &&
+                        (existing.expiry <= 0 || existing.expiry > DateTimeOffset.UtcNow.ToUnixTimeSeconds())) continue;
+                    var target = BasePlayer.FindByID(member) ?? BasePlayer.FindSleeping(member);
+                    string memberName = target != null ? target.displayName : member.ToString();
+                    string associationReason = "Associacao com " + steamId + ": " + reason;
+                    ServerUsers.Set(member, ServerUsers.UserGroup.Banned, memberName, associationReason, expiry);
+                    if (settings.NotificarAssociacaoNoChat)
+                        PrintToChat("[VORKEN] " + Clean(memberName) + " (" + member + ") banido por associacao com " + Clean(playerName) + " por " + days + " dia(s).");
+                    if (target != null && target.IsConnected) target.Kick("VORKEN: " + associationReason);
+                }
+                ServerUsers.Save();
+            }
+            var fleet = plugins.Find("VorkenFleet");
+            if (fleet != null) fleet.Call("RecordVorkenBan", playerName, steamId, reason);
+        }
+
+        private void Init()`);
+}
 fs.mkdirSync(new URL('./plugins/',import.meta.url),{recursive:true});
+if (!source.includes('public int DiasDoBanPorAssociacao') || !source.includes('private void SetVorkenBan('))
+  throw new Error('Plugin association configuration generation failed');
 fs.writeFileSync(generatedSourceUrl,source);
