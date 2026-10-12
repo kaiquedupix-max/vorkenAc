@@ -50,16 +50,18 @@ export function publicNotice(kind,p){
   const ban=kind==='public_ban';
   const steamId=safe(p.steamId,32),profile=`https://steamcommunity.com/profiles/${steamId}`;
   if(ban){
+    const association=p.kind==='association';
     return {
-      color:0xe53935,
-      title:'🔨 Banimento aplicado',
-      description:p.discordUserId?`O jogador <@${p.discordUserId}> foi banido após a verificação Vorken.`:'O jogador foi banido após a verificação Vorken.',
+      color:association?0xff9f43:0xe53935,
+      title:association?'🔗 Banimento por associação':'🔨 Banimento aplicado',
+      description:association?`**${safe(p.playerName,100)}** recebeu um banimento temporário por pertencer ao time do jogador banido.`:p.discordUserId?`O jogador <@${p.discordUserId}> foi banido após a verificação Vorken.`:'O jogador foi banido após a verificação Vorken.',
       fields:[
         {name:'Jogador',value:safe(p.playerName,100),inline:true},
         {name:'SteamID',value:steamId,inline:true},
         {name:'Duração',value:safe(p.duration||'Permanente',40),inline:true},
+        ...(association?[{name:'Jogador de origem',value:`${safe(p.sourcePlayerName,100)} · ${safe(p.sourceSteamId,32)}`,inline:false}]:[]),
         {name:'Motivo',value:safe(p.reason||'Decisão administrativa.',500),inline:false},
-        {name:'Responsável',value:safe(p.administratorName||'Administração Vorken',100),inline:true},
+        {name:'Responsável',value:association?'Vorken · Associação automática':safe(p.administratorName||'Administração Vorken',100),inline:true},
         {name:'Perfil Steam',value:`[Abrir perfil](${profile})`,inline:true},
       ],
       ...(p.avatarUrl?{thumbnail:{url:p.avatarUrl}}:{}),

@@ -521,21 +521,23 @@ export async function startVorkenBot(platform){
         await db.query('UPDATE vorken_sessions SET notified_stage=$2 WHERE id=$1',[s.id,s.processing_stage]);
       }
 
+      await db.query('UPDATE vorken_bans SET active=FALSE WHERE active AND expires_at<=NOW()');
       const notices=await db.query('SELECT n.*,g.alerts_channel_id,g.verified_role_id,g.screening_role_id FROM vorken_notices n JOIN vorken_guilds g ON g.id=n.guild_id WHERE n.sent_at IS NULL AND n.next_attempt_at<=NOW() ORDER BY n.created_at LIMIT 20');
       for(const n of notices.rows){
         await db.query("UPDATE vorken_notices SET next_attempt_at=NOW()+interval '5 minutes' WHERE id=$1",[n.id]);
         try{
+          if(n.kind==='discord_ban'){
+            const p=n.payload;
+            const guild=await client.guilds.fetch(n.guild_id);
+            const linked=await applyDiscordBan(db,guild,p.serverId,p.steamId,p.reason);
+            if(!linked)console.warn('Vorken ban Discord: sem conta vinculada para SteamID',p.steamId);
+            await db.query('UPDATE vorken_notices SET sent_at=NOW() WHERE id=$1',[n.id]);continue;
+          }
           if(['public_ban','public_verified'].includes(n.kind)){
             const p=n.payload;
             const server=(await db.query('SELECT * FROM vorken_servers WHERE id=$1 AND guild_id=$2',[p.serverId,n.guild_id])).rows[0];
             if(!server){await db.query('UPDATE vorken_notices SET sent_at=NOW() WHERE id=$1',[n.id]);continue;}
             const settings=notificationSettings(server.notification_settings),ban=n.kind==='public_ban';
-            // Enforcement is independent of whether public announcements are enabled.
-            if(ban){
-              const banGuild=await client.guilds.fetch(n.guild_id);
-              const linked=await applyDiscordBan(db,banGuild,server.id,p.steamId,p.reason);
-              if(!linked)console.warn('Vorken ban Discord: sem conta vinculada para SteamID',p.steamId,'no servidor',server.id);
-            }
             const id=ban?settings.banChannelId:settings.verifiedChannelId;
             if(!id||!(ban?settings.discordBans:settings.discordVerified)){await db.query('UPDATE vorken_notices SET sent_at=NOW() WHERE id=$1',[n.id]);continue;}
             const channel=await client.channels.fetch(id).catch(()=>null);

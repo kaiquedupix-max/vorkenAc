@@ -8,7 +8,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Vorken", "Kaique", "2.0.8")]
+    [Info("Vorken", "Kaique", "2.0.9")]
     [Description("Telagem administrativa integrada ao Vorken/Discord com codigo individual, conexao HTTPS independente, sem RCON.")]
     public class Vorken : RustPlugin
     {
@@ -140,6 +140,8 @@ namespace Oxide.Plugins
         }
         private class BridgeEvent
         {
+            public string sourceSteamId, sourcePlayerName;
+            public int associationDays;
             public string id, eventType, steamId, playerName, sessionId, code, administrator, reason, expiresAt;
         }
         private class BridgeReceipt
@@ -218,7 +220,7 @@ namespace Oxide.Plugins
                     if (player != null && player.IsConnected && !player.IsNpc)
                         players.Add(new BridgePlayer { steamId = player.UserIDString, name = player.displayName });
             }
-            string payload = JsonConvert.SerializeObject(new { version = "2.0.8", events = events, receipts = receipts, players = players });
+            string payload = JsonConvert.SerializeObject(new { version = "2.0.9", events = events, receipts = receipts, players = players });
             webrequest.Enqueue(ApiBase + "/api/vorken/plugin/sync", payload, (status, response) => {
                 syncPending = false;
                 if (unloading) return;
@@ -283,7 +285,7 @@ namespace Oxide.Plugins
                     SetVorkenBan(steamId, ServerUsers.UserGroup.Banned, name, reason);
                     ServerUsers.Save();
                     if (target != null && target.IsConnected) target.Kick(reason);
-                    AnnounceBridge("deny", name);
+                    
                     receipt.ok = true; receipt.result = "Banimento anterior confirmado pela administracao deste servidor.";
                 }
                 else if (command.detachedSession && (command.action == "approve" || command.action == "deny"))
@@ -308,7 +310,7 @@ namespace Oxide.Plugins
                         permission.CreateGroup("vorken.verificado", "Vorken Verificado", 0);
                         permission.AddUserGroup(command.steamId, "vorken.verificado");
                     }
-                    AnnounceBridge(command.action, name);
+                    if (command.action == "approve") AnnounceBridge("approve", name);
                     receipt.ok = true; receipt.result = "Decisao do relatorio encerrado aplicada no Rust.";
                 }
                 else if (!sessions.TryGetValue(steamId, out session) || session.Id != command.sessionId)
@@ -338,7 +340,7 @@ namespace Oxide.Plugins
                     ServerUsers.Save();
                     BasePlayer player = Find(steamId);
                     if (player != null && player.IsConnected) player.Kick(reason);
-                    AnnounceBridge("deny", name);
+                    
                     receipt.ok = true; receipt.result = "Banimento aplicado pelo Vorken.";
                 }
                 else { receipt.ok = false; receipt.result = "Acao desconhecida."; }
@@ -357,6 +359,8 @@ namespace Oxide.Plugins
             var members = team == null ? new List<ulong>() : new List<ulong>(team.members);
             ServerUsers.Set(steamId, group, playerName, reason);
             if (group != ServerUsers.UserGroup.Banned) return;
+            if (bridgeNotifications.rustBans)
+                Server.Broadcast("<color=#FF5555><b>[VORKEN] BANIMENTO APLICADO</b></color> Jogador: <color=#FFD166>" + Clean(playerName) + "</color> (" + steamId + ") | Duracao: permanente | Motivo: " + Clean(reason));
             if (settings.BanirTimePorAssociacao)
             {
                 int days = Math.Max(1, Math.Min(365, settings.DiasDoBanPorAssociacao));
@@ -371,8 +375,15 @@ namespace Oxide.Plugins
                     string memberName = target != null ? target.displayName : member.ToString();
                     string associationReason = "Associacao com " + steamId + ": " + reason;
                     ServerUsers.Set(member, ServerUsers.UserGroup.Banned, memberName, associationReason, expiry);
+                    bridge.Events.Add(new BridgeEvent {
+                        id = Guid.NewGuid().ToString(), eventType = "association_ban", steamId = member.ToString(),
+                        playerName = memberName, reason = reason, sourceSteamId = steamId.ToString(),
+                        sourcePlayerName = playerName, associationDays = days,
+                        expiresAt = DateTimeOffset.FromUnixTimeSeconds(expiry).UtcDateTime.ToString("o")
+                    });
+                    SaveBridge();
                     if (settings.NotificarAssociacaoNoChat)
-                        PrintToChat("[VORKEN] " + Clean(memberName) + " (" + member + ") banido por associacao com " + Clean(playerName) + " por " + days + " dia(s).");
+                        Server.Broadcast("<color=#FF9F43><b>[VORKEN] BANIMENTO POR ASSOCIACAO</b></color> Jogador: <color=#FFD166>" + Clean(memberName) + "</color> (" + member + ") | Associado a: " + Clean(playerName) + " (" + steamId + ") | Duracao: " + days + " dia(s) | Motivo de origem: " + Clean(reason));
                     if (target != null && target.IsConnected) target.Kick("VORKEN: " + associationReason);
                 }
                 ServerUsers.Save();

@@ -213,7 +213,12 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
     await audit(db,actor,'decision_requested',s.id,{ action,commandId,evidenceIds,trustedIds });
     return commandId;
   }
-  const notify=async (db,guildId,kind,payload) => db.query('INSERT INTO vorken_notices(id,guild_id,kind,payload) VALUES($1,$2,$3,$4)',[crypto.randomUUID(),guildId,kind,JSON.stringify(payload)]);
+  const notify=async (db,guildId,kind,payload) => {
+    const result=await db.query('INSERT INTO vorken_notices(id,guild_id,kind,payload) VALUES($1,$2,$3,$4)',[crypto.randomUUID(),guildId,kind,JSON.stringify(payload)]);
+    if(kind==='public_ban'&&payload.kind!=='association')
+      await db.query('INSERT INTO vorken_notices(id,guild_id,kind,payload) VALUES($1,$2,$3,$4)',[crypto.randomUUID(),guildId,'discord_ban',JSON.stringify(payload)]);
+    return result;
+  };
 
   const verifiedMembers=new Map();
   async function verifiedPlayers(server,players){
@@ -685,6 +690,14 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
           const bans=await db.query(`SELECT b.id,b.reason,b.created_at,s.name AS server_name,b.evidence FROM vorken_bans b JOIN vorken_servers s ON s.id=b.server_id
             WHERE b.steam_id=$1 AND b.active AND b.server_id<>$2 ORDER BY b.created_at DESC LIMIT 10`,[event.steamId,server.id]);
           if(bans.rows.length) await notify(db,server.guild_id,'prior_ban',{serverId:server.id,steamId:event.steamId,playerName:clean(event.playerName,80),serverName:server.name,bans:bans.rows});
+        } else if(event.eventType==='association_ban'){
+          const days=Number(event.associationDays),expiresAt=new Date(event.expiresAt);
+          if(!steam(event.sourceSteamId)||event.sourceSteamId===event.steamId||!Number.isInteger(days)||days<1||days>365||!Number.isFinite(expiresAt.getTime())||expiresAt.getTime()>Date.now()+366*86400000)fail(400,'Evento de associação inválido.');
+          const reason=`Associação com ${event.sourceSteamId}: ${clean(event.reason,400)}`;
+          await db.query(`INSERT INTO vorken_bans(id,server_id,steam_id,player_name,reason,evidence,kind,source_steam_id,expires_at,active)
+            VALUES($1,$2,$3,$4,$5,$6,'association',$7,$8,$9)`,[event.id,server.id,event.steamId,clean(event.playerName,100),reason,
+            JSON.stringify([{type:'team_association',sourceSteamId:event.sourceSteamId,sourcePlayerName:clean(event.sourcePlayerName,100),reason:clean(event.reason,400)}]),event.sourceSteamId,expiresAt,expiresAt.getTime()>Date.now()]);
+          if(expiresAt.getTime()>Date.now())await notify(db,server.guild_id,'public_ban',{serverId:server.id,serverName:server.name,steamId:event.steamId,playerName:clean(event.playerName,100),kind:'association',sourceSteamId:event.sourceSteamId,sourcePlayerName:clean(event.sourcePlayerName,100),reason,duration:`${days} dia(s)`,expiresAt:expiresAt.toISOString()});
         } else if(event.eventType==='session_started'&&uuid(event.sessionId)&&/^\d{4}$/.test(event.code)){
           if(!await serverActive(server,db)) continue;
           const expiry=new Date(event.expiresAt); if(!Number.isFinite(expiry.getTime())) continue;

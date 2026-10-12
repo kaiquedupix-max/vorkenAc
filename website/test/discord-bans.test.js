@@ -1,6 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {applyDiscordBan} from '../discordBans.js';
+import {publicNotice} from '../vorkenSettings.js';
+
+test('association banfeed distinguishes teammates from confirmed offenders', () => {
+  const embed=publicNotice('public_ban',{kind:'association',playerName:'Duo',steamId:'76561198000000061',sourceSteamId:'76561198000000060',sourcePlayerName:'Origem',duration:'7 dia(s)',reason:'Associação',serverName:'Rust'});
+  assert.match(embed.title,/associação/);
+  assert.match(embed.description,/temporário/);
+  assert.equal(embed.fields.find(f=>f.name==='Duração').value,String.raw`7 dia\(s\)`);
+  assert.match(embed.fields.find(f=>f.name==='Jogador de origem').value,/Origem/);
+  assert.equal(publicNotice('public_ban',{playerName:'Principal'}).title,'🔨 Banimento aplicado');
+});
 
 test('Discord ban uses only a linked account in the originating guild and server', async () => {
   let called;

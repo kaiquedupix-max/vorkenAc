@@ -321,6 +321,27 @@ test('platform routes isolate customers, confirm decisions and activate payments
     assert.equal(rows[0].reason,record.reason);assert.equal(rows[0].administrator_name,record.admin_name);assert.equal(rows[0].active,true);assert.equal(rows[1].active,false);
     assert.equal(rows[0].evidence[0].evidence.legacyRecordId,692);
   });
+  await t.test('association bans reach the banfeed and audit once, with source and temporary duration',async()=>{
+    const association={id:crypto.randomUUID(),eventType:'association_ban',steamId:'76561198000000061',playerName:'Duo',sourceSteamId:'76561198000000060',sourcePlayerName:'Origem',reason:'Prova confirmada',associationDays:7,expiresAt:new Date(Date.now()+7*86400000).toISOString()};
+    for(let i=0;i<2;i++)assert.equal((await request('/plugin/sync',{token:token2,body:{events:[association]}})).status,200);
+    const ban=(await pool.query('SELECT * FROM vorken_bans WHERE id=$1',[association.id])).rows[0];
+    assert.equal(ban.kind,'association');assert.equal(ban.source_steam_id,association.sourceSteamId);assert.equal(ban.active,true);
+    assert.equal(ban.evidence[0].type,'team_association');
+    const notices=(await pool.query("SELECT * FROM vorken_notices WHERE payload->>'steamId'=$1",[association.steamId])).rows;
+    assert.equal(notices.length,1);assert.equal(notices[0].kind,'public_ban');
+    assert.equal(notices[0].payload.duration,'7 dia(s)');assert.equal(notices[0].payload.sourcePlayerName,'Origem');
+    const expired={...association,id:crypto.randomUUID(),steamId:'76561198000000062',expiresAt:new Date(Date.now()-86400000).toISOString()};
+    assert.equal((await request('/plugin/sync',{token:token2,body:{events:[expired]}})).status,200);
+    assert.equal((await pool.query('SELECT active FROM vorken_bans WHERE id=$1',[expired.id])).rows[0].active,false);
+    assert.equal((await pool.query("SELECT * FROM vorken_notices WHERE payload->>'steamId'=$1",[expired.steamId])).rows.length,0);
+    assert.equal((await request('/plugin/sync',{token:token2,body:{events:[{...association,id:crypto.randomUUID(),sourceSteamId:association.steamId}]}})).status,400);
+  });
+  await t.test('confirmed direct bans enqueue Discord enforcement separately from public notification',async()=>{
+    const notices=(await pool.query("SELECT * FROM vorken_notices WHERE kind IN ('discord_ban','public_ban')")).rows;
+    const direct=notices.find(n=>n.kind==='public_ban'&&n.payload.kind!=='association');
+    assert.ok(direct);
+    assert.ok(notices.some(n=>n.kind==='discord_ban'&&n.guild_id===direct.guild_id&&n.payload.steamId===direct.payload.steamId));
+  });
   await t.test('license revocation stops commands and new sessions without disabling cleanup',async()=>{
     await request('/admin/customers/'+c1+'/license',{owner:true,body:{action:'revoke'}});
     const r=await request('/plugin/sync',{token:token1,body:{events:[{...event,id:crypto.randomUUID(),sessionId:crypto.randomUUID(),code:'5555'}]}});
