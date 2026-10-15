@@ -49,7 +49,7 @@ export function createBattleMetricsClient({ token = '', queryId = '', fetchImpl 
     const local = new Set(list(report?.steamAccounts).map(x => String(x?.steamId64 || '')).filter(x => steamPattern.test(x)));
     const seeds = [...new Set([String(linkedSteamId || ''), ...local])].filter(x => steamPattern.test(x));
     const ip = publicIp(report?.connectionEvidence?.publicIp);
-    const key = createHash('sha256').update(JSON.stringify([seeds,ip,queryId])).digest('hex');
+    const key = createHash('sha256').update(JSON.stringify([seeds,ip,queryId,[...local].sort()])).digest('hex');
     const cached = cache.get(key);
     if (cached && now() - cached.at < 15 * 60 * 1000) return { ...structuredClone(cached.value), cached: true };
     if (now() < blockedUntil) return { ...base, status: 'rate_limited', retryAt: new Date(blockedUntil).toISOString() };
