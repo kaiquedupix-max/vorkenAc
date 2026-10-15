@@ -74,7 +74,9 @@ test('platform routes isolate customers, confirm decisions and activate payments
   const learned=[],revoked=[],reportScopes=[];
   const sharedReport={analysis:{id:1,status:'completed'},report:{payload:{files:[{name:'inventory'}],browserHistorySignals:[{url:'history'}],uiCounts:{files:484}}},findings:[{id:1,severity:'critical',title:'Critical preserved'}],commonApps:[],relatedAnalyses:[]};
   const app=express();app.use(express.json());app.use(cookieParser());
+  const battleMetricsCalls=[];
   const platform=installVorkenPlatform(app,{pool,publicUrl:'https://vorken.xyz',
+    refreshBattleMetrics:async id=>{battleMetricsCalls.push(id);return {status:'not_configured',accounts:[]};},
     loadRawAnalysisReport:async()=>sharedReport.report.payload,
     loadAnalysisReport:async(id,serverId)=>{reportScopes.push({id,serverId});return {...sharedReport,analysis:{...sharedReport.analysis,id}};},
     requireAdmin:(req,res,next)=>req.get('x-test-owner')==='yes'?next():res.sendStatus(401),
@@ -204,6 +206,17 @@ test('platform routes isolate customers, confirm decisions and activate payments
     assert.equal(reportScopes.length,calls);
   });
   let commandId;
+  await t.test('BattleMetrics refresh preserves customer and server access boundaries',async()=>{
+    const before=battleMetricsCalls.length;
+    assert.equal((await request('/sessions/'+sessionId+'/battlemetrics',{customerId:c2,body:{}})).status,404);
+    assert.equal((await request('/operations/'+s2+'/sessions/'+sessionId+'/battlemetrics',{customerId:c2,body:{}})).status,404);
+    assert.equal(battleMetricsCalls.length,before);
+    for(const path of ['/sessions/'+sessionId+'/battlemetrics','/operations/'+s1+'/sessions/'+sessionId+'/battlemetrics','/admin/operations/'+s1+'/sessions/'+sessionId+'/battlemetrics']){
+      const r=await request(path,{owner:path.includes('/admin/'),body:{}});
+      assert.equal(r.status,200);assert.equal(r.data.battleMetrics.status,'not_configured');
+    }
+    assert.equal(battleMetricsCalls.length,before+3);
+  });
   await t.test('ended report requires an updated plugin and preserves ended state on failure',async()=>{
     await pool.query("UPDATE vorken_sessions SET status='ended' WHERE id=$1",[sessionId]);
     const old=await request('/sessions/'+sessionId+'/decision',{body:{decision:'approve'}});

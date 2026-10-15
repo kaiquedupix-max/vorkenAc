@@ -18,9 +18,9 @@ const clean=(value,max=100)=>String(value||'').replace(/[\r\n\t|]/g,' ').replace
 const steamProfile=id=>'https://steamcommunity.com/profiles/'+encodeURIComponent(String(id||''));
 
 const ticketCopy={
-  pt:{title:'🛡️ Verificação Vorken',description:'Sua sala privada de verificação está pronta. Use o botão abaixo para baixar o Vorken e mantenha o Rust aberto até a coleta terminar.',player:'Jogador',steam:'Steam',admin:'Administração responsável',status:'Status',statusValue:'Aguardando execução do Vorken',download:'Baixar Vorken',footer:'Vorken Scanner · Sala privada'},
-  en:{title:'🛡️ Vorken Verification',description:'Your private verification room is ready. Use the button below to download Vorken and keep Rust open until collection finishes.',player:'Player',steam:'Steam',admin:'Responsible administrator',status:'Status',statusValue:'Waiting for Vorken to run',download:'Download Vorken',footer:'Vorken Scanner · Private room'},
-  es:{title:'🛡️ Verificación Vorken',description:'Tu sala privada de verificación está lista. Usa el botón de abajo para descargar Vorken y mantén Rust abierto hasta que termine la recopilación.',player:'Jugador',steam:'Steam',admin:'Administración responsable',status:'Estado',statusValue:'Esperando la ejecución de Vorken',download:'Descargar Vorken',footer:'Vorken Scanner · Sala privada'}
+  pt:{title:'🛡️ Verificação Vorken',description:'Sua sala privada de verificação está pronta. Use o botão abaixo para baixar o Vorken e mantenha o Rust aberto até a coleta terminar.',player:'Jogador',steam:'Steam',admin:'Administração responsável',status:'Status',statusValue:'Aguardando execução do Vorken',download:'Baixar Vorken',downloadNow:'BAIXAR VORKEN AGORA',downloadHint:'CLIQUE NO BOTÃO ABAIXO PARA BAIXAR',footer:'Vorken Scanner · Sala privada'},
+  en:{title:'🛡️ Vorken Verification',description:'Your private verification room is ready. Use the button below to download Vorken and keep Rust open until collection finishes.',player:'Player',steam:'Steam',admin:'Responsible administrator',status:'Status',statusValue:'Waiting for Vorken to run',download:'Download Vorken',downloadNow:'DOWNLOAD VORKEN NOW',downloadHint:'CLICK THE BUTTON BELOW TO DOWNLOAD',footer:'Vorken Scanner · Private room'},
+  es:{title:'🛡️ Verificación Vorken',description:'Tu sala privada de verificación está lista. Usa el botón de abajo para descargar Vorken y mantén Rust abierto hasta que termine la recopilación.',player:'Jugador',steam:'Steam',admin:'Administración responsable',status:'Estado',statusValue:'Esperando la ejecución de Vorken',download:'Descargar Vorken',downloadNow:'DESCARGAR VORKEN AHORA',downloadHint:'HAZ CLIC EN EL BOTÓN DE ABAJO PARA DESCARGAR',footer:'Vorken Scanner · Sala privada'}
 };
 
 const statusCopy={
@@ -267,7 +267,7 @@ export async function startVorkenBot(platform){
     const context=await sessionContext(sessionId,db);
     if(!context)return null;
     const {row,admin,member}=context,copy=ticketCopy[lang];
-    const embed=new EmbedBuilder().setColor(0x2bf0c9).setTitle(copy.title).setDescription(copy.description)
+    const embed=new EmbedBuilder().setColor(0xffc400).setTitle(copy.title).setDescription(copy.description)
       .addFields(
         {name:copy.player,value:clean(row.player_name,100)||'—',inline:true},
         {name:copy.steam,value:`[${row.steam_id}](${steamProfile(row.steam_id)})`,inline:true},
@@ -277,9 +277,9 @@ export async function startVorkenBot(platform){
     if(member?.user)embed.setThumbnail(member.user.displayAvatarURL({size:256}));
     const download=publicUrl+'/a/'+row.public_token;
     const rowButtons=new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setLabel('⬇⬇ '+copy.download.toUpperCase()+' ⬇⬇').setStyle(ButtonStyle.Link).setURL(download));
+      new ButtonBuilder().setEmoji('📥').setLabel('⬇ '+copy.downloadNow+' ⬇').setStyle(ButtonStyle.Link).setURL(download));
     const languages=new ActionRowBuilder().addComponents(...ticketLanguageButtons(row.id,'vorken_ticket_lang'));
-    return {content:`# ⬇ ${copy.download.toUpperCase()}\n**[${copy.download}](${download})**`,embeds:[embed],components:[rowButtons,languages],allowedMentions:noMentions};
+    return {content:`# 📥 ${copy.downloadNow}\n## ⬇️ ${copy.downloadHint} ⬇️\n**[🔗 ${copy.downloadNow}](${download})**`,embeds:[embed],components:[rowButtons,languages],allowedMentions:noMentions};
   }
 
   const ensureTicketById=createTicketQueue(pool,async(sessionId,db)=>{

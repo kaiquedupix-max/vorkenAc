@@ -12,6 +12,7 @@ const COLLECTION_LIMITS = Object.freeze({
 const SAFE_OBJECT_KEYS = new Set([
   "hardwareSummary",
   "steamAccountCorrelation",
+  "battleMetrics",
 ]);
 
 export function isUsbStorageDevice(item) {

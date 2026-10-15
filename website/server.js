@@ -24,6 +24,12 @@ import { initRemoteSupportDb, installRemoteSupport } from "./remoteSupport.js";
 import { initFleetDb, installFleet, clientReportVisibility } from "./serverFleet.js";
 import { initVorkenPlatform, installVorkenPlatform, backfillLegacyVorkenBans } from "./vorkenPlatform.js";
 import { startVorkenBot } from "./vorkenBot.js";
+import { createBattleMetricsClient, captureConnectionEvidence } from "./battleMetrics.js";
+
+const battleMetricsClient = createBattleMetricsClient({
+  token: String(process.env.BATTLEMETRICS_API_TOKEN || "").trim(),
+  queryId: String(process.env.BATTLEMETRICS_PLAYER_QUERY_ID || "").trim(),
+});
 
 const { Pool } = pg;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -1476,15 +1482,24 @@ async function processSubmittedReportWithRetry(
     await pool.query(
       `UPDATE analyses
        SET processing_stage='external_checks',
-           processing_message='Consultando histórico das contas Steam na Steam e no Server Armour...'
+           processing_message='Consultando histórico externo das contas e vínculos disponíveis...'
        WHERE id=$1`,
       [analysis.id]
     );
 
-    await enrichSteamAccountReport(
-      report,
-      analysis.external_player_id
-    );
+    try {
+      await enrichSteamAccountReport(report, analysis.external_player_id);
+    } catch {
+      // A Steam provider outage must not skip BattleMetrics enrichment.
+      console.warn("Histórico Steam indisponível; seguindo com consultas externas e filtros locais.", {analysisId: analysis.id});
+    }
+
+    // This provider is context for manual review, never an automatic ban signal.
+    try {
+      report.battleMetrics = await battleMetricsClient.analyze(report, analysis.external_player_id);
+    } catch {
+      report.battleMetrics = { status: "unavailable", checkedAt: new Date().toISOString(), accounts: [], checks: [] };
+    }
 
     try {
       await persistEnrichedSteamReport(
@@ -9212,6 +9227,7 @@ function compactAdminReportPayload(report) {
     // transferred. Large PE/process/file/USN inventories remain server-side.
     steamAccounts: compactAdminUiList(payload.steamAccounts, 100),
     steamAccountCorrelation: compactAdminUiValue(payload.steamAccountCorrelation || {}),
+    battleMetrics: payload.battleMetrics || null,
     usbCurrent: compactAdminUiList(payload.usbCurrent, 150),
     usbHistory: compactAdminUiList(payload.usbHistory, 400),
     usbTimeline: compactAdminUiList(payload.usbTimeline, 400),
@@ -9404,6 +9420,32 @@ app.get("/api/admin/analyses/:id", requireAdmin, async (req,res)=>{
  const report=await loadSharedAnalysisReport(id);
  if(!report)return res.status(404).json({error:'analysis_not_found'});
  res.json(report);
+});
+
+const activeBattleMetricsChecks = new Map();
+async function refreshBattleMetrics(analysisId) {
+  if (activeBattleMetricsChecks.has(analysisId)) return activeBattleMetricsChecks.get(analysisId);
+  const work = (async () => {
+    const result = await pool.query(`SELECT a.external_player_id, r.id AS report_id, r.payload, r.payload_raw, r.payload_encoding
+      FROM analyses a JOIN LATERAL (SELECT * FROM scan_reports WHERE analysis_id=a.id ORDER BY id DESC LIMIT 1) r ON TRUE
+      WHERE a.id=$1 AND a.status='completed'`, [analysisId]);
+    const row = result.rows[0];
+    if (!row) throw new Error("Aguarde uma análise concluída com relatório para consultar o BattleMetrics.");
+    const payload = decodeStoredRawReport(row);
+    const value = await battleMetricsClient.analyze(payload, row.external_player_id);
+    // Patch only external context; preserve concurrent local reprocessing.
+    await pool.query("UPDATE scan_reports SET payload=jsonb_set(payload,'{battleMetrics}',$2::jsonb) WHERE id=$1", [row.report_id, JSON.stringify(value)]);
+    return value;
+  })();
+  activeBattleMetricsChecks.set(analysisId, work);
+  try { return await work; } finally { activeBattleMetricsChecks.delete(analysisId); }
+}
+app.post("/api/admin/analyses/:id/battlemetrics", requireAdmin, async (req,res) => {
+  if (req.get("X-Vorken-Request") !== "portal") return res.status(403).json({message:"Origem da solicitação inválida."});
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id) || id <= 0) return res.status(400).json({message:"Análise inválida."});
+  try { res.json({battleMetrics:await refreshBattleMetrics(id)}); }
+  catch { res.status(409).json({message:"Não foi possível consultar. Verifique se a análise foi concluída."}); }
 });
 
 app.get("/api/admin/analyses/:id/raw-hash", requireAdmin, async (req, res) => {
@@ -10253,7 +10295,11 @@ app.post("/api/agent/:token/report", async (req, res) => {
       return res.status(400).json({ error: "invalid_report" });
     }
 
-    const originalReport = req.body;
+    // Never accept client-supplied public IP evidence or external provider results.
+    const originalReport = { ...req.body,
+      connectionEvidence: captureConnectionEvidence(req, process.env.BATTLEMETRICS_TRUST_PROXY_HOPS || 0),
+    };
+    delete originalReport.battleMetrics;
     const report =
       sanitizeJsonForPostgres(originalReport);
 
@@ -10793,7 +10839,7 @@ app.get("/a/:token", (_req, res) => {
 });
 
 const vorkenPlatform = installVorkenPlatform(app, {
-  pool, publicUrl, requireAdmin, learnAnalysisArtifacts, revokeLearnedTrustForFindings, loadAnalysisReport: loadSharedAnalysisReport, loadPlayerProfiles: querySteamOfficialBatch, loadRawAnalysisReport,
+  pool, publicUrl, requireAdmin, learnAnalysisArtifacts, revokeLearnedTrustForFindings, loadAnalysisReport: loadSharedAnalysisReport, loadPlayerProfiles: querySteamOfficialBatch, loadRawAnalysisReport, refreshBattleMetrics,
 });
 app.get("/relatorio", (_req,res)=>res.sendFile(path.join(__dirname,"public","admin.html")));
 app.get('/como-funciona',(_req,res)=>res.sendFile(path.join(__dirname,'public','como-funciona.html')));

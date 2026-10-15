@@ -239,6 +239,10 @@ function normalizeSteamId64Input(value) {
 
 async function api(url, options = {}) {
  if(scopedReport){
+  if(url.endsWith('/battlemetrics')){
+   const response=await fetch(scopedBase()+'/battlemetrics',{...options,headers:{'Content-Type':'application/json','X-Vorken-Request':'portal'}});
+   const data=await response.json();if(!response.ok)throw new Error(data.message||'Consulta indisponível.');return data;
+  }
   if(url==='/api/admin/analyses/'+encodeURIComponent(scopedReport)||url==='/api/admin/analyses/'+scopedSessionState?.analysis_id){
    const response=await fetch(scopedBase()+'/report',{...options,credentials:'same-origin'});
    const data=await response.json();if(!response.ok)throw new Error(data.message||'Relatório indisponível.');
@@ -1145,6 +1149,25 @@ async function queueGuerraFriaDecision(action) {
   }
 }
 
+document.getElementById("battleMetricsRefresh")?.addEventListener("click", async event => {
+  if (!currentReportId) return;
+  const reportId = currentReportId;
+  const button = event.currentTarget;
+  button.disabled = true;
+  button.textContent = "Consultando BattleMetrics...";
+  try {
+    const data = await api("/api/admin/analyses/" + encodeURIComponent(reportId) + "/battlemetrics", {method:"POST",headers:{"Content-Type":"application/json","X-Vorken-Request":"portal"}});
+    if (currentReportId === reportId) window.renderBattleMetrics?.(data.battleMetrics);
+    lastReportCache = null;
+  } catch (error) {
+    const target = document.getElementById("battleMetricsResults");
+    if (target && currentReportId === reportId) target.textContent = error.message || "Consulta indisponível.";
+  } finally {
+    button.disabled = false;
+    button.textContent = "Consultar BattleMetrics";
+  }
+});
+
 document.getElementById("gfBanBtn")?.addEventListener(
   "click",
   () => queueGuerraFriaDecision("ban")
@@ -1442,6 +1465,7 @@ async function openReport(id, options = {}) {
       : safeArray(rows).length;
   };
   currentReportPayload = payload;
+  window.renderBattleMetrics?.(payload.battleMetrics);
   window.dispatchEvent(new CustomEvent("vorken:report", {detail: {analysis, report, findings}}));
   const collectionCounts =
     payload.uiCollectionCounts && typeof payload.uiCollectionCounts === "object"
