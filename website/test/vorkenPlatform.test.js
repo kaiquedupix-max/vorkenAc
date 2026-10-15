@@ -321,6 +321,15 @@ test('platform routes isolate customers, confirm decisions and activate payments
     assert.equal(rows[0].reason,record.reason);assert.equal(rows[0].administrator_name,record.admin_name);assert.equal(rows[0].active,true);assert.equal(rows[1].active,false);
     assert.equal(rows[0].evidence[0].evidence.legacyRecordId,692);
   });
+  await t.test('rollout excludes all existing bans without removing historical records',async()=>{
+    const before=(await pool.query('SELECT count(*)::int AS n FROM vorken_bans')).rows[0].n;
+    assert(before>0);
+    await pool.query('ALTER TABLE vorken_bans DROP COLUMN network_eligible');
+    await initVorkenPlatform(pool);
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM vorken_bans')).rows[0].n,before);
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM vorken_bans WHERE network_eligible')).rows[0].n,0);
+    assert.equal((await request('/plugin/sync',{token:token2,body:{}})).data.networkBans.length,0);
+  });
   await t.test('association bans reach the banfeed and audit once, with source and temporary duration',async()=>{
     const association={id:crypto.randomUUID(),eventType:'association_ban',steamId:'76561198000000061',playerName:'Duo',sourceSteamId:'76561198000000060',sourcePlayerName:'Origem',reason:'Prova confirmada',associationDays:7,expiresAt:new Date(Date.now()+7*86400000).toISOString()};
     for(let i=0;i<2;i++)assert.equal((await request('/plugin/sync',{token:token2,body:{events:[association]}})).status,200);
@@ -342,11 +351,20 @@ test('platform routes isolate customers, confirm decisions and activate payments
     await pool.query(`INSERT INTO vorken_servers(id,customer_id,guild_id,name,discord_invite,token_hash)
       VALUES($1,$2,'223456789012345678','Trio','https://discord.gg/test',$3)`,[sibling,c2,hash(token)]);
     const direct={id:crypto.randomUUID(),eventType:'direct_ban',steamId:'76561198000000071',playerName:'Principal',reason:'Motivo original'};
+    const historical=crypto.randomUUID();
+    // Simulate a historical record or an import made after deployment. Default stays false.
+    await pool.query(`INSERT INTO vorken_bans(id,server_id,steam_id,reason,evidence)
+      VALUES($1,$2,'76561198000000072','Banimento antigo','[]')`,[historical,sibling]);
     for(let i=0;i<2;i++)assert.equal((await request('/plugin/sync',{token,body:{events:[direct]}})).status,200);
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM vorken_bans WHERE id=$1',[direct.id])).rows[0].n,1);
     const duo=(await request('/plugin/sync',{token:token2,body:{}})).data.networkBans;
+    assert(!duo.some(b=>b.id===historical));
     assert.equal(duo.find(b=>b.id===direct.id).reason,direct.reason);
     assert.equal(duo.find(b=>b.id===direct.id).expiresAt,null);
+    // Restarts/migrations must not enable old bans or disable newly eligible ones.
+    await initVorkenPlatform(pool);
+    const afterRestart=(await request('/plugin/sync',{token:token2,body:{}})).data.networkBans;
+    assert(!afterRestart.some(b=>b.id===historical));assert(afterRestart.some(b=>b.id===direct.id));
     const trio=(await request('/plugin/sync',{token,body:{}})).data.networkBans;
     const association=trio.find(b=>b.steamId==='76561198000000061');
     assert.ok(association);

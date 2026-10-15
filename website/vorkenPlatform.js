@@ -691,15 +691,15 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
             WHERE b.steam_id=$1 AND b.active AND b.server_id<>$2 ORDER BY b.created_at DESC LIMIT 10`,[event.steamId,server.id]);
           if(bans.rows.length) await notify(db,server.guild_id,'prior_ban',{serverId:server.id,steamId:event.steamId,playerName:clean(event.playerName,80),serverName:server.name,bans:bans.rows});
         } else if(event.eventType==='direct_ban'){
-          await db.query(`INSERT INTO vorken_bans(id,server_id,steam_id,player_name,reason,evidence)
-            VALUES($1,$2,$3,$4,$5,$6)`,[event.id,server.id,event.steamId,clean(event.playerName,100),
+          await db.query(`INSERT INTO vorken_bans(id,server_id,steam_id,player_name,reason,evidence,network_eligible)
+            VALUES($1,$2,$3,$4,$5,$6,TRUE)`,[event.id,server.id,event.steamId,clean(event.playerName,100),
             clean(event.reason,500)||'Banimento administrativo.',JSON.stringify([{type:'server_ban'}])]);
         } else if(event.eventType==='association_ban'){
           const days=Number(event.associationDays),expiresAt=new Date(event.expiresAt);
           if(!steam(event.sourceSteamId)||event.sourceSteamId===event.steamId||!Number.isInteger(days)||days<1||days>365||!Number.isFinite(expiresAt.getTime())||expiresAt.getTime()>Date.now()+366*86400000)fail(400,'Evento de associação inválido.');
           const reason=`Banimento por associação — ${clean(event.sourcePlayerName,100)||'Jogador banido'}`;
-          await db.query(`INSERT INTO vorken_bans(id,server_id,steam_id,player_name,reason,evidence,kind,source_steam_id,expires_at,active)
-            VALUES($1,$2,$3,$4,$5,$6,'association',$7,$8,$9)`,[event.id,server.id,event.steamId,clean(event.playerName,100),reason,
+          await db.query(`INSERT INTO vorken_bans(id,server_id,steam_id,player_name,reason,evidence,kind,source_steam_id,expires_at,active,network_eligible)
+            VALUES($1,$2,$3,$4,$5,$6,'association',$7,$8,$9,TRUE)`,[event.id,server.id,event.steamId,clean(event.playerName,100),reason,
             JSON.stringify([{type:'team_association',sourceSteamId:event.sourceSteamId,sourcePlayerName:clean(event.sourcePlayerName,100),reason:clean(event.reason,400)}]),event.sourceSteamId,expiresAt,expiresAt.getTime()>Date.now()]);
           if(expiresAt.getTime()>Date.now())await notify(db,server.guild_id,'public_ban',{serverId:server.id,serverName:server.name,steamId:event.steamId,playerName:clean(event.playerName,100),kind:'association',sourceSteamId:event.sourceSteamId,sourcePlayerName:clean(event.sourcePlayerName,100),reason,duration:`${days} dia(s)`,expiresAt:expiresAt.toISOString()});
         } else if(event.eventType==='session_started'&&uuid(event.sessionId)&&/^\d{4}$/.test(event.code)){
@@ -714,7 +714,7 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
           if(['refusal_ban','timeout_ban'].includes(event.eventType))await notify(db,server.guild_id,'public_ban',{serverId:server.id,steamId:event.steamId,playerName:clean(event.playerName,100),serverName:server.name,reason:clean(event.reason,500)});
           if(['refusal_ban','timeout_ban'].includes(event.eventType)){
             const session=(await db.query('SELECT id FROM vorken_sessions WHERE id=$1 AND server_id=$2',[event.sessionId,server.id])).rows[0];
-            if(session)await db.query('INSERT INTO vorken_bans(id,session_id,server_id,steam_id,reason,evidence,player_name) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(session_id) DO NOTHING',
+            if(session)await db.query('INSERT INTO vorken_bans(id,session_id,server_id,steam_id,reason,evidence,player_name,network_eligible) VALUES($1,$2,$3,$4,$5,$6,$7,TRUE) ON CONFLICT(session_id) DO NOTHING',
               [crypto.randomUUID(),session.id,server.id,event.steamId,clean(event.reason,500)||'Banimento por política de verificação do servidor.',JSON.stringify([{type:'verification_policy',event:event.eventType,reason:clean(event.reason,500)}]),clean(event.playerName,80)]);
           }
         }
@@ -731,7 +731,7 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
           const notice=(await db.query("SELECT payload FROM vorken_notices WHERE kind='prior_ban' AND payload->>'commandId'=$1",[command.id])).rows[0];
           if(receipt.ok&&notice){
             const p=notice.payload;
-            await db.query('INSERT INTO vorken_bans(id,server_id,steam_id,reason,evidence,command_id,player_name) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(command_id) DO NOTHING',
+            await db.query('INSERT INTO vorken_bans(id,server_id,steam_id,reason,evidence,command_id,player_name,network_eligible) VALUES($1,$2,$3,$4,$5,$6,$7,TRUE) ON CONFLICT(command_id) DO NOTHING',
               [crypto.randomUUID(),server.id,command.steam_id,command.reason,JSON.stringify(p.bans),command.id,p.playerName]);
             await notify(db,server.guild_id,'public_ban',{serverId:server.id,playerName:p.playerName,serverName:server.name,steamId:command.steam_id,reason:command.reason,administratorName:command.actor_id.split('|').slice(1).join('|')});
           }
@@ -745,7 +745,7 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
           await db.query('UPDATE analyses SET external_decision=$2,external_decision_at=NOW(),external_decision_result=$3 WHERE id=$1',[s.analysis_id,command.action,clean(receipt.result,500)]);
           if(command.action==='deny'){
             const evidence=await db.query('SELECT id,title,severity,artifact_type,artifact_value,evidence FROM scan_findings WHERE analysis_id=$1 AND id=ANY($2::bigint[])',[s.analysis_id,command.evidence_ids]);
-            await db.query('INSERT INTO vorken_bans(id,session_id,server_id,steam_id,reason,evidence) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(session_id) DO NOTHING',
+            await db.query('INSERT INTO vorken_bans(id,session_id,server_id,steam_id,reason,evidence,network_eligible) VALUES($1,$2,$3,$4,$5,$6,TRUE) ON CONFLICT(session_id) DO NOTHING',
               [crypto.randomUUID(),s.id,server.id,s.steam_id,command.reason,JSON.stringify(evidence.rows)]);
           }
           await notify(db,server.guild_id,command.action==='deny'?'public_ban':'public_verified',{serverId:server.id,playerName:s.player_name,serverName:server.name,steamId:s.steam_id,reason:command.reason});
@@ -770,7 +770,7 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
     const networkBans=active?(await pool.query(`SELECT DISTINCT ON (b.steam_id)
       b.id,b.steam_id AS "steamId",b.player_name AS "playerName",b.reason,b.kind,b.expires_at AS "expiresAt"
       FROM vorken_bans b JOIN vorken_servers s ON s.id=b.server_id
-      WHERE s.customer_id=$1 AND b.server_id<>$2 AND b.active
+      WHERE s.customer_id=$1 AND b.server_id<>$2 AND b.active AND b.network_eligible
         AND (b.expires_at IS NULL OR b.expires_at>NOW())
       ORDER BY b.steam_id,b.expires_at DESC NULLS FIRST,b.created_at DESC`,[server.customer_id,server.id])).rows:[];
     res.json({active,accepted,acknowledged,commands,networkBans,discord:server.discord_invite,channel:g?.verification_channel_id?'https://discord.com/channels/'+server.guild_id+'/'+g.verification_channel_id:'#verificacao',notifications:notificationSettings(server.notification_settings),verification:verificationSettings(server.verification_settings)});
