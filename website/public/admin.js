@@ -2315,16 +2315,7 @@ async function openReport(id, options = {}) {
             )
           : "";
 
-      const downloadUrl =
-        String(finding.artifact_type || "") === "browser_download"
-          ? (
-              safeExternalUrl(evidence.finalUrl) ||
-              safeExternalUrl(evidence.sourceUrl) ||
-              safeExternalUrl(evidence.pageUrl) ||
-              safeExternalUrl(evidence.referrerUrl) ||
-              safeExternalUrl(evidence.siteUrl)
-            )
-          : "";
+      const downloadUrl = window.VorkenEvidenceInspector?.origins(evidence)[0]?.url || '';
 
       const downloadLinkBlock =
         downloadUrl
