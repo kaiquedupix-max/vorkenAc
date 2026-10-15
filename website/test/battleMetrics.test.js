@@ -101,3 +101,14 @@ test('reverse identifiers belonging to another player cannot establish a match',
  const result=await client.analyze({steamAccounts:[{steamId64:steam}]},steam);
  assert.equal(result.accounts.length,0);assert.equal(result.status,'identifiers_unavailable');
 });
+
+test('cache isolates local account evidence even when lookup seeds match',async()=>{
+ const client=createBattleMetricsClient({token:'test',minIntervalMs:0,fetchImpl:async url=>
+  new URL(url).pathname==='/players'
+   ? json({data:[player('1',['s'])],included:[identifier('s','steamID',steam)]})
+   : json({data:[]})});
+ for(const foundOnPc of [false,true,false]){
+  const result=await client.analyze({steamAccounts:foundOnPc?[{steamId64:steam}]:[]},steam);
+  assert.equal(result.accounts[0].foundOnPc,foundOnPc);
+ }
+});
