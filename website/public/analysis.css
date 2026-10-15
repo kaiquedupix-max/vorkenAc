@@ -199,6 +199,16 @@ a { color: var(--accent-2); }
 .primary-action strong { font-size: 13px; }
 .primary-action small { margin-top: 3px; font-size: 10px; opacity: .72; }
 
+  #downloadBtn { min-height: 96px; min-width: min(340px, 100%); justify-content: center; animation: download-pulse 2.4s ease-in-out infinite; }
+  #downloadBtn strong { font-size: 20px; }
+  #downloadBtn .download-icon { width: 48px; height: 48px; font-size: 30px; }
+  #downloadBtn.disabled { animation: none; }
+  @keyframes download-pulse {
+    0%, 100% { background: #51f3d5; box-shadow: 0 0 16px rgba(81,243,213,.35); }
+    50% { background: #ffd166; box-shadow: 0 0 36px rgba(255,209,102,.65); }
+  }
+  @media (prefers-reduced-motion: reduce) { #downloadBtn { animation: none; } }
+
 .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
 .info-card { min-height: 126px; padding: 22px; display: flex; gap: 15px; border-radius: 15px; box-shadow: none; }
 .info-icon { width: 38px; height: 38px; flex: 0 0 38px; display: grid; place-items: center; border: 1px solid var(--line-strong); border-radius: 11px; color: var(--accent); background: rgba(43,240,201,.06); font-weight: 900; }

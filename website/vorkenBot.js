@@ -277,9 +277,9 @@ export async function startVorkenBot(platform){
     if(member?.user)embed.setThumbnail(member.user.displayAvatarURL({size:256}));
     const download=publicUrl+'/a/'+row.public_token;
     const rowButtons=new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setLabel(copy.download).setStyle(ButtonStyle.Link).setURL(download),
-      ...ticketLanguageButtons(row.id,'vorken_ticket_lang'));
-    return {embeds:[embed],components:[rowButtons],allowedMentions:noMentions};
+      new ButtonBuilder().setLabel('⬇⬇ '+copy.download.toUpperCase()+' ⬇⬇').setStyle(ButtonStyle.Link).setURL(download));
+    const languages=new ActionRowBuilder().addComponents(...ticketLanguageButtons(row.id,'vorken_ticket_lang'));
+    return {content:`# ⬇ ${copy.download.toUpperCase()}\n**[${copy.download}](${download})**`,embeds:[embed],components:[rowButtons,languages],allowedMentions:noMentions};
   }
 
   const ensureTicketById=createTicketQueue(pool,async(sessionId,db)=>{
