@@ -1,4 +1,4 @@
-﻿import express from "express";
+import express from "express";
 import compression from "compression";
 import cookieParser from "cookie-parser";
 import crypto from "node:crypto";
@@ -8,6 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync, gunzipSync } from "node:zlib";
 import pg from "pg";
+import { withDownloadOrigins } from './evidenceOrigins.js';
 import { runDetectionEngineV4 } from "./echoInspiredFilterV3.js";
 import {
   projectFindingEvidenceForAdmin,
@@ -9288,9 +9289,9 @@ async function loadSharedAnalysisReport(id, serverId = null) {
     [id]
   );
 
+  let rawAdminReport = {};
   if (reportResult.rows[0]) {
-    const rawAdminReport =
-      decodeStoredRawReport(reportResult.rows[0]);
+    rawAdminReport = decodeStoredRawReport(reportResult.rows[0]);
 
     reportResult.rows[0].payload =
       projectReportPayloadForAdmin({
@@ -9384,7 +9385,7 @@ async function loadSharedAnalysisReport(id, serverId = null) {
     report: reportResult.rows[0] || null,
     findings: findingsResult.rows.map((finding) => ({
       ...finding,
-      evidence: projectFindingEvidenceForAdmin(finding.evidence),
+      evidence: projectFindingEvidenceForAdmin(withDownloadOrigins(finding,rawAdminReport)),
     })),
     filteredFindings: aiFilteredResult.rows,
     reviewState: {
