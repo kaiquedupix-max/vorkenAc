@@ -111,3 +111,6 @@ ALTER TABLE vorken_sessions ADD COLUMN IF NOT EXISTS ticket_message_id TEXT;
 ALTER TABLE vorken_bans ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'direct';
 ALTER TABLE vorken_bans ADD COLUMN IF NOT EXISTS source_steam_id TEXT;
 ALTER TABLE vorken_bans ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+-- Historical rows and later history imports never enter automatic network enforcement.
+-- Only a newly confirmed punishment explicitly opts in; retries do not change this flag.
+ALTER TABLE vorken_bans ADD COLUMN IF NOT EXISTS network_eligible BOOLEAN NOT NULL DEFAULT FALSE;
