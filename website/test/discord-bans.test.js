@@ -6,9 +6,9 @@ import {publicNotice} from '../vorkenSettings.js';
 test('association banfeed distinguishes teammates from confirmed offenders', () => {
   const embed=publicNotice('public_ban',{kind:'association',playerName:'Duo',steamId:'76561198000000061',sourceSteamId:'76561198000000060',sourcePlayerName:'Origem',duration:'7 dia(s)',reason:'Associação',serverName:'Rust'});
   assert.match(embed.title,/associação/);
-  assert.match(embed.description,/temporário/);
-  assert.equal(embed.fields.find(f=>f.name==='Duração').value,String.raw`7 dia\(s\)`);
-  assert.match(embed.fields.find(f=>f.name==='Jogador de origem').value,/Origem/);
+  assert.match(embed.description,/Duo.*Origem/);
+  assert.equal(embed.fields,undefined);
+  assert(!JSON.stringify(embed).includes('7656119'));
   assert.equal(publicNotice('public_ban',{playerName:'Principal'}).title,'🔨 Banimento aplicado');
 });
 

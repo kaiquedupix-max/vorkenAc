@@ -336,6 +336,31 @@ test('platform routes isolate customers, confirm decisions and activate payments
     assert.equal((await pool.query("SELECT * FROM vorken_notices WHERE payload->>'steamId'=$1",[expired.steamId])).rows.length,0);
     assert.equal((await request('/plugin/sync',{token:token2,body:{events:[{...association,id:crypto.randomUUID(),sourceSteamId:association.steamId}]}})).status,400);
   });
+  await t.test('network sync preserves permanent and association bans and isolates owners',async()=>{
+    const sibling=crypto.randomUUID(),token=crypto.randomBytes(32).toString('base64url');
+    await pool.query('UPDATE vorken_licenses SET max_servers=2 WHERE customer_id=$1',[c2]);
+    await pool.query(`INSERT INTO vorken_servers(id,customer_id,guild_id,name,discord_invite,token_hash)
+      VALUES($1,$2,'223456789012345678','Trio','https://discord.gg/test',$3)`,[sibling,c2,hash(token)]);
+    const direct={id:crypto.randomUUID(),eventType:'direct_ban',steamId:'76561198000000071',playerName:'Principal',reason:'Motivo original'};
+    for(let i=0;i<2;i++)assert.equal((await request('/plugin/sync',{token,body:{events:[direct]}})).status,200);
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM vorken_bans WHERE id=$1',[direct.id])).rows[0].n,1);
+    const duo=(await request('/plugin/sync',{token:token2,body:{}})).data.networkBans;
+    assert.equal(duo.find(b=>b.id===direct.id).reason,direct.reason);
+    assert.equal(duo.find(b=>b.id===direct.id).expiresAt,null);
+    const trio=(await request('/plugin/sync',{token,body:{}})).data.networkBans;
+    const association=trio.find(b=>b.steamId==='76561198000000061');
+    assert.ok(association);
+    assert.equal(association.kind,'association');
+    assert.equal(association.reason,'Banimento por associação — Origem');
+    const stored=(await pool.query('SELECT expires_at FROM vorken_bans WHERE id=$1',[association.id])).rows[0];
+    assert.equal(new Date(association.expiresAt).getTime(),new Date(stored.expires_at).getTime());
+    assert(!trio.some(b=>b.steamId==='76561198000000062'));
+    assert(!trio.some(b=>b.id===direct.id));
+    const foreign=(await request('/plugin/sync',{token:token1,body:{}})).data.networkBans;
+    assert(!foreign.some(b=>b.id===direct.id||b.id===association.id));
+    await pool.query('UPDATE vorken_bans SET active=FALSE WHERE id=$1',[direct.id]);
+    assert(!(await request('/plugin/sync',{token:token2,body:{}})).data.networkBans.some(b=>b.id===direct.id));
+  });
   await t.test('confirmed direct bans enqueue Discord enforcement separately from public notification',async()=>{
     const notices=(await pool.query("SELECT * FROM vorken_notices WHERE kind IN ('discord_ban','public_ban')")).rows;
     const direct=notices.find(n=>n.kind==='public_ban'&&n.payload.kind!=='association');

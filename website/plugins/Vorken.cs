@@ -8,7 +8,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Vorken", "Kaique", "2.0.9")]
+    [Info("Vorken", "Kaique", "2.0.10")]
     [Description("Telagem administrativa integrada ao Vorken/Discord com codigo individual, conexao HTTPS independente, sem RCON.")]
     public class Vorken : RustPlugin
     {
@@ -167,6 +167,7 @@ namespace Oxide.Plugins
             public string discord, channel;
             public List<string> accepted, acknowledged;
             public List<BridgeCommand> commands;
+            public List<BridgeNetworkBan> networkBans;
         }
         private void LoadBridge()
         {
@@ -220,7 +221,7 @@ namespace Oxide.Plugins
                     if (player != null && player.IsConnected && !player.IsNpc)
                         players.Add(new BridgePlayer { steamId = player.UserIDString, name = player.displayName });
             }
-            string payload = JsonConvert.SerializeObject(new { version = "2.0.9", events = events, receipts = receipts, players = players });
+            string payload = JsonConvert.SerializeObject(new { version = "2.0.10", events = events, receipts = receipts, players = players });
             webrequest.Enqueue(ApiBase + "/api/vorken/plugin/sync", payload, (status, response) => {
                 syncPending = false;
                 if (unloading) return;
@@ -248,6 +249,7 @@ namespace Oxide.Plugins
                     settings.CanalVerificacao = data.channel ?? "#verificacao";
                     SaveBridge();
                     if (!bridgeActive) { ReleaseBridgeSessions(); return; }
+                    if (data.networkBans != null) foreach (BridgeNetworkBan ban in data.networkBans) ApplyNetworkBan(ban);
                     if (data.commands != null) foreach (BridgeCommand command in data.commands) ApplyBridgeCommand(command);
                 }
                 catch (Exception) { PrintWarning("Resposta Vorken invalida; aguardando reconexao."); }
@@ -359,6 +361,9 @@ namespace Oxide.Plugins
             var members = team == null ? new List<ulong>() : new List<ulong>(team.members);
             ServerUsers.Set(steamId, group, playerName, reason);
             if (group != ServerUsers.UserGroup.Banned) return;
+            bridge.Events.Add(new BridgeEvent { id = Guid.NewGuid().ToString(), eventType = "direct_ban",
+                steamId = steamId.ToString(), playerName = playerName, reason = reason });
+            SaveBridge();
             if (bridgeNotifications.rustBans)
                 Server.Broadcast("<color=#FF5555><b>[VORKEN] BANIMENTO APLICADO</b></color> Jogador: <color=#FFD166>" + Clean(playerName) + "</color> (" + steamId + ") | Duracao: permanente | Motivo: " + Clean(reason));
             if (settings.BanirTimePorAssociacao)
@@ -373,7 +378,7 @@ namespace Oxide.Plugins
                         (existing.expiry <= 0 || existing.expiry > DateTimeOffset.UtcNow.ToUnixTimeSeconds())) continue;
                     var target = BasePlayer.FindByID(member) ?? BasePlayer.FindSleeping(member);
                     string memberName = target != null ? target.displayName : member.ToString();
-                    string associationReason = "Associacao com " + steamId + ": " + reason;
+                    string associationReason = "Banimento por associação — " + Clean(playerName);
                     ServerUsers.Set(member, ServerUsers.UserGroup.Banned, memberName, associationReason, expiry);
                     bridge.Events.Add(new BridgeEvent {
                         id = Guid.NewGuid().ToString(), eventType = "association_ban", steamId = member.ToString(),
@@ -383,7 +388,7 @@ namespace Oxide.Plugins
                     });
                     SaveBridge();
                     if (settings.NotificarAssociacaoNoChat)
-                        Server.Broadcast("<color=#FF9F43><b>[VORKEN] BANIMENTO POR ASSOCIACAO</b></color> Jogador: <color=#FFD166>" + Clean(memberName) + "</color> (" + member + ") | Associado a: " + Clean(playerName) + " (" + steamId + ") | Duracao: " + days + " dia(s) | Motivo de origem: " + Clean(reason));
+                        Server.Broadcast("<color=#FF9F43><b>[VORKEN] BANIMENTO POR ASSOCIACAO</b></color> " + Clean(memberName) + " - associado a " + Clean(playerName));
                     if (target != null && target.IsConnected) target.Kick("VORKEN: " + associationReason);
                 }
                 ServerUsers.Save();
@@ -391,6 +396,38 @@ namespace Oxide.Plugins
             var fleet = plugins.Find("VorkenFleet");
             if (fleet != null) fleet.Call("RecordVorkenBan", playerName, steamId, reason);
         }
+
+        private class BridgeNetworkBan
+        {
+            public string id, steamId, playerName, reason, kind, expiresAt;
+        }
+        private void ApplyNetworkBan(BridgeNetworkBan ban)
+        {
+            ulong steamId;
+            if (ban == null || !ulong.TryParse(ban.steamId, out steamId)) return;
+            long expiry = -1;
+            if (!string.IsNullOrWhiteSpace(ban.expiresAt))
+            {
+                DateTimeOffset expires;
+                if (!DateTimeOffset.TryParse(ban.expiresAt, out expires)) return;
+                expiry = expires.ToUnixTimeSeconds();
+                if (expiry <= DateTimeOffset.UtcNow.ToUnixTimeSeconds()) return;
+            }
+            var existing = ServerUsers.Get(steamId);
+            if (existing != null && existing.group == ServerUsers.UserGroup.Banned)
+            {
+                // Never replace a permanent or longer local punishment with a shorter one.
+                if (existing.expiry <= 0 || (expiry > 0 && existing.expiry >= expiry)) return;
+            }
+            var target = BasePlayer.FindByID(steamId) ?? BasePlayer.FindSleeping(steamId);
+            string name = string.IsNullOrWhiteSpace(ban.playerName) ? (target == null ? ban.steamId : target.displayName) : ban.playerName;
+            if (sessions.ContainsKey(steamId)) End(steamId, null);
+            // Do not call SetVorkenBan: a replicated ban must not punish a new team or echo back.
+            ServerUsers.Set(steamId, ServerUsers.UserGroup.Banned, name, ban.reason, expiry);
+            ServerUsers.Save();
+            if (target != null && target.IsConnected) target.Kick(ban.reason);
+        }
+
 
         private void Init()
         {

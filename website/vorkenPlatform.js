@@ -690,10 +690,14 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
           const bans=await db.query(`SELECT b.id,b.reason,b.created_at,s.name AS server_name,b.evidence FROM vorken_bans b JOIN vorken_servers s ON s.id=b.server_id
             WHERE b.steam_id=$1 AND b.active AND b.server_id<>$2 ORDER BY b.created_at DESC LIMIT 10`,[event.steamId,server.id]);
           if(bans.rows.length) await notify(db,server.guild_id,'prior_ban',{serverId:server.id,steamId:event.steamId,playerName:clean(event.playerName,80),serverName:server.name,bans:bans.rows});
+        } else if(event.eventType==='direct_ban'){
+          await db.query(`INSERT INTO vorken_bans(id,server_id,steam_id,player_name,reason,evidence)
+            VALUES($1,$2,$3,$4,$5,$6)`,[event.id,server.id,event.steamId,clean(event.playerName,100),
+            clean(event.reason,500)||'Banimento administrativo.',JSON.stringify([{type:'server_ban'}])]);
         } else if(event.eventType==='association_ban'){
           const days=Number(event.associationDays),expiresAt=new Date(event.expiresAt);
           if(!steam(event.sourceSteamId)||event.sourceSteamId===event.steamId||!Number.isInteger(days)||days<1||days>365||!Number.isFinite(expiresAt.getTime())||expiresAt.getTime()>Date.now()+366*86400000)fail(400,'Evento de associação inválido.');
-          const reason=`Associação com ${event.sourceSteamId}: ${clean(event.reason,400)}`;
+          const reason=`Banimento por associação — ${clean(event.sourcePlayerName,100)||'Jogador banido'}`;
           await db.query(`INSERT INTO vorken_bans(id,server_id,steam_id,player_name,reason,evidence,kind,source_steam_id,expires_at,active)
             VALUES($1,$2,$3,$4,$5,$6,'association',$7,$8,$9)`,[event.id,server.id,event.steamId,clean(event.playerName,100),reason,
             JSON.stringify([{type:'team_association',sourceSteamId:event.sourceSteamId,sourcePlayerName:clean(event.sourcePlayerName,100),reason:clean(event.reason,400)}]),event.sourceSteamId,expiresAt,expiresAt.getTime()>Date.now()]);
@@ -762,7 +766,14 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
     await pool.query("UPDATE vorken_commands SET status='failed',result='Solicitação de telagem expirada.',completed_at=NOW() WHERE server_id=$1 AND status='pending' AND action='start' AND created_at<NOW()-interval '2 minutes'",[server.id]);
     const commands=active?(await pool.query("SELECT id,detached_session AS \"detachedSession\",session_id AS \"sessionId\",action,steam_id AS \"steamId\",actor_id AS \"actorId\",reason FROM vorken_commands WHERE server_id=$1 AND status='pending' ORDER BY created_at LIMIT 20",[server.id])).rows:[];
     const g=(await pool.query('SELECT verification_channel_id FROM vorken_guilds WHERE id=$1',[server.guild_id])).rows[0];
-    res.json({active,accepted,acknowledged,commands,discord:server.discord_invite,channel:g?.verification_channel_id?'https://discord.com/channels/'+server.guild_id+'/'+g.verification_channel_id:'#verificacao',notifications:notificationSettings(server.notification_settings),verification:verificationSettings(server.verification_settings)});
+    // Servers belonging to the same customer form a network. Keep absolute expiry.
+    const networkBans=active?(await pool.query(`SELECT DISTINCT ON (b.steam_id)
+      b.id,b.steam_id AS "steamId",b.player_name AS "playerName",b.reason,b.kind,b.expires_at AS "expiresAt"
+      FROM vorken_bans b JOIN vorken_servers s ON s.id=b.server_id
+      WHERE s.customer_id=$1 AND b.server_id<>$2 AND b.active
+        AND (b.expires_at IS NULL OR b.expires_at>NOW())
+      ORDER BY b.steam_id,b.expires_at DESC NULLS FIRST,b.created_at DESC`,[server.customer_id,server.id])).rows:[];
+    res.json({active,accepted,acknowledged,commands,networkBans,discord:server.discord_invite,channel:g?.verification_channel_id?'https://discord.com/channels/'+server.guild_id+'/'+g.verification_channel_id:'#verificacao',notifications:notificationSettings(server.notification_settings),verification:verificationSettings(server.verification_settings)});
   }));
 
   return { pool, entitlement, serverActive, ownedServer, queue, decision, tx, notify, publicUrl, audit };

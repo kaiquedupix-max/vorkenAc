@@ -9,7 +9,7 @@ let source=original;
 
 if(hasLegacySource){
   source=original
-    .replace('[Info("Verificacao", "Kaique", "1.6.4")]','[Info("Vorken", "Kaique", "2.0.9")]')
+    .replace('[Info("Verificacao", "Kaique", "1.6.4")]','[Info("Vorken", "Kaique", "2.0.10")]')
     .replace('public class Verificacao : RustPlugin','public class Vorken : RustPlugin')
     .replace('isolamento via Vanish e eventos RCON.','conexao HTTPS independente, sem RCON.')
     .replaceAll('verificacao','vorken')
@@ -44,10 +44,10 @@ if(hasLegacySource){
   source=source.replaceAll('dentro de 5 minutos.','dentro do prazo.').replaceAll('em 5 minutos.','dentro do prazo.');
 }else{
   // O container de produção recebe apenas website/. Nesse cenário usamos o
-  // template Vorken já versionado como base e aplicamos somente a migração 2.0.9.
+  // template Vorken já versionado como base e aplicamos somente a migração 2.0.10.
   source=source
-    .replace('[Info("Vorken", "Kaique", "2.0.3")]','[Info("Vorken", "Kaique", "2.0.9")]')
-    .replace('version = "2.0.1"','version = "2.0.9"');
+    .replace('[Info("Vorken", "Kaique", "2.0.3")]','[Info("Vorken", "Kaique", "2.0.10")]')
+    .replace('version = "2.0.1"','version = "2.0.10"');
 
   if(!source.includes('private string AdministratorDisplay(string administrator)')){
     source=source.replace(
@@ -80,7 +80,7 @@ if(hasLegacySource){
 'AdministratorDisplay(administrator) + "</color>."');
 }
 
-// Vorken 2.0.9: a tela do Rust não expõe URL, ID de canal ou convite bruto.
+// Vorken 2.0.10: a tela do Rust não expõe URL, ID de canal ou convite bruto.
 source=source.replace(
 `                            "VERIFICACAO OBRIGATORIA. NAO DESCONECTE.\\n" +
                             "Voce tem 5 MINUTOS para enviar o codigo no canal " +
@@ -150,8 +150,8 @@ if(!source.includes('Text = "VER CONVITE DO DISCORD"')){
 }
 source=source.replace('"Copie o convite abaixo e entre no Discord.\\n"','"Clique no campo abaixo e use CTRL+A e CTRL+C para copiar o convite.\\n"')
   .replace('"Abra " +\n                            Clean(settings.CanalVerificacao) +','"Procure o canal " +\n                            "VERIFICACAO VORKEN" +');
-source=source.replace(/\[Info\("Vorken", "Kaique", "2\.0\.\d+"\)\]/,'[Info("Vorken", "Kaique", "2.0.9")]')
-  .replace(/version = "2\.0\.\d+"/g,'version = "2.0.9"');
+source=source.replace(/\[Info\("Vorken", "Kaique", "2\.0\.\d+"\)\]/,'[Info("Vorken", "Kaique", "2.0.10")]')
+  .replace(/version = "2\.0\.\d+"/g,'version = "2.0.10"');
 if(!source.includes('command.action == "ban_prior"')){
   const fragment=fs.readFileSync(new URL('./plugins/bridge.fragment.cs',import.meta.url),'utf8');
   const start=fragment.indexOf('                else if (command.action == "ban_prior")');
@@ -182,7 +182,7 @@ source=source.replace(
 
             ulong parsed;`);
 
-if(!source.includes('[Info("Vorken", "Kaique", "2.0.9")]')||!source.includes('SyncBridge')||source.includes('[GF_VERIFICACAO]')||!source.includes('PROCURE O CANAL VERIFICACAO VORKEN')||source.includes('MOSTRAR CONVITE DO DISCORD')||!source.includes('AdministratorDisplay')||!source.includes('SEU CODIGO DE VERIFICACAO')||!source.includes('VER CONVITE DO DISCORD')||!source.includes('CTRL+A e CTRL+C'))throw new Error('Plugin generation failed');
+if(!source.includes('[Info("Vorken", "Kaique", "2.0.10")]')||!source.includes('SyncBridge')||source.includes('[GF_VERIFICACAO]')||!source.includes('PROCURE O CANAL VERIFICACAO VORKEN')||source.includes('MOSTRAR CONVITE DO DISCORD')||!source.includes('AdministratorDisplay')||!source.includes('SEU CODIGO DE VERIFICACAO')||!source.includes('VER CONVITE DO DISCORD')||!source.includes('CTRL+A e CTRL+C'))throw new Error('Plugin generation failed');
 // Keep Rust chat on one line, without glyphs that some chat plugins render as '?'.
 source = source.replace(/Server\.Broadcast\("<color=#5AA7FF>[^\n]+VERIFICAÇÃO CONCLUÍDA[^\n]+\);/g,
   'Server.Broadcast("<color=#5AA7FF><b>[VORKEN]</b></color> <color=#38E0B0><b>VERIFICACAO CONCLUIDA</b></color> O jogador <color=#38E0B0>" + name + "</color> foi verificado e liberado pela administracao.");');
@@ -250,4 +250,25 @@ source = source.replaceAll('AnnounceBridge("deny", name);', '')
 fs.mkdirSync(new URL('./plugins/',import.meta.url),{recursive:true});
 if (!source.includes('public int DiasDoBanPorAssociacao') || !source.includes('private void SetVorkenBan('))
   throw new Error('Plugin association configuration generation failed');
+// Migrate both the legacy source and already-generated production template.
+source=source.replace('"Associacao com " + steamId + ": " + reason','"Banimento por associação — " + Clean(playerName)');
+source=source.replace(/Server\.Broadcast\("<color=#FF9F43>[^\n]+\);/g,
+  'Server.Broadcast("<color=#FF9F43><b>[VORKEN] BANIMENTO POR ASSOCIACAO</b></color> " + Clean(memberName) + " - associado a " + Clean(playerName));');
+if(!source.includes('private class BridgeNetworkBan')){
+  source=source.replace(/^.*public List<BridgeNetworkBan> networkBans;\n/gm,'')
+    .replace(/^.*if \(data.networkBans != null\).*\n/gm,'');
+  const network=fs.readFileSync(new URL('./plugins/network.fragment.cs',import.meta.url),'utf8');
+  source=source.replace('        private void Init()',network+'\n        private void Init()');
+  source=source.replace('            public List<BridgeCommand> commands;',
+    '            public List<BridgeCommand> commands;\n            public List<BridgeNetworkBan> networkBans;');
+  source=source.replace('                    if (data.commands != null)',
+    '                    if (data.networkBans != null) foreach (BridgeNetworkBan ban in data.networkBans) ApplyNetworkBan(ban);\n                    if (data.commands != null)');
+}
+if(!source.includes('eventType = "direct_ban"')){
+  source=source.replace('            if (group != ServerUsers.UserGroup.Banned) return;',
+    `            if (group != ServerUsers.UserGroup.Banned) return;
+            bridge.Events.Add(new BridgeEvent { id = Guid.NewGuid().ToString(), eventType = "direct_ban",
+                steamId = steamId.ToString(), playerName = playerName, reason = reason });
+            SaveBridge();`);
+}
 fs.writeFileSync(generatedSourceUrl,source);

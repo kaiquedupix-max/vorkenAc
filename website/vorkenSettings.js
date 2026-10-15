@@ -51,6 +51,10 @@ export function publicNotice(kind,p){
   const steamId=safe(p.steamId,32),profile=`https://steamcommunity.com/profiles/${steamId}`;
   if(ban){
     const association=p.kind==='association';
+    if(association)return {
+      color:0xff9f43,title:'🔗 Banimento por associação',
+      description:`**${safe(p.playerName,100)}** — associado a **${safe(p.sourcePlayerName||'Jogador banido',100)}**.`
+    };
     return {
       color:association?0xff9f43:0xe53935,
       title:association?'🔗 Banimento por associação':'🔨 Banimento aplicado',
