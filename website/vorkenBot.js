@@ -528,6 +528,8 @@ export async function startVorkenBot(platform){
         try{
           if(n.kind==='discord_ban'){
             const p=n.payload;
+            const activeBan=await db.query('SELECT id FROM vorken_bans WHERE server_id=$1 AND steam_id=$2 AND active AND reversed_at IS NULL AND (expires_at IS NULL OR expires_at>NOW()) LIMIT 1',[p.serverId,p.steamId]);
+            if(!activeBan.rows.length){await db.query('UPDATE vorken_notices SET sent_at=NOW() WHERE id=$1',[n.id]);continue;}
             const guild=await client.guilds.fetch(n.guild_id);
             const linked=await applyDiscordBan(db,guild,p.serverId,p.steamId,p.reason);
             if(!linked)console.warn('Vorken ban Discord: sem conta vinculada para SteamID',p.steamId);

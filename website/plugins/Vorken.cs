@@ -8,7 +8,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Vorken", "Kaique", "2.0.10")]
+    [Info("Vorken", "Kaique", "2.0.11")]
     [Description("Telagem administrativa integrada ao Vorken/Discord com codigo individual, conexao HTTPS independente, sem RCON.")]
     public class Vorken : RustPlugin
     {
@@ -156,6 +156,7 @@ namespace Oxide.Plugins
         private DateTime lastPlayersSent = DateTime.MinValue;
         private class BridgeCommand
         {
+            public string[] expectedReasons;
             public bool detachedSession;
             public string id, sessionId, action, steamId, actorId, reason;
         }
@@ -221,7 +222,7 @@ namespace Oxide.Plugins
                     if (player != null && player.IsConnected && !player.IsNpc)
                         players.Add(new BridgePlayer { steamId = player.UserIDString, name = player.displayName });
             }
-            string payload = JsonConvert.SerializeObject(new { version = "2.0.10", events = events, receipts = receipts, players = players });
+            string payload = JsonConvert.SerializeObject(new { version = "2.0.11", events = events, receipts = receipts, players = players });
             webrequest.Enqueue(ApiBase + "/api/vorken/plugin/sync", payload, (status, response) => {
                 syncPending = false;
                 if (unloading) return;
@@ -248,7 +249,7 @@ namespace Oxide.Plugins
                     settings.Discord = data.discord ?? settings.Discord;
                     settings.CanalVerificacao = data.channel ?? "#verificacao";
                     SaveBridge();
-                    if (!bridgeActive) { ReleaseBridgeSessions(); return; }
+                    if (!bridgeActive) { if (data.commands != null) foreach (BridgeCommand cleanup in data.commands) if (cleanup.action == "unban") ApplyBridgeCommand(cleanup); ReleaseBridgeSessions(); return; }
                     if (data.networkBans != null) foreach (BridgeNetworkBan ban in data.networkBans) ApplyNetworkBan(ban);
                     if (data.commands != null) foreach (BridgeCommand command in data.commands) ApplyBridgeCommand(command);
                 }
@@ -277,6 +278,20 @@ namespace Oxide.Plugins
                     receipt.ok = sessions.TryGetValue(steamId, out session);
                     receipt.result = receipt.ok ? "Verificacao iniciada." : "Jogador precisa estar conectado, vivo, acordado e fora de veiculos.";
                 }
+                else if (command.action == "unban")
+                {
+                    var user = ServerUsers.Get(steamId);
+                    if (user != null && user.group == ServerUsers.UserGroup.Banned)
+                    {
+                        if (command.expectedReasons == null || Array.IndexOf(command.expectedReasons, user.notes) < 0)
+                            throw new Exception("Ban atual difere do registro Vorken. Revise manualmente; nenhuma alteracao feita.");
+                        ServerUsers.Remove(steamId);
+                        ServerUsers.Save();
+                    }
+                    receipt.ok = true;
+                    receipt.result = "Reversao confirmada no Rust. Historico preservado no Vorken.";
+                }
+
                 else if (command.action == "ban_prior")
                 {
                     BasePlayer target = Find(steamId);

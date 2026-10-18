@@ -61,7 +61,7 @@ ALTER TABLE vorken_bans ADD COLUMN IF NOT EXISTS player_name TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS vorken_ban_command ON vorken_bans(command_id);
 CREATE UNIQUE INDEX IF NOT EXISTS vorken_legacy_ban_analysis ON vorken_bans(legacy_analysis_id);
 ALTER TABLE vorken_commands DROP CONSTRAINT IF EXISTS vorken_commands_action_check;
-ALTER TABLE vorken_commands ADD CONSTRAINT vorken_commands_action_check CHECK(action IN ('start','attend','approve','deny','ban_prior'));
+ALTER TABLE vorken_commands ADD CONSTRAINT vorken_commands_action_check CHECK(action IN ('start','attend','approve','deny','ban_prior','unban'));
 CREATE TABLE IF NOT EXISTS vorken_notices (
  id UUID PRIMARY KEY, guild_id TEXT NOT NULL REFERENCES vorken_guilds(id), kind TEXT NOT NULL, payload JSONB NOT NULL,
  sent_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -114,3 +114,6 @@ ALTER TABLE vorken_bans ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
 -- Historical rows and later history imports never enter automatic network enforcement.
 -- Only a newly confirmed punishment explicitly opts in; retries do not change this flag.
 ALTER TABLE vorken_bans ADD COLUMN IF NOT EXISTS network_eligible BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE vorken_bans ADD COLUMN IF NOT EXISTS reversed_at TIMESTAMPTZ;
+ALTER TABLE vorken_commands ADD COLUMN IF NOT EXISTS reversal_ban_id UUID REFERENCES vorken_bans(id);
+ALTER TABLE vorken_commands ADD COLUMN IF NOT EXISTS expected_reasons JSONB NOT NULL DEFAULT '[]';

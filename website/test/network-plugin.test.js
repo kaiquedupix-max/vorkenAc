@@ -12,3 +12,12 @@ test('generated network bridge has one consumer and never cascades association b
   assert(!apply.includes('SetVorkenBan('));
   assert(!apply.includes('bridge.Events.Add'));
 });
+
+test('generated unban checks the current ban and remains available for inactive installations',()=>{
+  const source=fs.readFileSync(new URL('../plugins/Vorken.cs',import.meta.url),'utf8');
+  const start=source.indexOf('else if (command.action == "unban")');
+  const block=source.slice(start,source.indexOf('else if (command.action == "ban_prior")',start));
+  assert(start>0);assert.match(block,/Array.IndexOf\(command.expectedReasons, user.notes\)/);
+  assert.match(block,/ServerUsers.Remove\(steamId\)/);assert.match(block,/ServerUsers.Save\(\)/);
+  assert.match(source,/cleanup.action == "unban"/);assert.match(source,/version = "2.0.11"/);
+});

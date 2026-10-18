@@ -405,6 +405,37 @@ test('platform routes isolate customers, confirm decisions and activate payments
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM vorken_sessions')).rows[0].n,1);
     assert.equal((await request('/servers/'+s1+'/plugin',{body:{}})).status,403);
   });
+  await t.test('ban reversal is authorized, isolated, confirmed and retryable after failure',async()=>{
+    const steam='76561198012345678',ban=crypto.randomUUID(),foreign=crypto.randomUUID();
+    for(const [id,s] of [[ban,s1],[foreign,s2]])await pool.query("INSERT INTO vorken_bans(id,server_id,steam_id,reason,evidence,network_eligible) VALUES($1,$2,$3,'Prova revisada','[]',TRUE)",[id,s,steam]);
+    const endpoint='/admin/bans/'+ban+'/reverse';
+    assert.equal((await request(endpoint,{body:{reason:'Erro revisado'}})).status,401);
+    assert.equal((await request(endpoint,{owner:true,origin:'https://evil.test',body:{reason:'Erro revisado'}})).status,403);
+    assert.equal((await request(endpoint,{owner:true,body:{reason:'x'}})).status,400);
+    assert.equal((await request(endpoint,{owner:true,body:{reason:'Erro revisado'}})).status,409);
+    await pool.query("UPDATE vorken_servers SET plugin_version='2.0.11' WHERE id=$1",[s1]);
+    assert.equal((await request(endpoint,{owner:true,body:{reason:'Erro revisado'}})).status,200);
+    assert.equal((await request(endpoint,{owner:true,body:{reason:'Erro revisado'}})).status,200);
+    let commands=(await pool.query("SELECT * FROM vorken_commands WHERE reversal_ban_id=$1",[ban])).rows;
+    assert.equal(commands.length,1);assert.equal(commands[0].server_id,s1);
+    assert.deepEqual(commands[0].expected_reasons,['Prova revisada']);
+    assert.equal((await pool.query('SELECT active FROM vorken_bans WHERE id=$1',[foreign])).rows[0].active,true);
+    assert.equal((await pool.query('SELECT active FROM vorken_bans WHERE id=$1',[ban])).rows[0].active,false);
+    assert.equal((await request('/admin/bans/'+ban,{owner:true,method:'PATCH',body:{active:true}})).status,409);
+    // Cleanup commands must still reach an inactive installation.
+    const sync=await request('/plugin/sync',{token:token1,body:{version:'2.0.11'}});
+    assert.equal(sync.data.active,false);assert(sync.data.commands.some(c=>c.id===commands[0].id&&c.action==='unban'));
+    await request('/plugin/sync',{token:token2,body:{receipts:[{id:commands[0].id,ok:true}]}});
+    assert.equal((await pool.query('SELECT status FROM vorken_commands WHERE id=$1',[commands[0].id])).rows[0].status,'pending');
+    await request('/plugin/sync',{token:token1,body:{version:'2.0.11',receipts:[{id:commands[0].id,ok:false,result:'Different local ban'}]}});
+    assert.equal((await request(endpoint,{owner:true,body:{reason:'Revisado novamente'}})).status,200);
+    commands=(await pool.query('SELECT * FROM vorken_commands WHERE reversal_ban_id=$1 ORDER BY created_at',[ban])).rows;
+    assert.equal(commands.length,2);assert.notEqual(commands[0].id,commands[1].id);
+    await request('/plugin/sync',{token:token1,body:{version:'2.0.11',receipts:[{id:commands[1].id,ok:true,result:'Revertido'}]}});
+    assert.equal((await pool.query('SELECT status FROM vorken_commands WHERE id=$1',[commands[1].id])).rows[0].status,'applied');
+    const listing=await request('/admin/bans',{owner:true});assert.equal(listing.status,200);
+    assert.equal(listing.data.bans.find(b=>b.id===ban).reversal_commands[0].status,'applied');
+  });
   await t.test('signed Mercado Pago payment validates price and cannot grant twice',async()=>{
     const checkout=await request('/checkout',{body:{planId:'trimestral'}});assert.equal(checkout.status,200);
     const order=(await pool.query('SELECT * FROM vorken_orders LIMIT 1')).rows[0];

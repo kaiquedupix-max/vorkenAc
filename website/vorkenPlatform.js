@@ -603,7 +603,9 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
     const r=await pool.query(`SELECT b.*,s.name AS server_name,COALESCE(v.player_name,b.player_name,legacy.player_name) AS player_name,
       COALESCE((SELECT name FROM vorken_customers WHERE discord_id=legacy.administrator_id),legacy.administrator_id) AS verification_administrator,
       COALESCE(b.administrator_name,NULLIF(split_part(c.actor_id,'|',2),''),(SELECT name FROM vorken_customers WHERE discord_id=split_part(c.actor_id,'|',1)),c.actor_id) AS administrator,
-      COALESCE(v.analysis_id,b.legacy_analysis_id) AS analysis_id,COUNT(*) OVER()::int AS total
+      COALESCE(v.analysis_id,b.legacy_analysis_id) AS analysis_id,
+      (SELECT jsonb_agg(jsonb_build_object('server',rs.name,'status',rc.status,'result',rc.result)) FROM (SELECT DISTINCT ON (server_id) * FROM vorken_commands WHERE reversal_ban_id=b.id ORDER BY server_id,created_at DESC,id DESC) rc JOIN vorken_servers rs ON rs.id=rc.server_id) AS reversal_commands,
+      COUNT(*) OVER()::int AS total
       FROM vorken_bans b JOIN vorken_servers s ON s.id=b.server_id LEFT JOIN vorken_sessions v ON v.id=b.session_id
       LEFT JOIN LATERAL(SELECT player_name,administrator_id FROM guerra_fria_verifications WHERE analysis_id=b.legacy_analysis_id ORDER BY id DESC LIMIT 1)legacy ON TRUE
       LEFT JOIN LATERAL(SELECT actor_id FROM vorken_commands WHERE (session_id=b.session_id AND action='deny' OR id=b.command_id) AND status='applied' ORDER BY completed_at DESC LIMIT 1)c ON TRUE
@@ -669,10 +671,46 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
   app.patch('/api/vorken/admin/bans/:id',requireAdmin,csrf,route(async(req,res)=>{
     if(!uuid(req.params.id)||typeof req.body.active!=='boolean') fail(400,'Registro inválido.');
     await tx(async db=>{
+      if((await db.query('SELECT id FROM vorken_bans WHERE id=$1 AND reversed_at IS NOT NULL',[req.params.id])).rows.length)fail(409,'Banimento revertido. Uma nova punição exige uma nova decisão.');
       const updated=await db.query('UPDATE vorken_bans SET active=$2 WHERE id=$1 RETURNING id',[req.params.id,req.body.active]);
       if(!updated.rows.length)fail(404,'Banimento não encontrado.');
       await audit(db,'owner','ban_visibility',req.params.id,{active:req.body.active});
     });res.json({ok:true});
+  }));
+
+  app.post('/api/vorken/admin/bans/:id/reverse',requireAdmin,csrf,route(async(req,res)=>{
+    const reason=clean(req.body.reason,500);
+    if(!uuid(req.params.id)||reason.length<5)fail(400,'Informe o motivo da reversão (mínimo 5 caracteres).');
+    const result=await tx(async db=>{
+      const selected=(await db.query('SELECT b.*,s.customer_id FROM vorken_bans b JOIN vorken_servers s ON s.id=b.server_id WHERE b.id=$1',[req.params.id])).rows[0];
+      if(!selected)fail(404,'Banimento não encontrado.');
+      // Serialize all reversals for the same customer, including different records of one player.
+      await db.query('SELECT id FROM vorken_customers WHERE id=$1 FOR UPDATE',[selected.customer_id]);
+      const previous=await db.query('SELECT DISTINCT ON (server_id) * FROM vorken_commands WHERE reversal_ban_id=$1 ORDER BY server_id,created_at DESC,id DESC',[selected.id]);
+      if(previous.rows.length){
+        for(const c of previous.rows.filter(c=>c.status==='failed')){
+          const id=await queue(db,c.server_id,'unban',selected.steam_id,'owner',null,reason);
+          await db.query('UPDATE vorken_commands SET reversal_ban_id=$2,expected_reasons=$3 WHERE id=$1',[id,selected.id,JSON.stringify(c.expected_reasons)]);
+        }
+        await audit(db,'owner','ban_reversal_retry',selected.id,{reason});
+        return {commands:previous.rows.length};
+      }
+      const bans=(await db.query(`SELECT b.* FROM vorken_bans b JOIN vorken_servers s ON s.id=b.server_id
+        WHERE s.customer_id=$1 AND b.steam_id=$2 AND b.reversed_at IS NULL FOR UPDATE OF b`,[selected.customer_id,selected.steam_id])).rows;
+      if(!bans.length)fail(409,'Este banimento já foi revertido.');
+      const network=bans.some(b=>b.network_eligible);
+      const servers=(await db.query('SELECT id,name,plugin_version FROM vorken_servers WHERE customer_id=$1',[selected.customer_id])).rows.filter(s=>network||bans.some(b=>b.server_id===s.id));
+      if(servers.some(s=>!/^2\.0\.(?:1[1-9]|[2-9]\d)$/.test(s.plugin_version||'')))fail(409,'Atualize o plugin Vorken para 2.0.11 nos servidores deste cliente antes de reverter.');
+      const conflicts=await db.query(`SELECT c.id FROM vorken_commands c JOIN vorken_servers s ON s.id=c.server_id WHERE s.customer_id=$1 AND c.steam_id=$2 AND c.action IN ('deny','ban_prior') AND c.status='pending'`,[selected.customer_id,selected.steam_id]);
+      if(conflicts.rows.length)fail(409,'Aguarde a confirmação da punição pendente antes de reverter.');
+      for(const s of servers){
+        const id=await queue(db,s.id,'unban',selected.steam_id,'owner',null,reason);
+        await db.query('UPDATE vorken_commands SET reversal_ban_id=$2,expected_reasons=$3 WHERE id=$1',[id,selected.id,JSON.stringify([...new Set(bans.map(b=>b.reason))])]);
+      }
+      await db.query('UPDATE vorken_bans SET active=FALSE,reversed_at=NOW() WHERE id=ANY($1::uuid[])',[bans.map(b=>b.id)]);
+      await audit(db,'owner','ban_reversal_requested',selected.id,{reason,steamId:selected.steam_id,banIds:bans.map(b=>b.id),serverIds:servers.map(s=>s.id)});
+      return {commands:servers.length};
+    });res.json({ok:true,...result,message:'Reversão registrada. Aguarde a confirmação do plugin em cada servidor.'});
   }));
 
   app.post('/api/vorken/plugin/sync',route(async(req,res)=>{
@@ -739,6 +777,7 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
         if(!command) continue; acknowledged.push(receipt.id);
         if(command.status!=='pending') continue;
         await db.query("UPDATE vorken_commands SET status=$2,result=$3,completed_at=NOW() WHERE id=$1",[command.id,receipt.ok?'applied':'failed',clean(receipt.result,500)]);
+        if(command.action==='unban')await audit(db,command.actor_id,'ban_reversal_result',command.reversal_ban_id,{serverId:server.id,ok:receipt.ok,result:clean(receipt.result,500)});
         if(command.action==='start') await notify(db,server.guild_id,'command',{steamId:command.steam_id,actorId:command.actor_id,
           result:clean(receipt.result,500),ok:receipt.ok,serverName:server.name});
         if(command.action==='ban_prior'){
@@ -777,8 +816,14 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
       await pool.query('UPDATE vorken_commands SET learning_complete=TRUE WHERE id=$1',[c.id]);
     }
     const active=await serverActive(server);
+    // A newer punishment must not be removed by an older pending reversal.
+    await pool.query(`UPDATE vorken_commands c SET status='failed',result='Nova punição ativa; revise antes de reverter.',completed_at=NOW()
+      WHERE c.server_id=$1 AND c.action='unban' AND c.status='pending' AND EXISTS(
+        SELECT 1 FROM vorken_bans b JOIN vorken_servers s ON s.id=b.server_id
+        WHERE s.customer_id=$2 AND b.steam_id=c.steam_id AND b.active AND b.reversed_at IS NULL
+          AND (b.expires_at IS NULL OR b.expires_at>NOW()))`,[server.id,server.customer_id]);
     await pool.query("UPDATE vorken_commands SET status='failed',result='Solicitação de telagem expirada.',completed_at=NOW() WHERE server_id=$1 AND status='pending' AND action='start' AND created_at<NOW()-interval '2 minutes'",[server.id]);
-    const commands=active?(await pool.query("SELECT id,detached_session AS \"detachedSession\",session_id AS \"sessionId\",action,steam_id AS \"steamId\",actor_id AS \"actorId\",reason FROM vorken_commands WHERE server_id=$1 AND status='pending' ORDER BY created_at LIMIT 20",[server.id])).rows:[];
+    const commands=(await pool.query("SELECT id,detached_session AS \"detachedSession\",session_id AS \"sessionId\",action,steam_id AS \"steamId\",actor_id AS \"actorId\",reason,expected_reasons AS \"expectedReasons\" FROM vorken_commands WHERE server_id=$1 AND status='pending' AND ($2 OR action='unban') ORDER BY created_at LIMIT 20",[server.id,active])).rows;
     const g=(await pool.query('SELECT verification_channel_id FROM vorken_guilds WHERE id=$1',[server.guild_id])).rows[0];
     // Servers belonging to the same customer form a network. Keep absolute expiry.
     const networkBans=active?(await pool.query(`SELECT DISTINCT ON (b.steam_id)

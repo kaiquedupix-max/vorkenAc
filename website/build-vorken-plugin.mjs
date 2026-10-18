@@ -271,4 +271,14 @@ if(!source.includes('eventType = "direct_ban"')){
                 steamId = steamId.ToString(), playerName = playerName, reason = reason });
             SaveBridge();`);
 }
+// Apply to both legacy-generated and production-only templates.
+if(!source.includes('command.action == "unban"')){
+  const unban=fs.readFileSync(new URL('./plugins/unban.fragment.cs',import.meta.url),'utf8');
+  source=source.replace('                else if (command.action == "ban_prior")',unban+'\n                else if (command.action == "ban_prior")');
+  source=source.replace('            public bool detachedSession;','            public string[] expectedReasons;\n            public bool detachedSession;');
+  source=source.replace('                    if (!bridgeActive) { ReleaseBridgeSessions(); return; }',
+    '                    if (!bridgeActive) { if (data.commands != null) foreach (BridgeCommand cleanup in data.commands) if (cleanup.action == "unban") ApplyBridgeCommand(cleanup); ReleaseBridgeSessions(); return; }');
+}
+source=source.replace(/\[Info\("Vorken", "Kaique", "2\.0\.\d+"\)\]/,'[Info("Vorken", "Kaique", "2.0.11")]')
+  .replace(/version = "2\.0\.\d+"/g,'version = "2.0.11"');
 fs.writeFileSync(generatedSourceUrl,source);

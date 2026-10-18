@@ -6,7 +6,7 @@ async function load(){
     const response=await fetch('/api/vorken/admin/bans?offset='+offset+'&q='+encodeURIComponent(get('search').value));
     const result=await response.json();if(!response.ok)throw new Error(response.status===401?'Entre no painel administrativo para acessar a auditoria.':result.message||'Não foi possível carregar.');
     rows=result.bans;get('status').textContent=result.total+' registros · '+(offset+1)+'–'+(offset+rows.length);
-    get('bans').innerHTML=rows.map((b,index)=>'<tr><td><a class="ban-profile" href="https://steamcommunity.com/profiles/'+encodeURIComponent(b.steam_id)+'" target="_blank" rel="noopener"><img src="'+esc(safeAvatar(b.profile?.avatar))+'" alt="" loading="lazy"><span>'+esc(b.player_name||b.profile?.personaName||'Nome não registrado')+'<small>'+esc(b.steam_id)+' · Perfil Steam ↗</small></span></a></td><td>'+esc(b.server_name)+'</td><td>'+esc(b.administrator||'Decisão: ADM não registrado')+(b.verification_administrator?'<small>Responsável pela telagem: '+esc(b.verification_administrator)+'</small>':'')+'</td><td>'+esc(b.reason)+'</td><td>'+esc(new Date(b.created_at).toLocaleString('pt-BR'))+'<small>'+(b.active?'Ativo':'Revogado')+'</small></td><td><button data-evidence="'+index+'">Ver provas</button> <button data-visibility="'+index+'">'+(b.active?'Remover da lista':'Restaurar na lista')+'</button></td></tr>').join('')||'<tr><td colspan="6">Nenhum banimento encontrado.</td></tr>';
+    get('bans').innerHTML=rows.map((b,index)=>'<tr><td><a class="ban-profile" href="https://steamcommunity.com/profiles/'+encodeURIComponent(b.steam_id)+'" target="_blank" rel="noopener"><img src="'+esc(safeAvatar(b.profile?.avatar))+'" alt="" loading="lazy"><span>'+esc(b.player_name||b.profile?.personaName||'Nome não registrado')+'<small>'+esc(b.steam_id)+' · Perfil Steam ↗</small></span></a></td><td>'+esc(b.server_name)+'</td><td>'+esc(b.administrator||'Decisão: ADM não registrado')+(b.verification_administrator?'<small>Responsável pela telagem: '+esc(b.verification_administrator)+'</small>':'')+'</td><td>'+esc(b.reason)+'</td><td>'+esc(new Date(b.created_at).toLocaleString('pt-BR'))+'<small>'+(b.reversed_at?'Reversão solicitada':b.active?'Ativo':'Fora da lista')+'</small></td><td><button data-evidence="'+index+'">Ver provas</button> <button data-visibility="'+index+'">'+(b.active?'Remover da lista':'Restaurar na lista')+'</button> <button data-reverse="'+index+'">'+(b.reversed_at?'Acompanhar reversão':'Reverter ban')+'</button>'+(b.reversal_commands||[]).map(c=>'<small>'+esc(c.server)+': '+esc(({pending:'Aguardando plugin',applied:'Revertido no Rust',failed:'Falhou — tente novamente'})[c.status]||c.status)+(c.result?' · '+esc(c.result):'')+'</small>').join('')+'</td></tr>').join('')||'<tr><td colspan="6">Nenhum banimento encontrado.</td></tr>';
     get('previous').disabled=offset===0;get('next').disabled=offset+rows.length>=result.total;
   }catch(error){get('status').textContent=error.message;}finally{busy=false;}
 }
@@ -15,6 +15,18 @@ get('previous').onclick=()=>{offset=Math.max(0,offset-100);load();};get('next').
 function safeAvatar(value){try{const u=new URL(value);return u.protocol==='https:'&&/^(avatars\.(steamstatic\.com|akamai\.steamstatic\.com)|cdn\.akamai\.steamstatic\.com)$/.test(u.hostname)?u.href:'/vorken-logo.svg';}catch{return '/vorken-logo.svg';}}
 function details(value){if(value==null)return '';if(typeof value!=='object')return esc(value);return '<dl class="proof-details">'+Object.entries(value).map(([key,item])=>'<dt>'+esc(key)+'</dt><dd>'+details(item)+'</dd>').join('')+'</dl>';}
 get('bans').onclick=async e=>{
+ const reverse=e.target.closest('[data-reverse]');
+ if(reverse){
+   const b=rows[Number(reverse.dataset.reverse)];
+   if(b.reversed_at&&!(b.reversal_commands||[]).some(c=>c.status==='failed')){await load();return;}
+   if(!confirm('Reverter os bans Vorken de '+b.steam_id+' nos servidores deste cliente? O histórico será preservado. Bans de outros clientes não serão alterados.'))return;
+   const reason=prompt('Motivo da reversão (mínimo 5 caracteres):');
+   if(!reason||reason.trim().length<5)return;
+   reverse.disabled=true;
+   try{const response=await fetch('/api/vorken/admin/bans/'+encodeURIComponent(b.id)+'/reverse',{method:'POST',headers:{'Content-Type':'application/json','X-Vorken-Request':'portal'},body:JSON.stringify({reason})});const result=await response.json();if(!response.ok)throw new Error(result.message||'Não foi possível reverter.');await load();get('status').textContent=result.message;}
+   catch(error){get('status').textContent=error.message;}finally{reverse.disabled=false;}
+   return;
+ }
  const visibility=e.target.closest('[data-visibility]');
  if(visibility){
    const b=rows[Number(visibility.dataset.visibility)];
