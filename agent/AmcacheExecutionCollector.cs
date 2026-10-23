@@ -1,3 +1,4 @@
+using File = Vorken.Agent.ScanFile;
 namespace Vorken.Agent;
 
 internal static class AmcacheExecutionCollector

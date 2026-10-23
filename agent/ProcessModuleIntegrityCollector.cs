@@ -1,3 +1,4 @@
+using File = Vorken.Agent.ScanFile;
 using System.Diagnostics;
 
 namespace Vorken.Agent;
@@ -6,8 +7,6 @@ internal static class ProcessModuleIntegrityCollector
 {
     private static readonly string[] HighValueProcesses =
     {
-        "rust",
-        "rustclient",
         "steam",
         "steamwebhelper",
         "explorer",
@@ -34,6 +33,8 @@ internal static class ProcessModuleIntegrityCollector
         {
             try
             {
+                if (InspectionScope.IsExcludedProcess(process.ProcessName)) continue;
+
                 bool highValue =
                     HighValueProcesses.Contains(
                         process.ProcessName,

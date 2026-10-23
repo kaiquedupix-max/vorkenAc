@@ -1,3 +1,4 @@
+using Directory = Vorken.Agent.ScanDirectory;
 using Microsoft.Win32.SafeHandles;
 using System.Runtime.InteropServices;
 

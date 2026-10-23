@@ -1,3 +1,5 @@
+using Directory = Vorken.Agent.ScanDirectory;
+using File = Vorken.Agent.ScanFile;
 using Microsoft.Win32;
 using System.Management;
 using System.Runtime.InteropServices;
@@ -417,7 +419,7 @@ internal static class AdvancedCollectors
         {
             try
             {
-                var info = new FileInfo(file);
+                var info = new FileInfo(InspectionScope.RequirePath(file));
                 string? hash = TrySha256(file);
 
                 if (!string.IsNullOrWhiteSpace(hash))
@@ -563,7 +565,7 @@ internal static class AdvancedCollectors
         try
         {
             using FileStream stream = new(
-                path,
+                InspectionScope.RequirePath(path),
                 FileMode.Open,
                 FileAccess.Read,
                 FileShare.ReadWrite | FileShare.Delete);

@@ -1,3 +1,4 @@
+using File = Vorken.Agent.ScanFile;
 using System.Buffers.Binary;
 using System.Text;
 
@@ -64,7 +65,7 @@ internal static class PeInspectionCollector
 
             try
             {
-                FileInfo info = new(file.Path);
+                FileInfo info = new(InspectionScope.RequirePath(file.Path));
                 if (info.Length <= 0 || info.Length > 350L * 1024L * 1024L)
                     continue;
 
@@ -135,7 +136,7 @@ internal static class PeInspectionCollector
     private static byte[] ReadSample(string path, int maxBytes)
     {
         using var stream = new FileStream(
-            path,
+            InspectionScope.RequirePath(path),
             FileMode.Open,
             FileAccess.Read,
             FileShare.ReadWrite | FileShare.Delete);

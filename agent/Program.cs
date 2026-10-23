@@ -1,3 +1,5 @@
+using Directory = Vorken.Agent.ScanDirectory;
+using File = Vorken.Agent.ScanFile;
 using Microsoft.Win32;
 using System.Diagnostics;
 using System.Management;
@@ -361,10 +363,8 @@ internal static class Program
                 DeepForensicCollector.CollectVirtualDiskIndicators,
                 errors);
 
-            List<RustModuleRecord> rustModules = SafeCollect(
-                "Módulos do Rust",
-                DeepForensicCollector.CollectRustModules,
-                errors);
+            // Retained as an empty payload field for older server versions.
+            var rustModules = new List<RustModuleRecord>();
 
             List<UsnJournalStateRecord> usnJournalState = SafeCollect(
                 "Estado do USN Journal",
@@ -986,7 +986,7 @@ internal static class Program
             {
                 try
                 {
-                    var info = new FileInfo(filePath);
+                    var info = new FileInfo(InspectionScope.RequirePath(filePath));
 
                     result.Add(new UsbFileRecord
                     {
@@ -1225,7 +1225,7 @@ internal static class Program
         {
             try
             {
-                var info = new FileInfo(file);
+                var info = new FileInfo(InspectionScope.RequirePath(file));
                 result.Add(new PrefetchRecord
                 {
                     Name = info.Name,
@@ -1281,7 +1281,7 @@ internal static class Program
 
                 try
                 {
-                    var info = new FileInfo(file);
+                    var info = new FileInfo(InspectionScope.RequirePath(file));
                     if (!info.Exists) continue;
 
                     bool customInteresting =
@@ -1429,6 +1429,8 @@ internal static class Program
         {
             try
             {
+                if (InspectionScope.IsExcludedProcess(process.ProcessName)) continue;
+
                 string? path = process.MainModule?.FileName;
                 string? hash = null;
                 bool signed = false;
@@ -1438,7 +1440,7 @@ internal static class Program
                 {
                     if (!hashed.TryGetValue(path, out hash))
                     {
-                        hash = new FileInfo(path).Length <= 250L * 1024L * 1024L
+                        hash = new FileInfo(InspectionScope.RequirePath(path)).Length <= 250L * 1024L * 1024L
                             ? TrySha256(path)
                             : null;
 
@@ -1525,7 +1527,7 @@ internal static class Program
             {
                 try
                 {
-                    FileInfo info = new(resolvedPath);
+                    FileInfo info = new(InspectionScope.RequirePath(resolvedPath));
                     if (info.Length <= 64L * 1024L * 1024L)
                         sha256 = TrySha256(resolvedPath);
                 }
@@ -1681,7 +1683,7 @@ internal static class Program
         {
             using FileStream stream =
                 new(
-                    path,
+                    InspectionScope.RequirePath(path),
                     FileMode.Open,
                     FileAccess.Read,
                     FileShare.ReadWrite | FileShare.Delete);
@@ -1850,7 +1852,7 @@ internal static class Program
 
         try
         {
-            using var archive = System.IO.Compression.ZipFile.OpenRead(path);
+            using var archive = System.IO.Compression.ZipFile.OpenRead(InspectionScope.RequirePath(path));
 
             foreach (var entry in archive.Entries.Take(400))
             {
@@ -1871,7 +1873,7 @@ internal static class Program
         try
         {
             using var stream = new FileStream(
-                path,
+                InspectionScope.RequirePath(path),
                 FileMode.Open,
                 FileAccess.Read,
                 FileShare.ReadWrite | FileShare.Delete);

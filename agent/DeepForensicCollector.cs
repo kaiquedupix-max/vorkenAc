@@ -1,3 +1,5 @@
+using Directory = Vorken.Agent.ScanDirectory;
+using File = Vorken.Agent.ScanFile;
 using Microsoft.Win32;
 using System.Diagnostics;
 using System.Management;
@@ -311,12 +313,12 @@ internal static class DeepForensicCollector
 
                 try
                 {
-                    var info = new FileInfo(file);
+                    var info = new FileInfo(InspectionScope.RequirePath(file));
                     if (!info.Exists || info.Length < 64 || info.Length > 500L * 1024L * 1024L)
                         continue;
 
                     using var stream = new FileStream(
-                        file,
+                        InspectionScope.RequirePath(file),
                         FileMode.Open,
                         FileAccess.Read,
                         FileShare.ReadWrite | FileShare.Delete);
@@ -539,105 +541,6 @@ internal static class DeepForensicCollector
         }
 
         return result;
-    }
-
-    public static List<RustModuleRecord> CollectRustModules()
-    {
-        var result = new List<RustModuleRecord>();
-
-        Process[] processes = Process.GetProcesses()
-            .Where(p =>
-                p.ProcessName.Equals("RustClient", StringComparison.OrdinalIgnoreCase) ||
-                p.ProcessName.Equals("Rust", StringComparison.OrdinalIgnoreCase))
-            .ToArray();
-
-        foreach (Process process in processes)
-        {
-            try
-            {
-                string? mainPath = null;
-                try { mainPath = process.MainModule?.FileName; } catch { }
-
-                string gameDirectory = !string.IsNullOrWhiteSpace(mainPath)
-                    ? Path.GetDirectoryName(mainPath) ?? ""
-                    : "";
-
-                foreach (ProcessModule module in process.Modules)
-                {
-                    try
-                    {
-                        string path = module.FileName ?? "";
-                        if (string.IsNullOrWhiteSpace(path)) continue;
-
-                        (bool signed, string signer) = TrySigner(path);
-                        string company = "";
-
-                        try
-                        {
-                            company = FileVersionInfo
-                                .GetVersionInfo(path)
-                                .CompanyName ?? "";
-                        }
-                        catch
-                        {
-                        }
-
-                        result.Add(new RustModuleRecord
-                        {
-                            ProcessId = process.Id,
-                            ProcessName = process.ProcessName,
-                            ModuleName = module.ModuleName ?? Path.GetFileName(path),
-                            Path = path,
-                            Signed = signed,
-                            SignerSubject = signer,
-                            CompanyName = company,
-                            UnderGameDirectory =
-                                !string.IsNullOrWhiteSpace(gameDirectory) &&
-                                IsPathUnder(path, gameDirectory),
-                            UnderWindows =
-                                IsPathUnder(
-                                    path,
-                                    Environment.GetFolderPath(
-                                        Environment.SpecialFolder.Windows)),
-                            UnderProgramFiles =
-                                IsPathUnder(
-                                    path,
-                                    Environment.GetFolderPath(
-                                        Environment.SpecialFolder.ProgramFiles)) ||
-                                IsPathUnder(
-                                    path,
-                                    Environment.GetFolderPath(
-                                        Environment.SpecialFolder.ProgramFilesX86)),
-                            UnderUserProfile =
-                                IsPathUnder(
-                                    path,
-                                    Environment.GetFolderPath(
-                                        Environment.SpecialFolder.UserProfile)),
-                            UnderTemp =
-                                IsPathUnder(path, Path.GetTempPath())
-                        });
-                    }
-                    catch
-                    {
-                    }
-                }
-            }
-            catch
-            {
-            }
-            finally
-            {
-                process.Dispose();
-            }
-        }
-
-        return result
-            .GroupBy(
-                x => $"{x.ProcessId}|{x.Path}",
-                StringComparer.OrdinalIgnoreCase)
-            .Select(x => x.First())
-            .Take(1200)
-            .ToList();
     }
 
     public static List<UsnJournalStateRecord> CollectUsnJournalState()

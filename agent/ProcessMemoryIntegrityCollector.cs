@@ -1,3 +1,4 @@
+using File = Vorken.Agent.ScanFile;
 using Microsoft.Win32.SafeHandles;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
@@ -20,8 +21,6 @@ internal static class ProcessMemoryIntegrityCollector
 
     private static readonly string[] TargetProcesses =
     {
-        "rust",
-        "rustclient",
         "steam",
         "steamwebhelper",
         "explorer"
@@ -43,6 +42,8 @@ internal static class ProcessMemoryIntegrityCollector
         {
             try
             {
+                if (InspectionScope.IsExcludedProcess(process.ProcessName)) continue;
+
                 if (!TargetProcesses.Contains(
                         process.ProcessName,
                         StringComparer.OrdinalIgnoreCase))
