@@ -1,0 +1,48 @@
+LICENÇA PROPRIETÁRIA DO VORKEN ANTI CHEAT
+
+Copyright (c) 2026 Vorken. Todos os direitos reservados.
+
+Esta licença aplica-se às versões do Vorken Anti Cheat lançadas sob estes termos a partir de 3 de outubro de 2026.
+
+1. PROPRIEDADE
+
+O Vorken Anti Cheat, incluindo seu código-fonte, código compilado, agentes, serviços, painéis, regras de detecção, documentação, identidade visual, bancos de dados próprios e demais componentes originais, é software proprietário protegido pelas leis aplicáveis de direitos autorais e propriedade intelectual.
+
+2. USO AUTORIZADO
+
+O uso do Vorken Anti Cheat é permitido somente de acordo com autorização concedida pelo titular do projeto e com os termos aplicáveis ao serviço ou à implantação oficial.
+
+3. RESTRIÇÕES
+
+Salvo autorização prévia e expressa por escrito do titular, é proibido:
+
+- copiar, redistribuir, sublicenciar, vender, alugar ou disponibilizar o software ou seu código-fonte;
+- modificar, adaptar, criar obras derivadas ou publicar versões modificadas;
+- remover avisos de propriedade, autoria, marca ou direitos autorais;
+- utilizar o nome, logotipo, identidade visual ou marcas Vorken de forma que sugira vínculo, aprovação ou operação oficial;
+- disponibilizar publicamente código-fonte proprietário, regras privadas, assinaturas, bancos de dados comerciais, credenciais ou material interno do projeto;
+- realizar engenharia reversa, descompilação ou desmontagem, exceto quando a legislação aplicável conceder expressamente um direito que não possa ser renunciado contratualmente.
+
+4. COMPONENTES DE TERCEIROS
+
+Dependências e componentes de terceiros permanecem sujeitos às respectivas licenças. Esta licença não reduz, substitui ou altera direitos concedidos por terceiros sobre seus próprios componentes.
+
+5. VERSÕES ANTERIORES
+
+Versões do Vorken que já tenham sido validamente distribuídas sob a GNU Affero General Public License v3.0 continuam regidas pelos termos aplicáveis àquelas cópias. Esta licença proprietária não pretende revogar retroativamente direitos já concedidos de forma irrevogável por uma licença anterior.
+
+Novas versões, alterações e materiais lançados pelo titular sob esta licença não recebem automaticamente a licença de versões anteriores.
+
+6. AUSÊNCIA DE GARANTIAS
+
+Na máxima extensão permitida pela legislação aplicável, o software é fornecido "no estado em que se encontra", sem garantias expressas ou implícitas, salvo quando houver obrigação legal ou compromisso escrito específico do titular.
+
+7. LIMITAÇÃO DE RESPONSABILIDADE
+
+Na máxima extensão permitida pela legislação aplicável, o titular não será responsável por danos indiretos, incidentais, especiais, consequenciais ou perda de dados decorrentes do uso indevido, não autorizado ou incompatível com os termos do Vorken Anti Cheat.
+
+8. AUTORIZAÇÕES ESPECÍFICAS
+
+Qualquer permissão de redistribuição, integração, acesso ao código-fonte, uso comercial, modificação ou licenciamento deverá ser concedida expressamente por escrito pelo titular do Vorken.
+
+Para informações sobre componentes de terceiros, consulte THIRD_PARTY_NOTICES.md.

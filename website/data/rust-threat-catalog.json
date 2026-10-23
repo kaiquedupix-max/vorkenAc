@@ -1,0 +1,1354 @@
+{
+  "version": "2026-09-24.8",
+  "notes": "Catálogo defensivo de nomes, domínios e convites publicamente associados a cheats/scripts/spoofers de Rust. Indicadores exatos/fortes recebem prioridade; nomes genéricos exigem contexto para reduzir falsos positivos.",
+  "brands": [
+    {
+      "name": "Lethality",
+      "aliases": [
+        "lethality",
+        "lethality club",
+        "lethality rust",
+        "lethality script",
+        "lethality loader"
+      ],
+      "domains": [
+        "lethality.club"
+      ],
+      "severity": "critical",
+      "source": "public_web",
+      "discordInvites": [
+        "lethalityrust"
+      ]
+    },
+    {
+      "name": "Revolex",
+      "aliases": [
+        "revolex",
+        "revolex script",
+        "revolex cheats",
+        "revolex rust"
+      ],
+      "domains": [
+        "revolexscript.com"
+      ],
+      "severity": "critical",
+      "source": "public_web",
+      "discordInvites": [
+        "j4GP9t"
+      ]
+    },
+    {
+      "name": "Purge Recoil",
+      "aliases": [
+        "purge recoil",
+        "purge rust",
+        "purge script",
+        "purgerecoil"
+      ],
+      "domains": [
+        "purgerecoil.club"
+      ],
+      "severity": "critical",
+      "source": "public_web",
+      "discordInvites": []
+    },
+    {
+      "name": "Zaza Cheats",
+      "aliases": [
+        "zaza cheats",
+        "zazacheats",
+        "zaza private"
+      ],
+      "domains": [
+        "zazacheats.net"
+      ],
+      "severity": "critical",
+      "source": "public_web",
+      "discordInvites": [
+        "zazacheats"
+      ]
+    },
+    {
+      "name": "Slayer Private",
+      "aliases": [
+        "slayer private",
+        "slayer rust",
+        "slayer cheat"
+      ],
+      "domains": [
+        "slayer.club"
+      ],
+      "severity": "critical",
+      "source": "public_web",
+      "discordInvites": []
+    },
+    {
+      "name": "Disconnect Cheats",
+      "aliases": [
+        "disconnect cheats",
+        "disconnect rust",
+        "disconnect.wtf",
+        "disconnect external",
+        "disconnect internal"
+      ],
+      "domains": [
+        "disconnectcheats.com",
+        "disconnect.wtf"
+      ],
+      "severity": "critical",
+      "source": "public_web",
+      "discordInvites": []
+    },
+    {
+      "name": "Beazt Private",
+      "aliases": [
+        "beazt private",
+        "beazt rust",
+        "beazt cheat"
+      ],
+      "domains": [],
+      "severity": "critical",
+      "source": "public_web",
+      "discordInvites": []
+    },
+    {
+      "name": "Agera",
+      "aliases": [
+        "agera rust",
+        "agera cheat",
+        "agera aimbot"
+      ],
+      "domains": [
+        "discord.me"
+      ],
+      "severity": "high",
+      "source": "public_web",
+      "discordInvites": [
+        "zbscn"
+      ]
+    },
+    {
+      "name": "PureDMA",
+      "aliases": [
+        "puredma",
+        "pure dma rust",
+        "pure dma"
+      ],
+      "domains": [],
+      "severity": "critical",
+      "source": "public_web",
+      "discordInvites": []
+    },
+    {
+      "name": "LordCheat",
+      "aliases": [
+        "lordcheat",
+        "lord cheat",
+        "rust external cheat"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_web",
+      "discordInvites": []
+    },
+    {
+      "name": "AimSync",
+      "aliases": [
+        "aimsync",
+        "aimsync.ai",
+        "aimsync rust"
+      ],
+      "domains": [
+        "aimsync.ai"
+      ],
+      "severity": "critical",
+      "source": "public_web",
+      "discordInvites": []
+    },
+    {
+      "name": "SmartAI",
+      "aliases": [
+        "rust smartai",
+        "smartai rust",
+        "smartai aimbot"
+      ],
+      "domains": [
+        "aptitude.pub"
+      ],
+      "severity": "high",
+      "source": "public_web",
+      "discordInvites": []
+    },
+    {
+      "name": "Nowax Cheats",
+      "aliases": [
+        "nowax",
+        "nowax cheats",
+        "nowaxcheats"
+      ],
+      "domains": [
+        "nowaxcheats.com"
+      ],
+      "severity": "critical",
+      "source": "public_web",
+      "discordInvites": []
+    },
+    {
+      "name": "FCheats",
+      "aliases": [
+        "fcheats",
+        "fcheats rust",
+        "memez macros",
+        "memez internalx",
+        "memez external",
+        "ancient rust cheat",
+        "mason internal"
+      ],
+      "domains": [
+        "fcheats.com"
+      ],
+      "severity": "critical",
+      "source": "public_web",
+      "discordInvites": []
+    },
+    {
+      "name": "GameVantage",
+      "aliases": [
+        "gamevantage",
+        "gamevantage rust external"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_web",
+      "discordInvites": []
+    },
+    {
+      "name": "BlastAim",
+      "aliases": [
+        "blastaim",
+        "blastaim rust"
+      ],
+      "domains": [],
+      "severity": "critical",
+      "source": "public_web",
+      "discordInvites": []
+    },
+    {
+      "name": "Aegis",
+      "aliases": [
+        "aegis rust cheat",
+        "aegis rust"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_web",
+      "discordInvites": []
+    },
+    {
+      "name": "AuroraCheats",
+      "aliases": [
+        "auroracheats",
+        "aurora cheats rust"
+      ],
+      "domains": [],
+      "severity": "critical",
+      "source": "public_web",
+      "discordInvites": []
+    },
+    {
+      "name": "Mirage",
+      "aliases": [
+        "mirage rust external",
+        "mirage rust cheat"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_web",
+      "discordInvites": []
+    },
+    {
+      "name": "The Darkest Magic",
+      "aliases": [
+        "the darkest magic",
+        "darkest magic rust"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_web",
+      "discordInvites": []
+    },
+    {
+      "name": "AI Aimbot",
+      "aliases": [
+        "ai aimbot rust",
+        "rust ai aimbot",
+        "ai aimbot",
+        "computer vision aimbot"
+      ],
+      "domains": [],
+      "severity": "critical",
+      "source": "public_web",
+      "discordInvites": []
+    },
+    {
+      "name": "Aimmy",
+      "aliases": [
+        "aimmy",
+        "aimmy aimbot",
+        "aimmy rust"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_web",
+      "discordInvites": []
+    },
+    {
+      "name": "Kosmos AI",
+      "aliases": [
+        "kosmos ai",
+        "kosmos aimbot",
+        "kosmos cheat"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_web",
+      "discordInvites": []
+    },
+    {
+      "name": "Synthar AI",
+      "aliases": [
+        "synthar",
+        "synthar ai",
+        "synthar aimbot"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_web",
+      "discordInvites": []
+    },
+    {
+      "name": "Moonlight",
+      "aliases": [
+        "moonlight rust",
+        "moonlight script",
+        "moonlights rust",
+        "moonlightpublic",
+        "moonlightus",
+        "moonlight scripts"
+      ],
+      "domains": [],
+      "severity": "critical",
+      "source": "public_mentions",
+      "discordInvites": [
+        "moonlightpublic"
+      ]
+    },
+    {
+      "name": "Poak",
+      "aliases": [
+        "poak rust",
+        "poak script",
+        "poak cheat"
+      ],
+      "domains": [],
+      "severity": "critical",
+      "source": "admin_seed",
+      "discordInvites": []
+    },
+    {
+      "name": "RevelX",
+      "aliases": [
+        "revelx",
+        "revelx rust",
+        "revelx script"
+      ],
+      "domains": [],
+      "severity": "critical",
+      "source": "admin_seed",
+      "discordInvites": []
+    },
+    {
+      "name": "Memez",
+      "aliases": [
+        "memez macros",
+        "memez internalx",
+        "memez external"
+      ],
+      "domains": [],
+      "discordInvites": [],
+      "severity": "critical",
+      "source": "public_marketplace"
+    },
+    {
+      "name": "Ancient",
+      "aliases": [
+        "ancient rust cheat",
+        "ancient rust"
+      ],
+      "domains": [],
+      "discordInvites": [],
+      "severity": "high",
+      "source": "public_marketplace"
+    },
+    {
+      "name": "Mason Internal",
+      "aliases": [
+        "mason internal",
+        "mason rust internal"
+      ],
+      "domains": [],
+      "discordInvites": [],
+      "severity": "high",
+      "source": "public_marketplace"
+    },
+    {
+      "name": "Aurora Cheats",
+      "aliases": [
+        "auroracheats",
+        "aurora cheats rust"
+      ],
+      "domains": [],
+      "discordInvites": [],
+      "severity": "critical",
+      "source": "public_marketplace"
+    },
+    {
+      "name": "AimSync AI",
+      "aliases": [
+        "aimsync",
+        "aimsync.ai",
+        "aimsync rust"
+      ],
+      "domains": [
+        "aimsync.ai"
+      ],
+      "discordInvites": [],
+      "severity": "critical",
+      "source": "public_marketplace"
+    },
+    {
+      "name": "UnnamedCheats",
+      "aliases": [
+        "unnamedcheats",
+        "unnamed cheats rust",
+        "unnamed rust external"
+      ],
+      "domains": [],
+      "discordInvites": [],
+      "severity": "high",
+      "source": "public_web"
+    },
+    {
+      "name": "RagePros",
+      "aliases": [
+        "ragepros",
+        "ragepros rust external"
+      ],
+      "domains": [
+        "ragepros.com"
+      ],
+      "discordInvites": [],
+      "severity": "critical",
+      "source": "public_web"
+    },
+    {
+      "name": "Matrix External",
+      "aliases": [
+        "matrix external",
+        "matrix rust external"
+      ],
+      "domains": [
+        "elitehacks.ru"
+      ],
+      "discordInvites": [],
+      "severity": "high",
+      "source": "public_web"
+    },
+    {
+      "name": "Beamware",
+      "aliases": [
+        "beamware",
+        "beamware rust"
+      ],
+      "domains": [
+        "beamware.net"
+      ],
+      "discordInvites": [],
+      "severity": "critical",
+      "source": "public_web"
+    },
+    {
+      "name": "Havolith",
+      "aliases": [
+        "havolith",
+        "havolith rust"
+      ],
+      "domains": [
+        "havolith.com"
+      ],
+      "discordInvites": [],
+      "severity": "critical",
+      "source": "public_web"
+    },
+    {
+      "name": "Opticware",
+      "aliases": [
+        "opticware",
+        "opticware rust"
+      ],
+      "domains": [
+        "opticware.net"
+      ],
+      "discordInvites": [],
+      "severity": "critical",
+      "source": "public_web"
+    },
+    {
+      "name": "Demonity",
+      "aliases": [
+        "demonity",
+        "demonity rust"
+      ],
+      "domains": [
+        "demonity.cc"
+      ],
+      "discordInvites": [],
+      "severity": "critical",
+      "source": "public_web"
+    },
+    {
+      "name": "Fame Scripts",
+      "aliases": [
+        "fame scripts",
+        "fame rust scripts",
+        "rustscripts.com"
+      ],
+      "domains": [
+        "rustscripts.com"
+      ],
+      "discordInvites": [],
+      "severity": "critical",
+      "source": "public_web"
+    },
+    {
+      "name": "AimMaster",
+      "aliases": [
+        "aimmaster",
+        "aimmaster rust"
+      ],
+      "domains": [
+        "aimmaster.cc"
+      ],
+      "discordInvites": [],
+      "severity": "high",
+      "source": "public_forum"
+    },
+    {
+      "name": "HennyCheats / Calamari",
+      "aliases": [
+        "hennycheats",
+        "calamari rust",
+        "calamari cheat"
+      ],
+      "domains": [],
+      "discordInvites": [],
+      "severity": "high",
+      "source": "public_forum"
+    },
+    {
+      "name": "Phantom DMA",
+      "aliases": [
+        "phantom dma rust",
+        "phantom dma",
+        "rust phantom dma"
+      ],
+      "domains": [
+        "phantomdma.cc"
+      ],
+      "severity": "critical",
+      "source": "public_web_2026",
+      "discordInvites": []
+    },
+    {
+      "name": "Fave DMA",
+      "aliases": [
+        "fave dma rust",
+        "fave dma",
+        "rust fave dma"
+      ],
+      "domains": [
+        "favedma.com"
+      ],
+      "severity": "critical",
+      "source": "public_web_2026",
+      "discordInvites": []
+    },
+    {
+      "name": "Hydra Rust",
+      "aliases": [
+        "hydra rust",
+        "rust hydra cheat",
+        "hydra rust cheat"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_marketplace_2026",
+      "discordInvites": []
+    },
+    {
+      "name": "Rampart Rust",
+      "aliases": [
+        "rampart rust",
+        "rust rampart cheat",
+        "rampart rust cheat"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_marketplace_2026",
+      "discordInvites": []
+    },
+    {
+      "name": "Mason Full",
+      "aliases": [
+        "mason rust full",
+        "mason full rust",
+        "mason rust cheat"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_marketplace_2026",
+      "discordInvites": []
+    },
+    {
+      "name": "Eclipse Rust",
+      "aliases": [
+        "eclipse rust",
+        "eclipse rust cheat",
+        "rust eclipse cheat"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_marketplace_2026",
+      "discordInvites": []
+    },
+    {
+      "name": "Cicada Full",
+      "aliases": [
+        "cicada full rust",
+        "cicada rust",
+        "rust cicada cheat"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_marketplace_2026",
+      "discordInvites": []
+    },
+    {
+      "name": "Wilonity",
+      "aliases": [
+        "wilonity",
+        "wilonity loader",
+        "wilonity rust"
+      ],
+      "domains": [],
+      "severity": "critical",
+      "source": "public_github_2026",
+      "discordInvites": []
+    },
+    {
+      "name": "Pyro Loader",
+      "aliases": [
+        "pyro rust script",
+        "pyro loader rust",
+        "pyro-loader"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_directory",
+      "discordInvites": []
+    },
+    {
+      "name": "ngrhook",
+      "aliases": [
+        "ngrhook",
+        "ngr hook rust"
+      ],
+      "domains": [],
+      "severity": "critical",
+      "source": "public_forum_2026",
+      "discordInvites": []
+    },
+    {
+      "name": "Ignite Rust",
+      "aliases": [
+        "ignite rust cheat",
+        "ignite rust",
+        "rust ignite cheat"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_forum_2025_2026",
+      "discordInvites": []
+    },
+    {
+      "name": "Quasar DMA",
+      "aliases": [
+        "quasar-dma",
+        "quasar dma rust",
+        "rust quasar dma"
+      ],
+      "domains": [],
+      "severity": "critical",
+      "source": "public_forum_2025",
+      "discordInvites": []
+    },
+    {
+      "name": "Matrix Venom",
+      "aliases": [
+        "matrix venom rust",
+        "matrix venom external",
+        "matrix venom"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_forum_2026",
+      "discordInvites": []
+    },
+    {
+      "name": "EagleScript",
+      "aliases": [
+        "eaglescript",
+        "eagle script rust",
+        "eaglescript rust"
+      ],
+      "domains": [],
+      "severity": "critical",
+      "source": "public_forum_2026",
+      "discordInvites": []
+    },
+    {
+      "name": "PhantomServices / RustServices",
+      "aliases": [
+        "phantomservices rust",
+        "rustservices cheat",
+        "rustservices rust"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_forum",
+      "discordInvites": []
+    },
+    {
+      "name": "PlanB / Labcore",
+      "aliases": [
+        "planb internal rust",
+        "labcore rust",
+        "planb rust cheat"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_forum",
+      "discordInvites": []
+    },
+    {
+      "name": "Intellect Internal",
+      "aliases": [
+        "intellect internal rust",
+        "intellect rust cheat"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_forum",
+      "discordInvites": []
+    },
+    {
+      "name": "IWantCheats",
+      "aliases": [
+        "iwantcheats rust",
+        "i want cheats rust",
+        "iwantcheats rust cheat"
+      ],
+      "domains": [],
+      "severity": "critical",
+      "source": "public_forum",
+      "discordInvites": []
+    },
+    {
+      "name": "Mem-Solutions",
+      "aliases": [
+        "mem-solutions rust",
+        "mem solutions rust",
+        "memsolutions rust"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_forum",
+      "discordInvites": []
+    },
+    {
+      "name": "Collapse Rust",
+      "aliases": [
+        "collapse rust cheat",
+        "collapse rust"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_forum",
+      "discordInvites": []
+    },
+    {
+      "name": "Phoenix Hack",
+      "aliases": [
+        "phoenix hack rust",
+        "phoenix cheats rust",
+        "phoenix rust cheat"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_forum",
+      "discordInvites": []
+    },
+    {
+      "name": "Ring-1 Rust",
+      "aliases": [
+        "ring-1 rust",
+        "ring1 rust",
+        "ring 1 rust cheat"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_forum",
+      "discordInvites": []
+    },
+    {
+      "name": "PasteWare / PastaWare",
+      "aliases": [
+        "pasteware rust",
+        "pastaware rust",
+        "paste ware rust cheat"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_forum",
+      "discordInvites": []
+    },
+    {
+      "name": "Eco Cheats",
+      "aliases": [
+        "eco cheats rust",
+        "ecocheats rust",
+        "eco rust cheat"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_forum",
+      "discordInvites": []
+    },
+    {
+      "name": "HyperAim",
+      "aliases": [
+        "hyperaim rust",
+        "hyperaim rust cheat"
+      ],
+      "domains": [
+        "hyperaim.gg"
+      ],
+      "severity": "critical",
+      "source": "public_forum",
+      "discordInvites": []
+    },
+    {
+      "name": "Liquid Cheats",
+      "aliases": [
+        "liquid cheats rust",
+        "liquidcheats rust"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_forum",
+      "discordInvites": []
+    },
+    {
+      "name": "Project Amira / Haxius",
+      "aliases": [
+        "project-amira rust",
+        "project amira rust",
+        "haxius rust"
+      ],
+      "domains": [
+        "haxius.com"
+      ],
+      "severity": "critical",
+      "source": "public_forum",
+      "discordInvites": []
+    },
+    {
+      "name": "Unicheats",
+      "aliases": [
+        "unicheats rust",
+        "uni cheats rust"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_forum",
+      "discordInvites": []
+    },
+    {
+      "name": "DeusAim",
+      "aliases": [
+        "deusaim rust",
+        "deus aim rust"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_forum",
+      "discordInvites": []
+    },
+    {
+      "name": "Quality Cheats",
+      "aliases": [
+        "quality cheats rust",
+        "qualitycheats rust"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_forum",
+      "discordInvites": []
+    },
+    {
+      "name": "Dopamine / Crocus",
+      "aliases": [
+        "dopamine rust spoofer",
+        "crocus rust spoofer",
+        "dopamine rust"
+      ],
+      "domains": [],
+      "severity": "medium",
+      "source": "public_forum",
+      "discordInvites": []
+    },
+    {
+      "name": "HyperHax",
+      "aliases": [
+        "hyperhax rust",
+        "hyper hax rust"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_forum",
+      "discordInvites": []
+    },
+    {
+      "name": "xDMA",
+      "aliases": [
+        "xdma rust cheat",
+        "xdma rust",
+        "rust xdma"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_forum_2026",
+      "discordInvites": []
+    },
+    {
+      "name": "LegitHelpers",
+      "aliases": [
+        "legithelpers rust",
+        "legit helpers rust",
+        "legithelpers recoil"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_community",
+      "discordInvites": []
+    },
+    {
+      "name": "Arcane Rust",
+      "aliases": [
+        "arcane rust software",
+        "arcane rust cheat"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_marketplace_2026",
+      "discordInvites": []
+    },
+    {
+      "name": "Bleak External",
+      "aliases": [
+        "bleak external rust",
+        "bleak rust external"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_marketplace_2026",
+      "discordInvites": []
+    },
+    {
+      "name": "COVCHEG",
+      "aliases": [
+        "covcheg rust",
+        "covcheg rust external"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_marketplace_2026",
+      "discordInvites": []
+    },
+    {
+      "name": "Dullwave",
+      "aliases": [
+        "dullwave rust",
+        "dullwave rust software"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_marketplace_2026",
+      "discordInvites": []
+    },
+    {
+      "name": "DMA-Cheats Rust",
+      "aliases": [
+        "dma-cheats rust",
+        "dma cheats rust"
+      ],
+      "domains": [
+        "dma-cheats.com"
+      ],
+      "severity": "high",
+      "source": "public_web_2026",
+      "discordInvites": []
+    },
+    {
+      "name": "Ion Cheats",
+      "aliases": [
+        "ion cheats",
+        "ioncheats",
+        "ion ai",
+        "ionai",
+        "ion slotted",
+        "ion rust",
+        "ion rust cheat",
+        "ion private rust"
+      ],
+      "domains": [
+        "ioncheats.com"
+      ],
+      "severity": "critical",
+      "source": "public_web_2026",
+      "discordInvites": []
+    },
+    {
+      "name": "Ascend Scripts",
+      "aliases": [
+        "ascend scripts",
+        "ascendscripts",
+        "ascend rust",
+        "ascend rust scripts",
+        "ascend ai",
+        "ascend external",
+        "ascend radar"
+      ],
+      "domains": [
+        "ascendscripts.com",
+        "checkout.ascendscripts.com"
+      ],
+      "discordInvites": [
+        "poac"
+      ],
+      "severity": "critical",
+      "source": "public_web_2026"
+    },
+    {
+      "name": "Aether Scripts",
+      "aliases": [
+        "aether scripts",
+        "aetherscripts",
+        "aether rust",
+        "aether rust scripts",
+        "aether ai",
+        "aether external",
+        "aether radar"
+      ],
+      "domains": [
+        "aetherscripts.io",
+        "checkout.aetherscripts.io"
+      ],
+      "severity": "critical",
+      "source": "public_web_2026",
+      "discordInvites": []
+    },
+    {
+      "name": "Poac",
+      "aliases": [
+        "poac",
+        "poacy",
+        "poac's shop",
+        "poac shop",
+        "daddy poacy"
+      ],
+      "domains": [
+        "checkout.ascendscripts.com"
+      ],
+      "discordInvites": [
+        "poac"
+      ],
+      "severity": "critical",
+      "source": "public_web_2026"
+    },
+    {
+      "name": "Recoil WTF",
+      "aliases": [
+        "recoil.wtf",
+        "recoil rust script",
+        "recoil script rust"
+      ],
+      "domains": [
+        "recoil.wtf"
+      ],
+      "severity": "critical",
+      "source": "public_web_2026",
+      "discordInvites": []
+    },
+    {
+      "name": "Iconic Ink",
+      "aliases": [
+        "iconicink",
+        "iconic ink",
+        "iconic rust script",
+        "iconic recoil"
+      ],
+      "domains": [
+        "iconicink.store"
+      ],
+      "severity": "critical",
+      "source": "public_web_2026",
+      "discordInvites": []
+    },
+    {
+      "name": "Evicted",
+      "aliases": [
+        "evicted rust",
+        "evicted script",
+        "evicted cheats",
+        "evicted.wtf"
+      ],
+      "domains": [
+        "evicted.wtf"
+      ],
+      "severity": "critical",
+      "source": "public_web_2026",
+      "discordInvites": []
+    },
+    {
+      "name": "Vanuri",
+      "aliases": [
+        "vanuri",
+        "vanuri rust",
+        "vanuriclient",
+        "vanuri client",
+        "vanuri rust pro"
+      ],
+      "domains": [
+        "vanuri.to"
+      ],
+      "severity": "critical",
+      "source": "public_web_2026",
+      "discordInvites": []
+    },
+    {
+      "name": "RustSense",
+      "aliases": [
+        "rustsense",
+        "rustsense.pub",
+        "rust sense"
+      ],
+      "domains": [
+        "rustsense.pub"
+      ],
+      "severity": "critical",
+      "source": "public_forum",
+      "discordInvites": []
+    },
+    {
+      "name": "Monolith",
+      "aliases": [
+        "monolith.wtf",
+        "monolith rust",
+        "monolith rust script",
+        "monolith script"
+      ],
+      "domains": [
+        "monolith.wtf"
+      ],
+      "severity": "high",
+      "source": "public_forum_historical",
+      "discordInvites": []
+    },
+    {
+      "name": "Recoil Club",
+      "aliases": [
+        "recoil.club",
+        "recoil club",
+        "recoil club rust"
+      ],
+      "domains": [
+        "recoil.club"
+      ],
+      "severity": "high",
+      "source": "public_forum_historical",
+      "discordInvites": []
+    },
+    {
+      "name": "Diablo",
+      "aliases": [
+        "diablo.pub",
+        "diablo rust script",
+        "diablo rust"
+      ],
+      "domains": [
+        "diablo.pub"
+      ],
+      "severity": "high",
+      "source": "public_forum_historical",
+      "discordInvites": []
+    },
+    {
+      "name": "Drain",
+      "aliases": [
+        "drain.cx",
+        "drain rust script",
+        "drain rust"
+      ],
+      "domains": [
+        "drain.cx"
+      ],
+      "severity": "high",
+      "source": "public_forum_historical",
+      "discordInvites": []
+    },
+    {
+      "name": "Pegasus",
+      "aliases": [
+        "pegasus rust",
+        "pegasus rust script",
+        "pegasus script"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_forum",
+      "discordInvites": []
+    },
+    {
+      "name": "Axios",
+      "aliases": [
+        "axios rust",
+        "axios rust script",
+        "axios script"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_forum",
+      "discordInvites": []
+    },
+    {
+      "name": "CSMacro",
+      "aliases": [
+        "csmacro",
+        "cs macro rust",
+        "csmacro rust"
+      ],
+      "domains": [],
+      "severity": "high",
+      "source": "public_forum",
+      "discordInvites": []
+    },
+    {
+      "name": "Infamous",
+      "aliases": [
+        "infamous.pw",
+        "infamous rust script",
+        "infamous rust"
+      ],
+      "domains": [
+        "infamous.pw"
+      ],
+      "severity": "high",
+      "source": "public_forum_historical",
+      "discordInvites": []
+    },
+    {
+      "name": "DeprimereShop",
+      "aliases": [
+        "deprimereshop",
+        "deprimere rust script",
+        "deprimereshop rust"
+      ],
+      "domains": [
+        "deprimereshop.com"
+      ],
+      "severity": "high",
+      "source": "public_forum_historical",
+      "discordInvites": []
+    },
+    {
+      "name": "RecoilScripts",
+      "aliases": [
+        "recoilscripts",
+        "recoil scripts",
+        "recoilscripts rust",
+        "rust recoil scripts"
+      ],
+      "domains": [
+        "recoilscripts.com"
+      ],
+      "severity": "critical",
+      "source": "public_web_2026",
+      "discordInvites": []
+    },
+    {
+      "name": "CheatStore Rust",
+      "aliases": [
+        "cheatstore rust",
+        "cheatstore.net rust",
+        "rc rust script",
+        "ultimate rust loader"
+      ],
+      "domains": [
+        "cheatstore.net",
+        "rustloader.wtf"
+      ],
+      "severity": "critical",
+      "source": "public_web_2026",
+      "discordInvites": []
+    },
+    {
+      "name": "GetCheats Rust",
+      "aliases": [
+        "getcheats rust",
+        "getcheats full rust",
+        "getcheats lite rust",
+        "getcheats external rust"
+      ],
+      "domains": [
+        "getcheats.io"
+      ],
+      "severity": "critical",
+      "source": "public_web_2026",
+      "discordInvites": []
+    },
+    {
+      "name": "LegitBaratinho",
+      "aliases": [
+        "legitbaratinho",
+        "legit baratinho",
+        "legitbaratinho cheat",
+        "legit baratinho cheat"
+      ],
+      "domains": [],
+      "severity": "critical",
+      "source": "user_confirmed_2026",
+      "discordInvites": []
+    }
+  ]
+}

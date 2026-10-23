@@ -1,0 +1,569 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#061018">
+  <title>Vorken Anti-Cheat</title>
+  <link rel="icon" type="image/svg+xml" href="/vorken-logo.svg">
+  <link rel="stylesheet" href="/styles.css?v=20260928-learning-v2">
+  <link rel="stylesheet" href="/evidence-desk.css?v=platform-recovery">
+  <link rel="stylesheet" href="/platform-recovery.css?v=20261009-blue">
+</head>
+<body class="vorken-admin">
+  <header class="vorken-shell-header">
+    <a class="vorken-brand" href="/">
+      <span class="vorken-brand-mark"><img src="/vorken-logo.svg" alt=""></span>
+      <span class="vorken-brand-copy">
+        <strong>VORKEN</strong>
+        <small>ANTI-CHEAT</small>
+      </span>
+    </a>
+
+
+
+    <div class="vorken-header-actions">
+      <a class="button ghost" href="/admin/clientes">Clientes e licenças</a>
+      <a class="button ghost" href="/admin/banimentos">Auditoria de banimentos</a>
+      <a class="vorken-icon-button" href="https://github.com/kaiquedupix-max/vorkenAc" target="_blank" rel="noopener" title="Código-fonte AGPL-3.0" aria-label="Código-fonte AGPL-3.0">⌘</a>
+      <button id="adminSoundToggle" class="vorken-icon-button sound-toggle" type="button" title="Desativar sons da interface" aria-label="Desativar sons da interface" aria-pressed="true">♪</button>
+      <span id="adminReadyState" class="vorken-ready-pill hidden">● READY</span>
+      <button id="refreshBtn" class="vorken-icon-button hidden" type="button" title="Atualizar">↻</button>
+      <button id="logoutBtn" class="vorken-icon-button hidden" type="button" title="Sair">×</button>
+    </div>
+  </header>
+    <nav id="adminMainNav" class="vorken-main-nav hidden" aria-label="Navegação principal">
+      <button class="vorken-nav-button" data-admin-tab="home">⌂<span>Início</span></button>
+      <button class="vorken-nav-button active" data-admin-tab="sessions">☷<span>Sessões</span></button>
+      <button class="vorken-nav-button" data-admin-tab="scanner">◉<span>Scanner</span></button>
+      <a class="vorken-nav-button" href="/admin/clientes"><span>Clientes e servidores</span></a>
+      <a class="vorken-nav-button" href="/admin/banimentos"><span>Banimentos</span></a>
+      <button class="vorken-nav-button" data-admin-tab="players">♟<span>Jogadores online</span></button>
+      <button class="vorken-nav-button" data-admin-tab="settings">⚙<span>Configurações</span></button>
+    </nav>
+
+  <main class="vorken-admin-main">
+    <section id="loginView" class="vorken-login-card">
+      <div class="eyebrow">ADMINISTRAÇÃO SEGURA</div>
+      <h1>Entrar no Vorken</h1>
+      <p>Use a senha administrativa para acessar sessões, relatórios e configurações.</p>
+      <form id="loginForm">
+        <label>Senha administrativa
+          <input id="adminPassword" type="password" autocomplete="current-password" required>
+        </label>
+        <button class="button primary" type="submit">Entrar</button>
+      </form>
+      <div id="loginMessage" class="message hidden"></div>
+    </section>
+
+    <section id="dashboardView" class="hidden vorken-dashboard">
+      <section id="playersPanel" class="vorken-tab-panel hidden" data-vorken-operations="owner"></section>
+      <section id="sessionsPanel" class="vorken-tab-panel">
+        <aside class="session-list-pane">
+          <div class="session-pane-title">
+            <div>
+              <div class="eyebrow">HISTÓRICO DE ANÁLISES</div>
+              <p>Revise sessões anteriores e relatórios gerados.</p>
+            </div>
+          </div>
+
+          <div class="session-search-row">
+            <div class="session-search-box">
+              <span>⌕</span>
+              <input id="sessionSearch" type="search" placeholder="Buscar por ID, jogador ou observações...">
+            </div>
+            <button id="sessionFilterButton" class="session-filter-button" type="button" title="Filtros">▽</button>
+          </div>
+
+          <div class="session-filter-tabs">
+            <button class="session-filter active" data-session-filter="all">✦ Todos</button>
+            <button class="session-filter" data-session-filter="critical">● Crítico</button>
+            <button class="session-filter" data-session-filter="review">◉ Revisar</button>
+            <button class="session-filter" data-session-filter="clean">◇ Limpo</button>
+          </div>
+
+          <div class="session-table-wrap">
+            <table class="session-table">
+              <thead>
+                <tr>
+                  <th></th>
+                  <th>ID DA SESSÃO</th>
+                  <th>JOGADOR / ORIGEM</th>
+                  <th>DATA</th>
+                  <th>RESULTADO</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="analysesBody"></tbody>
+            </table>
+          </div>
+
+          <div class="session-pagination">
+            <span>‹</span><button class="active">1</button><button>2</button><button>3</button><span>›</span>
+            <small>Mostrando sessões recentes</small>
+          </div>
+        </aside>
+
+        <section class="session-detail-pane">
+          <div id="reportEmptyState" class="report-empty-state">
+            <div class="radar-placeholder">◉</div>
+            <h2>Selecione uma sessão</h2>
+            <p>Abra uma análise no histórico para revisar evidências, artefatos e linha do tempo.</p>
+          </div>
+
+          <article id="reportCard" class="report-workspace hidden">
+            <div class="report-workspace-head">
+              <div class="report-title-wrap">
+                <div class="eyebrow">✦ RELATÓRIO DA SESSÃO</div>
+                <h1 id="reportTitle">Análise</h1>
+                <div class="report-origin-line"><span>◉</span> Steam Profile <span class="muted">· relatório técnico auditável</span></div>
+              </div>
+              <div class="report-head-actions">
+                <div id="gfIntegrationActions" class="gf-integration-actions hidden">
+                  <span id="gfDecisionBadge" class="gf-decision-badge">GUERRA FRIA</span>
+                  <button id="gfTrustAllBtn" class="button ghost" type="button">Desmarcar confiança</button>
+                  <button id="gfReleaseBtn" class="button gf-release-button" type="button">✓ Liberar jogador</button>
+                  <button id="gfBanBtn" class="button gf-ban-button" type="button">⚠ Banir jogador</button>
+                </div>
+                <button id="clientReportToggleBtn" class="button release-report-button" type="button">Liberar detalhes ao cliente</button>
+                <button id="exportReportBtn" class="button ghost" type="button">⇩ Exportar relatório</button>
+                <button id="rebuildFindingsBtn" class="button ghost" type="button">Reprocessar análise</button>
+                <button id="toggleReviewViewBtn" class="button ghost" type="button" disabled>Filtros locais ativos</button>
+                <button id="closeReportBtn" class="button ghost" type="button">Fechar</button>
+              </div>
+            </div>
+
+            <div class="report-category-grid">
+              <button class="report-category-card" data-report-filter="processes"><span>PROCESSOS ABERTOS</span><strong id="activityOpenCount">0</strong></button>
+              <button class="report-category-card" data-report-filter="journal"><span>JOURNAL</span><strong id="activityJournalCount">0</strong></button>
+              <button class="report-category-card active" data-report-filter="overview">
+                <span>VISÃO GERAL</span><strong>Todos</strong>
+              </button>
+              <button class="report-category-card danger" data-report-filter="critical">
+                <span>CRÍTICO</span><strong id="filterCriticalCount">0</strong>
+              </button>
+              <button class="report-category-card warning" data-report-filter="medium">
+                <span>LARANJA · REVISAR</span><strong id="filterMediumCount">0</strong>
+              </button>
+              <button class="report-category-card history" data-report-filter="history">
+                <span>HISTÓRICO SUSPEITO</span><strong id="filterHistoryCount">0</strong>
+              </button>
+              <button class="report-category-card usb" data-report-filter="usb">
+                <span>PENDRIVES / USB</span><strong id="filterUsbCount">0</strong>
+              </button>
+              <button class="report-category-card board" data-report-filter="serial">
+                <span>PLACAS / SERIAIS</span><strong id="filterSerialCount">0</strong>
+              </button>
+              <button class="report-category-card inventory" data-report-filter="inventory">
+                <span>INVENTÁRIO</span><strong id="filterInventoryCount">0</strong>
+              </button>
+            </div>
+
+            <div id="scopedDecisionNotice" class="message hidden" role="status"></div>
+            <div id="analysisProcessingBanner" class="message hidden"></div>
+            <div id="usbSuspiciousBanner" class="message usb-suspicious-alert hidden"></div>
+
+            <section id="reportOverview" class="report-overview-grid" data-report-group="overview critical medium history usb serial inventory">
+              <div class="report-center-column">
+                <div id="reportMetrics" class="metric-grid report-summary-grid"></div>
+
+                <details id="reportMetaSection" class="report-section report-meta-details" data-report-group="overview" open>
+                  <summary>Resumo da sessão</summary>
+                  <div id="reportMeta"></div>
+                </details>
+
+                <details id="steamAccountsSection" class="report-section report-meta-details" data-report-group="overview" open>
+                  <summary>
+                    <span>Contas Steam detectadas</span>
+                    <span id="steamAccountsCountBadge" class="summary-badge info">0</span>
+                  </summary>
+                  <div id="steamAccountsSummary" class="message"></div>
+                  <div id="steamAccountsList"></div>
+                </details>
+
+                <details id="battleMetricsSection" class="report-section report-meta-details" data-report-group="overview" open>
+                  <summary>BattleMetrics · contas relacionadas e banimentos</summary>
+                  <button type="button" id="battleMetricsRefresh">Consultar BattleMetrics</button>
+                  <div id="battleMetricsResults" aria-live="polite"></div>
+                </details>
+
+                <details id="criticalSection" class="report-section severity-group severity-critical" data-report-group="overview critical" open>
+                  <summary>
+                    <span>Itens críticos encontrados</span>
+                    <span id="criticalCountBadge" class="summary-badge danger">0</span>
+                  </summary>
+                  <div id="criticalFindingsList"></div>
+                </details>
+
+                <details id="mediumSection" class="report-section severity-group severity-medium" data-report-group="overview medium" open>
+                  <summary>
+                    <span>Itens para revisão</span>
+                    <span id="mediumCountBadge" class="summary-badge warning">0</span>
+                  </summary>
+                  <div id="mediumFindingsList"></div>
+                </details>
+
+                <details id="timelineSection" class="report-section history-section" data-report-group="overview history" open>
+                  <summary>
+                    <span>Histórico suspeito</span>
+                    <span id="historyCountBadge" class="summary-badge danger">0</span>
+                  </summary>
+                  <div id="browserHistorySignalsList"></div>
+                </details>
+              </div>
+
+              <aside class="report-side-column">
+                <div class="side-result-card">
+                  <span>RESULTADO FINAL</span>
+                  <strong id="resultFinalLabel">Revisão técnica</strong>
+                  <p>O relatório prioriza evidências reais e mantém a decisão final sob revisão humana.</p>
+                  <div class="risk-meter"><i></i><i></i><i></i><i></i><i></i></div>
+                </div>
+
+                <div class="side-stat-card">
+                  <span>ESTATÍSTICAS DA ANÁLISE</span>
+                  <div id="sideStatsMirror">Abra uma sessão para atualizar as métricas.</div>
+                </div>
+
+                <div class="side-recommend-card">
+                  <span>RECOMENDAÇÃO</span>
+                  <strong id="sideRecommendationLabel">Revisão manual</strong>
+                  <p id="sideRecommendationText">Use os achados críticos e a linha do tempo para a decisão administrativa.</p>
+                </div>
+
+                <div class="side-audit-card">
+                  <span>◆ RELATÓRIO AUDITÁVEL</span>
+                  <p>Todas as evidências e artefatos permanecem disponíveis para auditoria.</p>
+                  <button id="hashReportBtn" class="button ghost" type="button">◉ Gerar hash do relatório</button>
+                </div>
+              </aside>
+            </section>
+
+            <section class="report-deep-sections">
+<details class="report-section activity-section" data-report-group="processes"><summary>Processos abertos</summary><p id="activity-open-status" role="status"></p><p class="muted">Itens comuns são ocultados por assinatura e localização. A presença nesta lista não indica trapaça.</p><label>Pesquisar nome, caminho ou PID<input id="activity-open-search" type="search" placeholder="Pesquisar nesta lista"></label><div id="activity-open-list"></div><button type="button" id="activity-open-more" class="button ghost" hidden>Mostrar mais</button></details>
+<details class="report-section activity-section" data-report-group="journal"><summary>Journal · execuções desde a inicialização</summary><p id="activity-journal-status" role="status"></p><p class="muted">Itens comuns são ocultados por assinatura e localização. A presença nesta lista não indica trapaça.</p><label>Pesquisar nome, caminho ou PID<input id="activity-journal-search" type="search" placeholder="Pesquisar nesta lista"></label><div id="activity-journal-list"></div><button type="button" id="activity-journal-more" class="button ghost" hidden>Mostrar mais</button></details>
+              <details class="report-section info-inventory" data-report-group="inventory">
+                <summary>
+                  <span>Itens ignorados pelos filtros locais</span>
+                  <span id="filteredCountBadge" class="summary-badge info">0</span>
+                </summary>
+                <div id="reviewStatusBox" class="message"></div>
+                <div id="filteredFindingsList"></div>
+              </details>
+
+              <details id="usbSection" class="report-section severity-group hardware-group" data-report-group="usb">
+                <summary>
+                  <span>Pendrives / USB</span>
+                  <span id="hardwareCountBadge" class="summary-badge info">0</span>
+                </summary>
+                <h3>Pendrives detectados</h3>
+                <div id="deviceOverviewList"></div>
+                <h3>Executáveis rodados nos pendrives</h3>
+                <div id="usbExecutionEvidenceList"></div>
+              </details>
+
+              <details id="serialSection" class="report-section severity-group hardware-group" data-report-group="serial">
+                <summary>
+                  <span>Placas / Arduino / MAKCU / seriais</span>
+                  <span class="summary-badge info">HARDWARE</span>
+                </summary>
+                <div id="serialDeviceList"></div>
+              </details>
+
+              <details class="report-section priority-section" data-report-group="critical medium">
+                <summary>
+                  <span>Arquivos prioritários</span>
+                  <span id="priorityCountBadge" class="summary-badge warning">0</span>
+                </summary>
+                <div id="priorityFilesList"></div>
+              </details>
+
+              <details class="report-section severity-group severity-critical" data-report-group="critical">
+                <summary>
+                  <span>Aplicativos desconhecidos / origem inválida</span>
+                  <span id="unknownAppsCountBadge" class="summary-badge danger">0</span>
+                </summary>
+                <div id="unknownAppsList"></div>
+              </details>
+
+              <details class="report-section severity-group severity-critical" data-report-group="critical">
+                <summary>
+                  <span>Histórico apagado recuperado</span>
+                  <span id="recoveredHistoryCountBadge" class="summary-badge danger">0</span>
+                </summary>
+                <div id="recoveredHistoryList"></div>
+              </details>
+
+              <details class="report-section severity-group severity-medium" data-report-group="medium">
+                <summary>
+                  <span>Arquivos apagados no NTFS / USN</span>
+                  <span id="deletedUsnCountBadge" class="summary-badge warning">0</span>
+                </summary>
+                <div id="deletedUsnList"></div>
+              </details>
+
+              <details class="report-section severity-group severity-medium" data-report-group="medium">
+                <summary>
+                  <span>Arquivos baixados do Discord / Telegram</span>
+                  <span id="socialDownloadsCountBadge" class="summary-badge warning">0</span>
+                </summary>
+                <div id="socialDownloadsList"></div>
+              </details>
+
+              <details class="report-section severity-group severity-medium" data-report-group="medium">
+                <summary>
+                  <span>Downloads sinalizados pelo navegador</span>
+                  <span id="browserDangerCountBadge" class="summary-badge warning">0</span>
+                </summary>
+                <div id="browserDangerDownloadsList"></div>
+              </details>
+
+              <details class="report-section advanced-forensics" data-report-group="inventory">
+                <summary>
+                  <span>Módulos forenses avançados</span>
+                  <span id="advancedForensicsCountBadge" class="summary-badge info">0</span>
+                </summary>
+                <div id="advancedForensicsSummary" class="metric-grid"></div>
+                <div id="advancedForensicsList"></div>
+              </details>
+
+              <details id="inventorySection" class="report-section info-inventory" data-report-group="inventory">
+                <summary>
+                  <span>Inventário / arquivos informativos</span>
+                  <span id="infoCountBadge" class="summary-badge info">0</span>
+                </summary>
+
+                <div id="inventoryLoadNotice" class="message hidden"></div>
+
+                <h3>Achados informativos / baixos</h3>
+                <div id="infoFindingsList"></div>
+                <h3>Downloads apagados / não localizados</h3>
+                <div id="browserDownloadsList"></div>
+                <h3>Lixeira / arquivos excluídos</h3>
+                <div id="recycleBinList"></div>
+                <h3>Linha do tempo forense</h3>
+                <div id="forensicTimelineList"></div>
+                <h3>Resumo técnico</h3>
+                <div id="artifactSummary"></div>
+                <h3>Análises anteriores neste PC</h3>
+                <div id="relatedAnalysesList"></div>
+                <h3>Execuções suspeitas / mídia removível</h3>
+                <div id="recentExecutionList"></div>
+                <h3>Inventário de arquivos candidatos</h3>
+                <div id="candidateFilesList"></div>
+                <h3>Processos e horários de início</h3>
+                <div id="processStartList"></div>
+                <h3>Timestamps de compilação PE</h3>
+                <div id="compilationTimesList"></div>
+                <h3>Contexto técnico / anti-forense</h3>
+                <div id="integritySignalsList"></div>
+                <h3>Módulos suspeitos carregados no Rust</h3>
+                <div id="rustModulesList"></div>
+                <h3>Artefatos de execução do Windows</h3>
+                <div id="executionArtifactsList"></div>
+              </details>
+
+              <details class="report-section" data-report-group="inventory">
+                <summary>Dados brutos da análise</summary>
+                <p class="muted">O conteúdo completo permanece no servidor para não travar esta aba.</p>
+                <a id="downloadRawReportBtn" class="button ghost" href="#" download>⇩ Baixar JSON completo</a>
+                <pre id="rawReport" class="raw"></pre>
+              </details>
+            </section>
+          </article>
+        </section>
+      </section>
+
+      <section id="scannerPanel" class="vorken-tab-panel hidden scanner-config-panel">
+        <div class="panel-heading">
+          <div class="eyebrow">SCANNER</div>
+          <h1>Nova análise</h1>
+          <p>Crie um link de análise sob demanda e acompanhe o resultado pela aba Sessões.</p>
+        </div>
+
+        <article class="card scanner-create-card">
+          <form id="analysisForm">
+            <label>Nome / identificação
+              <input id="analysisLabel" maxlength="140" placeholder="Ex.: João - Guerra Fria" required>
+            </label>
+            <label>Validade do link
+              <select id="analysisTtl">
+                <option value="6">6 horas</option>
+                <option value="12">12 horas</option>
+                <option value="24" selected>24 horas</option>
+                <option value="48">48 horas</option>
+                <option value="72">72 horas</option>
+                <option value="168">7 dias</option>
+              </select>
+            </label>
+            <button class="button primary" type="submit">Gerar análise</button>
+          </form>
+          <div id="analysisCreated" class="message hidden"></div>
+        </article>
+      </section>
+
+      <section id="settingsPanel" class="vorken-tab-panel hidden settings-panel">
+        <div class="panel-heading">
+          <div class="eyebrow">CONFIGURAÇÕES</div>
+          <h1>Regras de detecção</h1>
+          <p>Gerencie regras customizadas sem alterar o fluxo do scanner.</p>
+        </div>
+
+        <div class="settings-grid">
+          <article class="card">
+            <h2>Nova regra</h2>
+            <form id="ruleForm">
+              <div class="form-row">
+                <label>Nome
+                  <input id="ruleName" maxlength="120" placeholder="Ex.: Loader X" required>
+                </label>
+                <label>Severidade
+                  <select id="ruleSeverity">
+                    <option value="info">Info</option>
+                    <option value="low">Baixa</option>
+                    <option value="medium" selected>Média</option>
+                    <option value="high">Alta</option>
+                    <option value="critical">Crítica</option>
+                  </select>
+                </label>
+              </div>
+              <label>Tipo
+                <select id="ruleType">
+                  <option value="filename_contains">Nome do arquivo contém</option>
+                  <option value="path_contains">Caminho contém</option>
+                  <option value="sha256">SHA-256 exato</option>
+                  <option value="process_name">Processo contém</option>
+                  <option value="service_name">Serviço contém</option>
+                  <option value="driver_name">Driver contém</option>
+                  <option value="device_keyword">Dispositivo contém</option>
+                  <option value="prefetch_contains">Prefetch contém</option>
+                  <option value="bam_contains">BAM/DAM contém</option>
+                  <option value="userassist_contains">UserAssist contém</option>
+                  <option value="muicache_contains">MUICache contém</option>
+                  <option value="pca_contains">PCA Store contém</option>
+                  <option value="amcache_contains">Amcache contém</option>
+                  <option value="shimcache_contains">ShimCache contém</option>
+                  <option value="setupapi_contains">SetupAPI USB contém</option>
+                  <option value="powershell_contains">PowerShell contém</option>
+                  <option value="signer_contains">Assinante digital contém</option>
+                  <option value="prefetch_integrity">Integridade do Prefetch contém</option>
+                  <option value="volume_keyword">Volume sem letra contém</option>
+                  <option value="log_clear_signal">Sinal de limpeza de log contém</option>
+                  <option value="execution_name">Execução/Prefetch contém</option>
+                  <option value="usb_event_keyword">Evento USB contém</option>
+                  <option value="process_history_contains">Histórico de processo contém</option>
+                  <option value="recent_link_contains">Atalho recente contém</option>
+                  <option value="download_url_contains">URL de download contém</option>
+                  <option value="download_name_contains">Nome/caminho de download contém</option>
+                  <option value="browser_history_contains">Histórico/pesquisa do navegador contém</option>
+                  <option value="browser_recovery_contains">Vestígio recuperado do navegador contém</option>
+                  <option value="deleted_name_contains">USN: arquivo apagado contém</option>
+                  <option value="recycle_name_contains">Lixeira: nome/caminho contém</option>
+                  <option value="rust_module_contains">Módulo carregado no Rust contém</option>
+                  <option value="defender_history_contains">Histórico do Defender contém</option>
+                  <option value="defender_exclusion_contains">Exclusão do Defender contém</option>
+                  <option value="pe_indicator_contains">PE / packer / entropia contém</option>
+                  <option value="zone_url_contains">Zone.Identifier / origem contém</option>
+                  <option value="ads_contains">Alternate Data Stream contém</option>
+                  <option value="autorun_contains">Autorun / tarefa contém</option>
+                  <option value="powershell_artifact_contains">PowerShell avançado contém</option>
+                  <option value="network_indicator_contains">Rede / DNS contém</option>
+                  <option value="usn_activity_contains">JournalTrace / USN contém</option>
+                  <option value="system_integrity_contains">Integridade do Windows contém</option>
+                  <option value="module_integrity_contains">Módulo/DLL carregada contém</option>
+                  <option value="memory_integrity_contains">Memória executável privada contém</option>
+                  <option value="crash_contains">WER / crash contém</option>
+                </select>
+              </label>
+              <label>Valor / padrão
+                <input id="rulePattern" maxlength="500" placeholder="loader.exe ou hash..." required>
+              </label>
+              <label>Descrição
+                <textarea id="ruleDescription" rows="2" maxlength="600" placeholder="Por que esta evidência merece revisão?"></textarea>
+              </label>
+              <button class="button primary" type="submit">Salvar regra</button>
+            </form>
+          </article>
+
+          <article class="card">
+            <div class="eyebrow">DETECTION RULES</div>
+            <h2>Regras customizadas</h2>
+            <div id="rulesList" class="rule-list"></div>
+          </article>
+        </div>
+      </section>
+
+    </section>
+  </main>
+
+
+  <dialog id="banReasonDialog" class="gf-ban-dialog">
+    <form method="dialog" class="gf-ban-dialog-card">
+      <div class="eyebrow">GUERRA FRIA · BANIMENTO</div>
+      <h2>Selecionar motivo</h2>
+      <p class="muted">Escolha o motivo padronizado que será enviado junto com as evidências selecionadas.</p>
+
+      <label>Motivo do banimento
+        <select id="banReasonSelect">
+          <option value="Cheat / Trapaça">Cheat / Trapaça</option>
+          <option value="Ban Evasion / Evasão de ban">Ban Evasion / Evasão de ban</option>
+          <option value="Associação com jogador banido">Associação com jogador banido</option>
+          <option value="Violação de regra de duo/time">Violação de regra de duo/time</option>
+          <option value="Violação de limite de equipe">Violação de limite de equipe</option>
+          <option value="Script / Macro proibido">Script / Macro proibido</option>
+          <option value="Racismo / Discurso de ódio">Racismo / Discurso de ódio</option>
+          <option value="Recusa de verificação">Recusa de verificação</option>
+          <option value="Evasão / tentativa de burlar verificação">Evasão / tentativa de burlar verificação</option>
+          <option value="Outro">Outro</option>
+        </select>
+      </label>
+
+      <label id="banReasonCustomWrap" class="hidden">Motivo personalizado
+        <textarea id="banReasonCustom" rows="3" maxlength="500" placeholder="Descreva o motivo..."></textarea>
+      </label>
+
+      <div class="gf-ban-dialog-actions">
+        <button id="banReasonCancelBtn" class="button ghost" type="button">Cancelar</button>
+        <button id="banReasonConfirmBtn" class="button gf-ban-button" type="button">Continuar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="manualBanPlayerDialog" class="gf-ban-dialog">
+    <form method="dialog" class="gf-ban-dialog-card">
+      <div class="eyebrow">VORKEN · BANIMENTO MANUAL</div>
+      <h2>Identificar o jogador</h2>
+      <p class="muted">Esta análise foi criada por link manual. Informe o SteamID64 para aplicar o banimento ao jogador correto e vincular a decisão ao relatório.</p>
+
+      <label>Identificação Steam do jogador
+        <input id="manualBanSteamId" type="text" maxlength="220" list="manualBanSteamIdSuggestions" placeholder="SteamID64, STEAM_0:1:..., [U:1:...] ou link do perfil" autocomplete="off" required>
+        <datalist id="manualBanSteamIdSuggestions"></datalist>
+      </label>
+
+      <label>Discord User ID <span class="muted">(opcional)</span>
+        <input id="manualBanDiscordId" type="text" inputmode="numeric" maxlength="20" placeholder="ID numérico do usuário" autocomplete="off">
+      </label>
+
+      <label>Ticket / Channel ID <span class="muted">(opcional)</span>
+        <input id="manualBanTicketId" type="text" inputmode="numeric" maxlength="20" placeholder="ID numérico do canal" autocomplete="off">
+      </label>
+
+      <div id="manualBanPlayerMessage" class="message hidden"></div>
+      <div class="gf-ban-dialog-actions">
+        <button id="manualBanPlayerCancelBtn" class="button ghost" type="button">Cancelar</button>
+        <button id="manualBanPlayerConfirmBtn" class="button gf-ban-button" type="button">Continuar com o banimento</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/ui-polish.js?v=20260927-remote-admin-v1"></script>
+  <link rel="stylesheet" href="/evidence-inspector.css?v=20261015">
+  <script src="/evidence-inspector.js?v=20261015"></script>
+  <script src="/battle-metrics-ui.js?v=20261015" defer></script>
+  <link rel="stylesheet" href="/process-activity.css?v=20261023">
+  <script src="/process-activity-ui.js?v=20261023" defer></script>
+  <script src="/admin.js?v=20261015-battlemetrics" defer></script>
+  <script type="module" src="/operations.js?v=20261004"></script>
+</body>
+</html>
+

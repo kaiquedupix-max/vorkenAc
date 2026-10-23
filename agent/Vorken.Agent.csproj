@@ -1,0 +1,43 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <UseWindowsForms>true</UseWindowsForms>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>Vorken.Agent</AssemblyName>
+    <RootNamespace>Vorken.Agent</RootNamespace>
+    <Version>1.1.0</Version>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <SelfContained>true</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>assets/vorken.ico</ApplicationIcon>
+    <Title>Vorken AntiCheat</Title>
+    <Product>Vorken AntiCheat</Product>
+    <Company>Vorken</Company>
+    <Authors>Vorken</Authors>
+    <RepositoryUrl>https://github.com/kaiquedupix-max/vorkenAc</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <Description>Scanner forense defensivo baseado em consentimento para investigações de integridade em ambientes competitivos de jogos.</Description>
+    <Copyright>Copyright © Vorken 2026. Todos os direitos reservados.</Copyright>
+    <AssemblyVersion>1.1.0.0</AssemblyVersion>
+    <FileVersion>1.1.0.0</FileVersion>
+    <InformationalVersion>1.1.0</InformationalVersion>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="assets/ui-*.wav" />
+    <EmbeddedResource Include="../brand/vorken-icon.png" LogicalName="Vorken.BrandMark.png" />
+    <PackageReference Include="System.Diagnostics.EventLog" Version="8.0.0" />
+    <PackageReference Include="System.Management" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.8" />
+    <PackageReference Include="Prefetch" Version="2026.5.2" />
+    <PackageReference Include="Amcache" Version="2026.5.3" />
+    <PackageReference Include="AppCompatCache" Version="1.2.4" />
+  </ItemGroup>
+  <Import Project="Obfuscation.targets" />
+</Project>

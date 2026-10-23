@@ -1,0 +1,276 @@
+name: Vorken CI
+
+on:
+  push:
+    branches: ["main"]
+    tags: ["v*"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  agent:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Test inspection exclusions
+        run: dotnet run --project .\tests\InspectionScope.Tests\InspectionScope.Tests.csproj -c Release
+
+      - name: Test process journal
+        run: dotnet run --project .\tests\ProcessJournal.Tests\ProcessJournal.Tests.csproj -c Release
+
+      - name: Restore pinned build tools
+        run: dotnet tool restore
+
+      - name: Restore agent
+        run: dotnet restore .\agent\Vorken.Agent.csproj -r win-x64
+
+      - name: Build agent
+        run: dotnet build .\agent\Vorken.Agent.csproj -c Release -r win-x64 --no-restore
+
+      - name: Publish agent
+        run: dotnet publish .\agent\Vorken.Agent.csproj -c Release -r win-x64 --self-contained true --no-restore -o .\publish
+
+      - name: Validate protected report contract
+        run: dotnet run --project .\tests\PublishedAgent.Tests\PublishedAgent.Tests.csproj -c Release -- .\agent\obj\Release\net8.0-windows\win-x64\obfuscation\input\Vorken.Agent.dll .\agent\obj\Release\net8.0-windows\win-x64\obfuscation\output\Vorken.Agent.dll .\publish\Vorken.Agent.exe
+
+      - name: Detect SignPath configuration
+        id: signpath-config
+        shell: pwsh
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          SIGNPATH_ORGANIZATION_ID: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          SIGNPATH_PROJECT_SLUG: ${{ secrets.SIGNPATH_PROJECT_SLUG }}
+          SIGNPATH_SIGNING_POLICY_SLUG: ${{ secrets.SIGNPATH_SIGNING_POLICY_SLUG }}
+          SIGNPATH_ARTIFACT_CONFIGURATION_SLUG: ${{ secrets.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+        run: |
+          $values = @(
+            $env:SIGNPATH_API_TOKEN,
+            $env:SIGNPATH_ORGANIZATION_ID,
+            $env:SIGNPATH_PROJECT_SLUG,
+            $env:SIGNPATH_SIGNING_POLICY_SLUG,
+            $env:SIGNPATH_ARTIFACT_CONFIGURATION_SLUG
+          )
+          $enabled = $values.Count -eq 5 -and @($values | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count -eq 0
+          "enabled=$($enabled.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Upload unsigned agent for SignPath
+        if: steps.signpath-config.outputs.enabled == 'true' && github.event_name != 'pull_request'
+        id: upload-unsigned-agent
+        uses: actions/upload-artifact@v4
+        with:
+          name: Vorken-Agent-unsigned-${{ github.run_id }}
+          path: .\publish\Vorken.Agent.exe
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Submit agent to SignPath
+        if: steps.signpath-config.outputs.enabled == 'true' && github.event_name != 'pull_request'
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ secrets.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ secrets.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ secrets.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+          github-artifact-id: ${{ steps.upload-unsigned-agent.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: .\signpath-output
+
+      - name: Install signed SignPath agent
+        if: steps.signpath-config.outputs.enabled == 'true' && github.event_name != 'pull_request'
+        shell: pwsh
+        run: |
+          $signed = @(Get-ChildItem .\signpath-output -Recurse -File -Filter Vorken.Agent.exe)
+          if ($signed.Count -ne 1) {
+            throw "Expected exactly one signed Vorken.Agent.exe, found $($signed.Count)."
+          }
+          Copy-Item -LiteralPath $signed[0].FullName -Destination .\publish\Vorken.Agent.exe -Force
+          $signature = Get-AuthenticodeSignature .\publish\Vorken.Agent.exe
+          if ($signature.Status -ne "Valid") {
+            throw "SignPath returned an invalid signature: $($signature.Status) $($signature.StatusMessage)"
+          }
+
+      - name: Sign agent when certificate is configured
+        shell: pwsh
+        env:
+          SIGNPATH_ENABLED: ${{ steps.signpath-config.outputs.enabled }}
+          VORKEN_SIGNING_PFX_BASE64: ${{ secrets.VORKEN_SIGNING_PFX_BASE64 }}
+          VORKEN_SIGNING_PFX_PASSWORD: ${{ secrets.VORKEN_SIGNING_PFX_PASSWORD }}
+        run: |
+          if ($env:SIGNPATH_ENABLED -eq "true") {
+            Write-Host "SignPath is configured; skipping the PFX fallback."
+            exit 0
+          }
+
+          if ([string]::IsNullOrWhiteSpace($env:VORKEN_SIGNING_PFX_BASE64)) {
+            Write-Host "Signing certificate not configured; publishing unsigned binary."
+            exit 0
+          }
+
+          $pfxPath = Join-Path $env:RUNNER_TEMP "vorken-signing.pfx"
+          [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:VORKEN_SIGNING_PFX_BASE64))
+          $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new(
+            $pfxPath,
+            $env:VORKEN_SIGNING_PFX_PASSWORD,
+            [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable
+          )
+          $signature = Set-AuthenticodeSignature -FilePath .\publish\Vorken.Agent.exe -Certificate $certificate -TimestampServer "http://timestamp.digicert.com" -HashAlgorithm SHA256
+
+          if ($signature.Status -ne "Valid") {
+            throw "Authenticode signing failed: $($signature.Status) $($signature.StatusMessage)"
+          }
+
+          Remove-Item $pfxPath -Force
+
+      - name: Verify PE metadata
+        shell: pwsh
+        env:
+          SIGNPATH_ENABLED: ${{ steps.signpath-config.outputs.enabled }}
+        run: |
+          $info = (Get-Item .\publish\Vorken.Agent.exe).VersionInfo
+          Write-Host "Product: $($info.ProductName)"
+          Write-Host "Company: $($info.CompanyName)"
+          Write-Host "Version: $($info.FileVersion)"
+          $signature = Get-AuthenticodeSignature .\publish\Vorken.Agent.exe
+          Write-Host "Signature status: $($signature.Status)"
+          if ($env:SIGNPATH_ENABLED -eq "true" -and $signature.Status -ne "Valid") {
+            throw "A configured SignPath release must have a valid Authenticode signature."
+          }
+
+      - name: Generate SHA256
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash .\publish\Vorken.Agent.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  Vorken.Agent.exe" | Set-Content -Encoding ascii .\publish\SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Vorken-Agent-win-x64
+          path: |
+            .\publish\Vorken.Agent.exe
+            .\publish\SHA256SUMS.txt
+            .\LICENSE
+          retention-days: 30
+
+      - name: Publish automatic latest agent release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = "agent-latest"
+          $repo = "${{ github.repository }}"
+          $shortSha = "${{ github.sha }}".Substring(0, 7)
+          $notes = @"
+          Build automático do agente a partir do commit $shortSha.
+
+          ## Code signing policy
+          Free code signing provided by SignPath.io, certificate by SignPath Foundation.
+          Signing becomes active only after Foundation approval and is identified by a valid Authenticode signature.
+
+          https://github.com/$repo/blob/main/docs/CODE_SIGNING_POLICY.md
+
+          ## License and source code
+          GNU AGPL v3.0 only: https://github.com/$repo
+          "@
+
+          gh release view $tag --repo $repo *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh api --method PATCH "repos/$repo/git/refs/tags/$tag" -f sha="${{ github.sha }}" -F force=true *> $null
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to move rolling release tag $tag to ${{ github.sha }}."
+            }
+            gh release edit $tag --repo $repo --title "Vorken · latest" --notes $notes
+          } else {
+            $global:LASTEXITCODE = 0
+            gh release create $tag --repo $repo --target "${{ github.sha }}" --title "Vorken · latest" --notes $notes --latest=false
+          }
+
+          $assets = @(
+            ".\publish\Vorken.Agent.exe",
+            ".\publish\SHA256SUMS.txt",
+            ".\LICENSE"
+          )
+
+          foreach ($asset in $assets) {
+            gh release upload $tag $asset --repo $repo --clobber
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to publish release asset: $asset"
+            }
+          }
+
+          # Remove retired remote-control downloads from the rolling release.
+          $retired = @(gh release view $tag --repo $repo --json assets --jq '.assets[].name')
+          foreach ($oldAsset in @('Vorken.RemoteAdmin.exe', 'REMOTE_ADMIN_SHA256SUMS.txt')) {
+            if ($retired -contains $oldAsset) {
+              gh release delete-asset $tag $oldAsset --repo $repo --yes
+              if ($LASTEXITCODE -ne 0) { throw "Failed to remove retired asset: $oldAsset" }
+            }
+          }
+
+          $publishedAssets = @(gh release view $tag --repo $repo --json assets --jq '.assets[].name')
+          foreach ($expectedAsset in @('Vorken.Agent.exe', 'SHA256SUMS.txt', 'LICENSE')) {
+            if ($publishedAssets -notcontains $expectedAsset) {
+              throw "Release asset was not published: $expectedAsset"
+            }
+          }
+
+          Write-Host "Automatic agent release updated: https://github.com/$repo/releases/tag/$tag"
+          Write-Host "Stable EXE URL: https://github.com/$repo/releases/download/$tag/Vorken.Agent.exe"
+      - name: Publish tagged release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          body: |
+            ## Code signing policy
+            Free code signing provided by SignPath.io, certificate by SignPath Foundation.
+            Signing becomes active only after Foundation approval and is identified by a valid Authenticode signature.
+
+            https://github.com/${{ github.repository }}/blob/main/docs/CODE_SIGNING_POLICY.md
+
+            ## License and source code
+            GNU AGPL v3.0 only: https://github.com/${{ github.repository }}
+          files: |
+            .\publish\Vorken.Agent.exe
+            .\publish\SHA256SUMS.txt
+            .\LICENSE
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Check server syntax
+        run: |
+          node --check server.js
+
+      - name: Check browser scripts
+        run: |
+          node --check public/admin.js
+          node --check public/analysis.js
+
+      - name: Test detection policy
+        run: npm test

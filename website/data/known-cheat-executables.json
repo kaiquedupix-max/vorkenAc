@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "executables": [
+    {
+      "name": "legitbaratinho.xyz.exe",
+      "sha256": [
+        "8cd3a590b9978973ac6c922e3d072a88d9de428ba194c0d3384e597714de1ab1"
+      ],
+      "label": "LegitBaratinho loader",
+      "confidence": "confirmed"
+    },
+    {
+      "name": "zsaszwqdey.exe",
+      "sha256": [],
+      "label": "ZSASZWQDEY removable cheat executable",
+      "confidence": "confirmed"
+    },
+    {
+      "name": "kpqzwqdey.exe",
+      "sha256": [],
+      "label": "KPQZWQDEY removable cheat executable",
+      "confidence": "confirmed"
+    }
+  ]
+}

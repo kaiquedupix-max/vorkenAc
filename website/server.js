@@ -1,0 +1,10874 @@
+import express from "express";
+import compression from "compression";
+import cookieParser from "cookie-parser";
+import crypto from "node:crypto";
+import http from "node:http";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { gzipSync, gunzipSync } from "node:zlib";
+import pg from "pg";
+import { withDownloadOrigins } from './evidenceOrigins.js';
+import { runDetectionEngineV4 } from "./echoInspiredFilterV3.js";
+import {
+  projectFindingEvidenceForAdmin,
+  projectReportPayloadForAdmin,
+} from "./reportPayloadProjection.js";
+import {
+  criticalHardwareFindings,
+  canApplyLearnedArtifactTrust,
+  catalogWebTargetMatch,
+  isArtifactProtectedFromLearning,
+} from "./detectionPolicyV4.js";
+import { initFleetDb, installFleet, clientReportVisibility } from "./serverFleet.js";
+import { initVorkenPlatform, installVorkenPlatform, backfillLegacyVorkenBans } from "./vorkenPlatform.js";
+import { startVorkenBot } from "./vorkenBot.js";
+import { createBattleMetricsClient, captureConnectionEvidence } from "./battleMetrics.js";
+
+const battleMetricsClient = createBattleMetricsClient({
+  token: String(process.env.BATTLEMETRICS_API_TOKEN || "").trim(),
+  queryId: String(process.env.BATTLEMETRICS_PLAYER_QUERY_ID || "").trim(),
+});
+
+const { Pool } = pg;
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const app = express();
+const port = Number(process.env.PORT || 3000);
+const publicUrl = String(process.env.PUBLIC_URL || "http://localhost:" + port).replace(/\/$/, "");
+const agentBinaryPath = String(
+  process.env.AGENT_BINARY_PATH || path.join(__dirname, "agent-build", "Vorken.Agent.exe")
+);
+const agentBinaryUrl = String(
+  process.env.AGENT_BINARY_URL ||
+  "https://github.com/kaiquedupix-max/vorkenAc/releases/download/agent-latest/Vorken.Agent.exe"
+).trim();
+const agentBinaryCacheMs = Math.max(
+  15000,
+  Number(process.env.AGENT_BINARY_CACHE_MS || 60000)
+);
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DATABASE_SSL === "true" ? { rejectUnauthorized: false } : undefined,
+});
+
+let agentBinaryCache = {
+  fetchedAt: 0,
+  binary: null,
+  source: "",
+};
+
+function validateAgentBinary(binary) {
+  return (
+    Buffer.isBuffer(binary) &&
+    binary.length > 1024 &&
+    binary[0] === 0x4d &&
+    binary[1] === 0x5a
+  );
+}
+
+async function loadPublishedAgentBinary() {
+  const now = Date.now();
+
+  if (
+    agentBinaryCache.binary &&
+    now - agentBinaryCache.fetchedAt < agentBinaryCacheMs
+  ) {
+    return agentBinaryCache;
+  }
+
+  if (agentBinaryUrl && process.env.AGENT_BINARY_SOURCE !== "local") {
+    try {
+      const response = await fetch(agentBinaryUrl, {
+        redirect: "follow",
+        headers: {
+          Accept: "application/octet-stream",
+          "User-Agent": "Vorken-Web-Agent-Distributor",
+        },
+        signal: AbortSignal.timeout(30000),
+      });
+
+      if (!response.ok)
+        throw new Error("HTTP " + response.status);
+
+      const binary = Buffer.from(
+        await response.arrayBuffer()
+      );
+
+      if (!validateAgentBinary(binary))
+        throw new Error("Resposta não contém um executável PE válido.");
+
+      agentBinaryCache = {
+        fetchedAt: now,
+        binary,
+        source: "github-release",
+      };
+
+      return agentBinaryCache;
+    } catch (error) {
+      console.error(
+        "Falha ao obter Vorken Agent da release assinável:",
+        error
+      );
+
+      // If a previously fetched release exists, preserve it rather than falling
+      // back to a different hash while GitHub is temporarily unavailable.
+      if (agentBinaryCache.binary)
+        return agentBinaryCache;
+    }
+  }
+
+  try {
+    const binary =
+      fs.readFileSync(agentBinaryPath);
+
+    if (!validateAgentBinary(binary))
+      throw new Error("Binário local inválido.");
+
+    agentBinaryCache = {
+      fetchedAt: now,
+      binary,
+      source: process.env.AGENT_BINARY_SOURCE === "local" ? "local-build" : "local-fallback",
+    };
+
+    return agentBinaryCache;
+  } catch (error) {
+    console.error(
+      "Vorken Agent indisponível:",
+      error
+    );
+
+    return {
+      fetchedAt: now,
+      binary: null,
+      source: "",
+    };
+  }
+}
+
+function agentVerificationFromBinary(binary) {
+  if (!validateAgentBinary(binary)) {
+    return {
+      sha256: "",
+      sizeBytes: 0,
+    };
+  }
+
+  return {
+    sha256: crypto
+      .createHash("sha256")
+      .update(binary)
+      .digest("hex"),
+    sizeBytes: binary.length,
+  };
+}
+
+async function getAgentVerification() {
+  const published =
+    await loadPublishedAgentBinary();
+
+  return agentVerificationFromBinary(
+    published.binary
+  );
+}
+
+const ADMIN_COOKIE = "vorken_admin";
+const ADMIN_SESSION_MS = 12 * 60 * 60 * 1000;
+
+function safeArray(value) {
+  return Array.isArray(value)
+    ? value
+    : [];
+}
+
+const rustThreatCatalogPath = path.join(
+  __dirname,
+  "data",
+  "rust-threat-catalog.json"
+);
+
+function loadRustThreatCatalog() {
+  try {
+    const payload = JSON.parse(
+      fs.readFileSync(rustThreatCatalogPath, "utf8")
+    );
+
+    return Array.isArray(payload?.brands)
+      ? payload.brands
+      : [];
+  } catch (error) {
+    console.error("Falha ao carregar catálogo Rust:", error.message);
+    return [];
+  }
+}
+
+const rustThreatCatalog = loadRustThreatCatalog();
+
+const knownCheatExecutablesPath = path.join(
+  __dirname,
+  "data",
+  "known-cheat-executables.json"
+);
+
+function loadKnownCheatExecutables() {
+  try {
+    const payload = JSON.parse(
+      fs.readFileSync(
+        knownCheatExecutablesPath,
+        "utf8"
+      )
+    );
+
+    const entries = Array.isArray(payload?.executables)
+      ? payload.executables
+      : [];
+
+    return {
+      byName: new Map(
+        entries
+          .map((item) => [
+            String(item?.name || "")
+              .trim()
+              .toLowerCase(),
+            item
+          ])
+          .filter(([name]) => Boolean(name))
+      ),
+      bySha256: new Map(
+        entries.flatMap((item) =>
+          safeArray(item?.sha256)
+            .map((hash) => [
+              String(hash || "")
+                .trim()
+                .toLowerCase(),
+              item
+            ])
+            .filter(([hash]) =>
+              /^[a-f0-9]{64}$/.test(hash)
+            )
+        )
+      ),
+    };
+  } catch (error) {
+    console.error(
+      "Falha ao carregar catálogo de executáveis de cheat:",
+      error.message
+    );
+
+    return {
+      byName: new Map(),
+      bySha256: new Map(),
+    };
+  }
+}
+
+const knownCheatExecutables =
+  loadKnownCheatExecutables();
+
+function knownCheatExecutableMatch(
+  value,
+  evidence = {}
+) {
+  const candidates = [
+    value,
+    evidence?.name,
+    evidence?.fileName,
+    evidence?.executableName,
+    evidence?.path,
+    evidence?.fullPath,
+    evidence?.processPath,
+    evidence?.targetPath,
+    evidence?.currentPath,
+    evidence?.originalPath,
+    evidence?.nativeExecutablePath,
+    evidence?.resolvedExecutablePath,
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    const normalizedLeaf =
+      String(candidate || "")
+        .replaceAll("/", "\\")
+        .split("\\")
+        .filter(Boolean)
+        .at(-1)
+        ?.replace(/[?#].*$/, "")
+        .toLowerCase() || "";
+
+    const normalized = normalizedLeaf
+      .replace(/^sign\.media=[a-f0-9]+\s+/i, "")
+      .trim();
+
+    const direct =
+      knownCheatExecutables.byName.get(
+        normalized
+      );
+
+    if (direct) {
+      return {
+        matched: true,
+        matchedBy: "name",
+        entry: direct,
+      };
+    }
+  }
+
+  const hashCandidates = [
+    evidence?.sha256,
+    evidence?.sha256Hash,
+    evidence?.fileSha256,
+    evidence?.hashes?.sha256,
+    evidence?.fileHashes?.sha256,
+  ];
+
+  for (const hashValue of hashCandidates) {
+    const normalized =
+      String(hashValue || "")
+        .trim()
+        .toLowerCase();
+
+    const direct =
+      knownCheatExecutables.bySha256.get(
+        normalized
+      );
+
+    if (direct) {
+      return {
+        matched: true,
+        matchedBy: "sha256",
+        entry: direct,
+      };
+    }
+  }
+
+  return {
+    matched: false,
+    matchedBy: "",
+    entry: null,
+  };
+}
+
+
+const rustOsintCatalogPath = path.join(
+  __dirname,
+  "data",
+  "rust-osint-catalog.json.gz"
+);
+
+function loadRustOsintCatalog() {
+  try {
+    const raw = gunzipSync(
+      fs.readFileSync(rustOsintCatalogPath)
+    ).toString("utf8");
+
+    const payload = JSON.parse(raw);
+
+    return {
+      version: String(payload?.version || ""),
+      verified: Array.isArray(payload?.verified) ? payload.verified : [],
+      aliases: Array.isArray(payload?.aliases) ? payload.aliases : [],
+      keywords: Array.isArray(payload?.keywords) ? payload.keywords : [],
+      contextPlatforms: Array.isArray(payload?.contextPlatforms)
+        ? payload.contextPlatforms
+        : [],
+      notes: Array.isArray(payload?.notes) ? payload.notes : [],
+    };
+  } catch (error) {
+    console.error(
+      "Falha ao carregar catálogo OSINT da planilha:",
+      error.message
+    );
+
+    return {
+      version: "",
+      verified: [],
+      aliases: [],
+      keywords: [],
+      contextPlatforms: [],
+      notes: [],
+    };
+  }
+}
+
+const rustOsintCatalog = loadRustOsintCatalog();
+
+function normalizeCatalogHost(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^www\./, "");
+}
+
+function urlHost(value) {
+  try {
+    return normalizeCatalogHost(
+      new URL(String(value || "")).hostname
+    );
+  } catch {
+    return "";
+  }
+}
+
+const osintContextHosts = new Set(
+  (rustOsintCatalog.contextPlatforms || [])
+    .map((item) => urlHost(item?.url))
+    .filter(Boolean)
+);
+
+const osintGenericHosts = new Set([
+  ...osintContextHosts,
+  "elitepvpers.com",
+]);
+
+function normalizedOsintUrlTerms(value) {
+  try {
+    const parsed = new URL(String(value || ""));
+    parsed.search = "";
+    parsed.hash = "";
+
+    const host = normalizeCatalogHost(parsed.hostname);
+    const pathName = parsed.pathname.replace(/\/+$/, "");
+
+    return [
+      parsed.toString().replace(/\/+$/, "").toLowerCase(),
+      (host + pathName).toLowerCase(),
+    ].filter(Boolean);
+  } catch {
+    const raw = String(value || "")
+      .trim()
+      .toLowerCase()
+      .replace(/\/+$/, "");
+
+    return raw ? [raw] : [];
+  }
+}
+
+function buildAgentThreatCatalog() {
+  const highDomains = new Set();
+  const mediumDomains = new Set();
+  const highUrls = new Set();
+  const mediumUrls = new Set();
+
+  for (const source of rustOsintCatalog.verified || []) {
+    const confidence = String(source?.confidence || "").toLowerCase();
+    const domain = normalizeCatalogHost(source?.domain);
+
+    const domainTarget =
+      confidence === "high"
+        ? highDomains
+        : mediumDomains;
+
+    if (domain && !osintGenericHosts.has(domain)) {
+      domainTarget.add(domain);
+    }
+
+    const urlTarget =
+      confidence === "high"
+        ? highUrls
+        : mediumUrls;
+
+    for (const term of normalizedOsintUrlTerms(source?.url)) {
+      urlTarget.add(term);
+    }
+  }
+
+  const generated = [];
+
+  if (highDomains.size || highUrls.size) {
+    generated.push({
+      name: "Planilha OSINT · fontes verificadas",
+      aliases: [...highUrls],
+      domains: [...highDomains],
+      discordInvites: [],
+      severity: "critical",
+    });
+  }
+
+  if (mediumDomains.size || mediumUrls.size) {
+    generated.push({
+      name: "Planilha OSINT · fontes para revisão",
+      aliases: [...mediumUrls],
+      domains: [...mediumDomains],
+      discordInvites: [],
+      severity: "high",
+    });
+  }
+
+  return [
+    ...rustThreatCatalog,
+    ...generated,
+  ];
+}
+
+const agentThreatCatalog = buildAgentThreatCatalog();
+
+const commonAppCatalogPath = path.join(
+  __dirname,
+  "data",
+  "common-app-catalog.json"
+);
+
+function loadCommonAppCatalog() {
+  try {
+    const payload = JSON.parse(
+      fs.readFileSync(commonAppCatalogPath, "utf8")
+    );
+
+    return Array.isArray(payload?.apps)
+      ? payload.apps
+      : [];
+  } catch (error) {
+    console.error("Falha ao carregar catálogo de apps comuns:", error.message);
+    return [];
+  }
+}
+
+const commonAppCatalog = loadCommonAppCatalog();
+
+const trustedMouseInputAppsPath = path.join(
+  __dirname,
+  "data",
+  "trusted-mouse-input-apps.json"
+);
+
+function loadTrustedMouseInputApps() {
+  try {
+    const payload = JSON.parse(
+      fs.readFileSync(
+        trustedMouseInputAppsPath,
+        "utf8"
+      )
+    );
+
+    return Array.isArray(payload?.apps)
+      ? payload.apps
+          .map((item) =>
+            String(item || "").trim()
+          )
+          .filter(Boolean)
+      : [];
+  } catch (error) {
+    console.error(
+      "Falha ao carregar catálogo de apps confiáveis de mouse/input:",
+      error.message
+    );
+
+    return [];
+  }
+}
+
+const trustedMouseInputApps =
+  loadTrustedMouseInputApps();
+
+const trustedExecutableCatalogPath = path.join(
+  __dirname,
+  "data",
+  "trusted-executables.json.gz.b64"
+);
+
+function loadAbsoluteTrustedExecutableCatalog() {
+  try {
+    const encoded =
+      fs.readFileSync(
+        trustedExecutableCatalogPath,
+        "utf8"
+      ).trim();
+
+    const raw =
+      gunzipSync(
+        Buffer.from(encoded, "base64")
+      ).toString("utf8");
+
+    const payload =
+      JSON.parse(raw);
+
+    return new Set(
+      (Array.isArray(payload) ? payload : [])
+        .map((item) =>
+          String(item || "")
+            .trim()
+            .toLowerCase()
+        )
+        .filter(Boolean)
+    );
+  } catch (error) {
+    console.error(
+      "Falha ao carregar catálogo absoluto de programas confiáveis:",
+      error.message
+    );
+
+    return new Set();
+  }
+}
+
+const absoluteTrustedExecutableCatalog =
+  loadAbsoluteTrustedExecutableCatalog();
+
+const activeRebuilds = new Set();
+
+app.disable("x-powered-by");
+app.use(compression({ threshold: 1024 }));
+app.use(express.json({ limit: "64mb" }));
+app.use(express.urlencoded({ extended: false }));
+app.use(cookieParser());
+app.use(express.static(path.join(__dirname, "public"), {
+  maxAge: 0,
+  setHeaders(res) {
+    res.setHeader("Cache-Control", "no-store");
+  },
+}));
+
+function safeEqual(a, b) {
+  const left = Buffer.from(String(a || ""));
+  const right = Buffer.from(String(b || ""));
+  return left.length === right.length && crypto.timingSafeEqual(left, right);
+}
+
+function sessionSecret() {
+  return String(process.env.SESSION_SECRET || "");
+}
+
+function signSession(payload) {
+  const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const signature = crypto
+    .createHmac("sha256", sessionSecret())
+    .update(body)
+    .digest("base64url");
+  return body + "." + signature;
+}
+
+function verifySession(token) {
+  if (!token || !sessionSecret()) return null;
+  const [body, signature] = String(token).split(".");
+  if (!body || !signature) return null;
+
+  const expected = crypto
+    .createHmac("sha256", sessionSecret())
+    .update(body)
+    .digest("base64url");
+
+  if (!safeEqual(signature, expected)) return null;
+
+  try {
+    const payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
+    if (!payload.exp || Date.now() > payload.exp) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+function requireAdmin(req, res, next) {
+  const session = verifySession(req.cookies?.[ADMIN_COOKIE]);
+  if (!session?.admin) return res.status(401).json({ error: "unauthorized" });
+  next();
+}
+
+function analysisToken() {
+  return crypto.randomBytes(24).toString("base64url");
+}
+
+function validToken(value) {
+  return /^[A-Za-z0-9_-]{20,80}$/.test(String(value || ""));
+}
+
+let lolDriversCache = {
+  expiresAt: 0,
+  bySha256: new Map()
+};
+
+async function getLolDriversIndex() {
+  if (
+    lolDriversCache.expiresAt > Date.now() &&
+    lolDriversCache.bySha256.size > 0
+  ) {
+    return lolDriversCache.bySha256;
+  }
+
+  try {
+    const response = await fetch(
+      "https://www.loldrivers.io/api/drivers.json",
+      {
+        headers: {
+          "accept": "application/json",
+          "user-agent": "Vorken-AntiCheat/1.0"
+        },
+        signal: AbortSignal.timeout(10000)
+      }
+    );
+
+    if (!response.ok)
+      return lolDriversCache.bySha256;
+
+    const payload = await response.json();
+    const entries = Array.isArray(payload) ? payload : [];
+    const index = new Map();
+
+    const readHash = (sample) =>
+      String(
+        sample?.SHA256 ??
+        sample?.Sha256 ??
+        sample?.sha256 ??
+        sample?.Hashes?.SHA256 ??
+        sample?.hashes?.sha256 ??
+        ""
+      )
+        .trim()
+        .toLowerCase();
+
+    for (const entry of entries) {
+      const samples =
+        Array.isArray(entry?.KnownVulnerableSamples)
+          ? entry.KnownVulnerableSamples
+          : [];
+
+      for (const sample of samples) {
+        const sha256 = readHash(sample);
+        if (!/^[a-f0-9]{64}$/.test(sha256))
+          continue;
+
+        index.set(sha256, {
+          title:
+            entry?.Tags?.join?.(", ") ||
+            entry?.Category ||
+            entry?.Verified ||
+            "LOLDrivers",
+          description:
+            entry?.Description ||
+            sample?.Filename ||
+            sample?.FileName ||
+            "Known vulnerable driver",
+          filename:
+            sample?.Filename ||
+            sample?.FileName ||
+            "",
+          verified: entry?.Verified ?? null,
+          source: "LOLDrivers"
+        });
+      }
+    }
+
+    lolDriversCache = {
+      expiresAt: Date.now() + 6 * 60 * 60 * 1000,
+      bySha256: index
+    };
+
+    return index;
+  } catch {
+    return lolDriversCache.bySha256;
+  }
+}
+
+async function queryVirusTotalHash(sha256) {
+  const apiKey = String(process.env.VIRUSTOTAL_API_KEY || "").trim();
+  const hash = String(sha256 || "").trim().toLowerCase();
+
+  if (!apiKey || !/^[a-f0-9]{64}$/.test(hash))
+    return null;
+
+  try {
+    const response = await fetch(
+      "https://www.virustotal.com/api/v3/files/" + encodeURIComponent(hash),
+      {
+        headers: {
+          "x-apikey": apiKey,
+          "accept": "application/json"
+        },
+        signal: AbortSignal.timeout(8000)
+      }
+    );
+
+    if (response.status === 404)
+      return { found: false, sha256: hash };
+
+    if (!response.ok)
+      return null;
+
+    const payload = await response.json();
+    const attributes = payload?.data?.attributes || {};
+    const stats = attributes.last_analysis_stats || {};
+
+    return {
+      found: true,
+      sha256: hash,
+      meaningfulName: attributes.meaningful_name || "",
+      reputation: Number(attributes.reputation || 0),
+      stats: {
+        malicious: Number(stats.malicious || 0),
+        suspicious: Number(stats.suspicious || 0),
+        harmless: Number(stats.harmless || 0),
+        undetected: Number(stats.undetected || 0)
+      },
+      lastAnalysisDate: attributes.last_analysis_date
+        ? new Date(Number(attributes.last_analysis_date) * 1000).toISOString()
+        : null
+    };
+  } catch {
+    return null;
+  }
+}
+
+
+const RUST_APP_ID = 252490;
+const STEAM_ID64_PATTERN = /^7656119\d{10}$/;
+
+function externalProviderUnavailable(source, reason) {
+  return {
+    source,
+    status: "unavailable",
+    banned: null,
+    rustSpecific: null,
+    reason: cleanText(reason || "Fonte indisponível.", 240),
+  };
+}
+
+async function fetchExternalJson(url, options = {}, timeoutMs = 10000) {
+  try {
+    const response = await fetch(url, {
+      ...options,
+      headers: {
+        accept: "application/json",
+        "user-agent": "Vorken-AntiCheat/1.0",
+        ...(options.headers || {}),
+      },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+
+    let payload = null;
+
+    try {
+      payload = await response.json();
+    } catch {
+      payload = null;
+    }
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      payload,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: 0,
+      payload: null,
+      error: cleanText(error?.message || "network_error", 200),
+    };
+  }
+}
+
+function steamBanRecordTargetsRust(record) {
+  const min = Number(record?.AppIdMin ?? record?.appIdMin);
+  const max = Number(record?.AppIdMax ?? record?.appIdMax);
+
+  if (!Number.isFinite(min) || !Number.isFinite(max))
+    return false;
+
+  return min <= RUST_APP_ID && max >= RUST_APP_ID;
+}
+
+async function querySteamOfficialBatch(steamIds) {
+  const ids = [...new Set(
+    safeArray(steamIds)
+      .map((value) => String(value || "").trim())
+      .filter((value) => STEAM_ID64_PATTERN.test(value))
+  )];
+
+  const byId = new Map();
+  const apiKey = String(process.env.STEAM_WEB_API_KEY || "").trim();
+
+  if (!ids.length)
+    return byId;
+
+  if (!apiKey) {
+    for (const steamId of ids) {
+      byId.set(
+        steamId,
+        externalProviderUnavailable(
+          "steam",
+          "STEAM_WEB_API_KEY não configurada."
+        )
+      );
+    }
+
+    return byId;
+  }
+
+  const banParams = new URLSearchParams({
+    key: apiKey,
+    steamids: ids.join(","),
+  });
+
+  let bansResponse = await fetchExternalJson(
+    "https://api.steampowered.com/ISteamUser/GetPlayerBans/v1/?" +
+      banParams.toString(),
+    {},
+    12000
+  );
+
+  if (!bansResponse.ok) {
+    bansResponse = await fetchExternalJson(
+      "https://partner.steam-api.com/ISteamUser/GetPlayerBans/v1/?" +
+        banParams.toString(),
+      {},
+      12000
+    );
+  }
+
+  const summaryParams = new URLSearchParams({
+    key: apiKey,
+    steamids: ids.join(","),
+  });
+
+  const summariesResponse = await fetchExternalJson(
+    "https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/?" +
+      summaryParams.toString(),
+    {},
+    12000
+  );
+
+  const summaryById = new Map(
+    safeArray(summariesResponse.payload?.response?.players)
+      .map((item) => [String(item?.steamid || ""), item])
+  );
+
+  if (!bansResponse.ok) {
+    const reason =
+      "Steam respondeu HTTP " +
+      String(bansResponse.status || 0) +
+      ".";
+
+    for (const steamId of ids) {
+      const unavailable =
+        externalProviderUnavailable(
+          "steam",
+          reason
+        );
+
+      const summary = summaryById.get(steamId);
+
+      if (summary) {
+        unavailable.profile = {
+          personaName: cleanText(summary.personaname, 160),
+          profileUrl: cleanText(summary.profileurl, 400),
+          avatar: cleanText(summary.avatarfull || summary.avatarmedium || summary.avatar, 500),
+          timeCreated: Number(summary.timecreated || 0) || null,
+        };
+      }
+
+      byId.set(steamId, unavailable);
+    }
+
+    return byId;
+  }
+
+  const players =
+    safeArray(
+      bansResponse.payload?.players ||
+      bansResponse.payload?.response?.players
+    );
+
+  const bansById =
+    new Map(
+      players.map((item) => [
+        String(item?.SteamId || item?.steamid || ""),
+        item,
+      ])
+    );
+
+  for (const steamId of ids) {
+    const item = bansById.get(steamId) || {};
+    const detailedBans =
+      safeArray(item?.bans)
+        .slice(0, 50)
+        .map((ban) => ({
+          appIdMin: Number(ban?.AppIdMin ?? ban?.appIdMin) || null,
+          appIdMax: Number(ban?.AppIdMax ?? ban?.appIdMax) || null,
+          banStartTime: Number(ban?.BanStartTime ?? ban?.banStartTime) || null,
+          banType: Number(ban?.BanType ?? ban?.banType) || null,
+          banProviderId: Number(ban?.BanProviderId ?? ban?.banProviderId) || null,
+          targetsRust: steamBanRecordTargetsRust(ban),
+        }));
+
+    const communityBanned = item?.CommunityBanned === true;
+    const vacBanned = item?.VACBanned === true;
+    const numberOfVacBans = Number(item?.NumberOfVACBans || 0);
+    const numberOfGameBans = Number(item?.NumberOfGameBans || 0);
+    const economyBan = String(item?.EconomyBan || "none");
+    const rustSpecific =
+      detailedBans.some((ban) => ban.targetsRust === true);
+
+    const provider = {
+      source: "steam",
+      status: "ok",
+      banned:
+        communityBanned ||
+        vacBanned ||
+        numberOfVacBans > 0 ||
+        numberOfGameBans > 0 ||
+        (economyBan && economyBan.toLowerCase() !== "none"),
+      rustSpecific,
+      communityBanned,
+      vacBanned,
+      numberOfVacBans,
+      numberOfGameBans,
+      daysSinceLastBan: Number(item?.DaysSinceLastBan || 0),
+      economyBan,
+      bans: detailedBans,
+    };
+
+    const summary = summaryById.get(steamId);
+
+    if (summary) {
+      provider.profile = {
+        personaName: cleanText(summary.personaname, 160),
+        profileUrl: cleanText(summary.profileurl, 400),
+        avatar: cleanText(summary.avatarfull || summary.avatarmedium || summary.avatar, 500),
+        timeCreated: Number(summary.timecreated || 0) || null,
+      };
+    }
+
+    byId.set(steamId, provider);
+  }
+
+  return byId;
+}
+
+
+
+async function queryServerArmourPlayer(steamId) {
+  const key =
+    String(process.env.SERVER_ARMOUR_KEY || "").trim();
+
+  if (!key) {
+    return externalProviderUnavailable(
+      "server_armour",
+      "SERVER_ARMOUR_KEY não configurada."
+    );
+  }
+
+  if (!STEAM_ID64_PATTERN.test(String(steamId || ""))) {
+    return externalProviderUnavailable(
+      "server_armour",
+      "SteamID64 inválida."
+    );
+  }
+
+  const response =
+    await fetchExternalJson(
+      "https://serverarmour.com/api/v1/plugin/player/" +
+        encodeURIComponent(String(steamId)) +
+        "?bans=true&linked=false",
+      {
+        method: "POST",
+        headers: {
+          server_key: key,
+          accept: "application/json",
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: "ipAddress=0.0.0.0",
+      },
+      15000
+    );
+
+  if (!response.ok || !response.payload) {
+    return externalProviderUnavailable(
+      "server_armour",
+      "Server Armour respondeu HTTP " +
+        String(response.status || 0) +
+        "."
+    );
+  }
+
+  const bans =
+    safeArray(response.payload?.bans)
+      .slice(0, 100)
+      .map((ban) => {
+        const banUntil =
+          cleanText(ban?.banUntil, 80) || null;
+
+        let active = true;
+
+        if (
+          banUntil &&
+          banUntil !== "-1"
+        ) {
+          const untilMs =
+            new Date(
+              banUntil
+                .replace(" ", "T")
+            ).getTime();
+
+          if (Number.isFinite(untilMs))
+            active = untilMs > Date.now();
+        }
+
+        return {
+          id:
+            Number(ban?.id || 0) || null,
+          serverId:
+            Number(ban?.serverId || 0) || null,
+          serverName:
+            cleanText(ban?.serverName, 220),
+          serverIp:
+            cleanText(ban?.serverIp, 120),
+          reason:
+            cleanText(ban?.reason, 600),
+          banLength:
+            cleanText(ban?.banLength, 80),
+          dateTime:
+            cleanText(ban?.dateTime, 80) || null,
+          created:
+            cleanText(ban?.created, 80) || null,
+          banUntil,
+          gameId:
+            Number(ban?.gameId || 0) || null,
+          active,
+        };
+      });
+
+  const activeBans =
+    bans.filter((ban) =>
+      ban.active === true);
+
+  return {
+    source: "server_armour",
+    status: "ok",
+    banned: bans.length > 0,
+    rustSpecific: bans.length > 0,
+    playerFound: true,
+    personaName:
+      cleanText(
+        response.payload?.personaname,
+        160
+      ),
+    serverBanCount:
+      bans.length,
+    activeServerBanCount:
+      activeBans.length,
+    bans,
+  };
+}
+
+function buildSteamAndServerArmourAssessment(
+  steam,
+  serverArmour
+) {
+  const entries = [
+    steam,
+    serverArmour,
+  ];
+
+  const available =
+    entries.filter((item) =>
+      item?.status === "ok");
+
+  const positive =
+    available.filter((item) =>
+      item?.banned === true);
+
+  const steamPositive =
+    steam?.status === "ok" &&
+    steam?.banned === true;
+
+  const serverArmourPositive =
+    serverArmour?.status === "ok" &&
+    serverArmour?.banned === true;
+
+  const rustSpecific =
+    steam?.rustSpecific === true ||
+    serverArmourPositive;
+
+  let code = "source_unavailable";
+  let label =
+    "Steam e Server Armour estão indisponíveis.";
+
+  if (serverArmourPositive && steamPositive) {
+    code = "ban_detected";
+    label =
+      "Steam e Server Armour retornaram histórico de ban para esta conta.";
+  } else if (serverArmourPositive) {
+    code = "ban_detected";
+    label =
+      "Server Armour encontrou " +
+      String(serverArmour?.serverBanCount || 0) +
+      " ban(s) em servidor(es).";
+  } else if (steamPositive) {
+    code = "ban_detected";
+    label =
+      steam?.rustSpecific === true
+        ? "A Steam retornou ban com evidência relacionada ao Rust."
+        : "A Steam retornou histórico de ban para esta conta.";
+  } else if (available.length > 0) {
+    code = "no_known_ban";
+    label =
+      available.length === 2
+        ? "Steam e Server Armour não retornaram bans conhecidos."
+        : "Nenhuma fonte disponível retornou ban conhecido; uma consulta ficou indisponível.";
+  }
+
+  return {
+    strategy: "steam_plus_server_armour",
+    totalSources: 2,
+    availableSources:
+      available
+        .map((item) => item.source),
+    unavailableSources:
+      entries
+        .filter((item) =>
+          item?.status !== "ok")
+        .map((item) => item?.source)
+        .filter(Boolean),
+    positiveSources:
+      positive
+        .map((item) => item.source),
+    negativeSources:
+      available
+        .filter((item) =>
+          item?.banned !== true)
+        .map((item) => item.source),
+    positiveVotes:
+      positive.length,
+    availableVotes:
+      available.length,
+    score:
+      available.length
+        ? positive.length / available.length
+        : null,
+    banDetected:
+      positive.length > 0,
+    corroborated:
+      positive.length >= 2,
+    rustSpecific,
+    serverBanCount:
+      Number(serverArmour?.serverBanCount || 0),
+    activeServerBanCount:
+      Number(serverArmour?.activeServerBanCount || 0),
+    code,
+    label,
+  };
+}
+
+async function enrichSteamAccountReport(
+  report,
+  linkedSteamId
+) {
+  const rawAccounts =
+    safeArray(report?.steamAccounts)
+      .filter((item) =>
+        STEAM_ID64_PATTERN.test(
+          String(item?.steamId64 || "")
+        ));
+
+  if (!rawAccounts.length) {
+    report.steamAccounts = [];
+    report.steamAccountCorrelation = {
+      detectedAccounts: 0,
+      primarySteamId: null,
+      bannedAccounts: 0,
+      previousBannedAccounts: 0,
+      possibleBanEvasion: false,
+      note:
+        "Nenhuma conta Steam foi encontrada em loginusers.vdf ou userdata.",
+    };
+    return report;
+  }
+
+  const steamIds =
+    rawAccounts.map((item) =>
+      String(item.steamId64));
+
+  const steamById =
+    await querySteamOfficialBatch(
+      steamIds);
+
+  const serverArmourById =
+    new Map();
+
+  let nextServerArmourIndex = 0;
+
+  const serverArmourWorker = async () => {
+    while (
+      nextServerArmourIndex <
+      rawAccounts.length
+    ) {
+      const index =
+        nextServerArmourIndex++;
+
+      const steamId =
+        String(
+          rawAccounts[index]?.steamId64 ||
+          ""
+        );
+
+      serverArmourById.set(
+        steamId,
+        await queryServerArmourPlayer(
+          steamId)
+      );
+    }
+  };
+
+  await Promise.all(
+    Array.from(
+      {
+        length: Math.max(
+          1,
+          Math.min(4, rawAccounts.length)
+        ),
+      },
+      () => serverArmourWorker()
+    )
+  );
+
+  const enriched = [];
+
+  for (const raw of rawAccounts) {
+    const steamId =
+      String(raw.steamId64);
+
+    const steam =
+      steamById.get(steamId) ||
+      externalProviderUnavailable(
+        "steam",
+        "Steam não retornou esta conta."
+      );
+
+    const serverArmour =
+      serverArmourById.get(steamId) ||
+      externalProviderUnavailable(
+        "server_armour",
+        "Server Armour não retornou esta conta."
+      );
+
+    const providers = {
+      steam,
+      serverArmour,
+    };
+
+    const consensus =
+      buildSteamAndServerArmourAssessment(
+        steam,
+        serverArmour);
+
+    const profile =
+      steam?.profile || {};
+
+    enriched.push({
+      ...raw,
+      personaName:
+        cleanText(
+          raw?.personaName ||
+          profile?.personaName,
+          160
+        ),
+      profileUrl:
+        cleanText(
+          raw?.profileUrl ||
+          profile?.profileUrl ||
+          (
+            "https://steamcommunity.com/profiles/" +
+            steamId
+          ),
+          400
+        ),
+      profile: {
+        personaName:
+          cleanText(
+            profile?.personaName ||
+            raw?.personaName,
+            160
+          ),
+        avatar:
+          cleanText(
+            profile?.avatar,
+            500
+          ),
+        timeCreated:
+          profile?.timeCreated || null,
+      },
+      isLinkedAccount:
+        STEAM_ID64_PATTERN.test(
+          String(linkedSteamId || "")
+        ) &&
+        String(linkedSteamId) === steamId,
+      providerChecks:
+        providers,
+      banConsensus:
+        consensus,
+    });
+  }
+
+  const explicitPrimary =
+    STEAM_ID64_PATTERN.test(
+      String(linkedSteamId || ""))
+      ? String(linkedSteamId)
+      : null;
+
+  const mostRecent =
+    enriched.find((item) =>
+      item?.mostRecent === true);
+
+  const primarySteamId =
+    explicitPrimary ||
+    String(
+      mostRecent?.steamId64 ||
+      enriched[0]?.steamId64 ||
+      ""
+    ) ||
+    null;
+
+  const bannedAccounts =
+    enriched.filter((item) =>
+      item?.banConsensus?.banDetected === true);
+
+  const previousBannedAccounts =
+    bannedAccounts.filter((item) =>
+      String(item?.steamId64 || "") !==
+      String(primarySteamId || ""));
+
+  report.steamAccounts =
+    enriched;
+
+  report.steamAccountCorrelation = {
+    detectedAccounts:
+      enriched.length,
+    primarySteamId,
+    primarySource:
+      explicitPrimary
+        ? "linked_analysis"
+        : mostRecent
+          ? "steam_most_recent"
+          : "first_detected",
+    bannedAccounts:
+      bannedAccounts.length,
+    previousBannedAccounts:
+      previousBannedAccounts.length,
+    possibleBanEvasion:
+      Boolean(primarySteamId) &&
+      previousBannedAccounts.length > 0,
+    previousBannedSteamIds:
+      previousBannedAccounts
+        .map((item) =>
+          String(item.steamId64))
+        .slice(0, 30),
+    note:
+      previousBannedAccounts.length > 0
+        ? "Conta(s) Steam usada(s) anteriormente nesta máquina possuem histórico de ban. Isso é um sinal de possível ban evasion, mas não prova sozinho que a conta atual pertence à mesma pessoa."
+        : "Nenhuma conta Steam anterior com ban foi correlacionada nesta máquina pelas fontes disponíveis.",
+  };
+
+  return report;
+}
+
+
+
+async function processSubmittedReportWithRetry(
+  analysis,
+  report,
+  attempts = 3
+) {
+  const totalAttempts =
+    Math.max(1, Math.min(5, Number(attempts || 3)));
+
+  // Consultas externas são enriquecimento opcional. Uma falha da Steam,
+  // Server Armour ou da persistência enriquecida nunca deve derrubar os
+  // filtros locais nem transformar uma análise válida em filter_error.
+  try {
+    await pool.query(
+      `UPDATE analyses
+       SET processing_stage='external_checks',
+           processing_message='Consultando histórico externo das contas e vínculos disponíveis...'
+       WHERE id=$1`,
+      [analysis.id]
+    );
+
+    try {
+      await enrichSteamAccountReport(report, analysis.external_player_id);
+    } catch {
+      // A Steam provider outage must not skip BattleMetrics enrichment.
+      console.warn("Histórico Steam indisponível; seguindo com consultas externas e filtros locais.", {analysisId: analysis.id});
+    }
+
+    // This provider is context for manual review, never an automatic ban signal.
+    try {
+      report.battleMetrics = await battleMetricsClient.analyze(report, analysis.external_player_id);
+    } catch {
+      report.battleMetrics = { status: "unavailable", checkedAt: new Date().toISOString(), accounts: [], checks: [] };
+    }
+
+    try {
+      await persistEnrichedSteamReport(
+        analysis.id,
+        report
+      );
+    } catch (persistError) {
+      console.warn(
+        "Falha ao persistir enriquecimento externo; seguindo com filtros locais:",
+        {
+          analysisId: analysis.id,
+          message: persistError?.message,
+          code: persistError?.code,
+        }
+      );
+    }
+  } catch (externalError) {
+    console.warn(
+      "Consulta externa falhou; seguindo com filtros locais:",
+      {
+        analysisId: analysis.id,
+        message: externalError?.message,
+        code: externalError?.code,
+      }
+    );
+  }
+
+  let lastFilterError = null;
+
+  for (let attempt = 1; attempt <= totalAttempts; attempt++) {
+    try {
+      await pool.query(
+        `UPDATE analyses
+         SET processing_stage='preparing',
+             processing_message=$2
+         WHERE id=$1`,
+        [
+          analysis.id,
+          attempt === 1
+            ? "Aplicando filtros locais..."
+            : "Falha temporária nos filtros. Reprocessando automaticamente (" +
+              String(attempt) + "/" + String(totalAttempts) + ")...",
+        ]
+      );
+
+      await rebuildFindings(
+        analysis.id,
+        report
+      );
+
+      return {
+        ok: true,
+        attemptsUsed: attempt,
+      };
+    } catch (error) {
+      lastFilterError = error;
+
+      console.warn(
+        "Tentativa dos filtros locais falhou:",
+        {
+          analysisId: analysis.id,
+          attempt,
+          totalAttempts,
+          message: error?.message,
+          code: error?.code,
+          detail: error?.detail,
+          hint: error?.hint,
+          where: error?.where,
+        }
+      );
+
+      if (attempt < totalAttempts) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, 750 * attempt)
+        );
+      }
+    }
+  }
+
+  throw lastFilterError ||
+    new Error("Falha desconhecida ao processar filtros locais.");
+}
+
+async function persistEnrichedSteamReport(
+  analysisId,
+  report
+) {
+  const sanitized =
+    sanitizeJsonForPostgres(report);
+
+  await pool.query(
+    "UPDATE scan_reports SET payload=$2::jsonb WHERE id=(SELECT id FROM scan_reports WHERE analysis_id=$1 ORDER BY id DESC LIMIT 1)",
+    [
+      analysisId,
+      JSON.stringify(sanitized),
+    ]
+  );
+}
+
+async function addSteamAccountBanFindings(
+  analysisId,
+  report
+) {
+  for (const account of safeArray(report?.steamAccounts)) {
+    const consensus =
+      account?.banConsensus || {};
+
+    if (consensus?.banDetected !== true)
+      continue;
+
+    await insertReviewFinding(
+      analysisId,
+      Number(account?.providerChecks?.serverArmour?.serverBanCount || 0) > 0
+        ? "Conta Steam com ban em servidor(es) Rust"
+        : consensus?.rustSpecific === true
+          ? "Conta Steam com ban relacionado ao Rust"
+          : "Conta Steam com histórico de ban",
+      "critical",
+      "steam_account_ban",
+      String(account?.steamId64 || "Steam"),
+      {
+        steamId64:
+          account?.steamId64 || "",
+        accountName:
+          account?.accountName || "",
+        personaName:
+          account?.personaName || "",
+        profileUrl:
+          account?.profileUrl || "",
+        savedLogin:
+          account?.savedLogin === true,
+        mostRecent:
+          account?.mostRecent === true,
+        isLinkedAccount:
+          account?.isLinkedAccount === true,
+        providerChecks:
+          account?.providerChecks || {},
+        banConsensus:
+          consensus,
+        confidence: "high",
+        note:
+          Number(account?.providerChecks?.serverArmour?.serverBanCount || 0) > 0
+            ? "O Server Armour retornou ban(s) aplicado(s) por servidor(es). O motivo pode ser cheat, violação de regra ou outra infração; revise servidor, motivo e data antes de qualquer decisão."
+            : consensus?.rustSpecific === true
+              ? "A Steam trouxe evidência específica relacionada ao AppID do Rust. Revise os detalhes antes de qualquer decisão."
+              : "Há histórico de ban registrado para esta conta Steam detectada no computador. O Vorken trata a presença de conta banida na máquina como evidência crítica; o tipo exato do ban continua disponível para revisão.",
+      }
+    );
+  }
+
+  const correlation =
+    report?.steamAccountCorrelation || {};
+
+  if (correlation?.possibleBanEvasion === true) {
+    await insertReviewFinding(
+      analysisId,
+      "Possível ban evasion · conta Steam anterior banida",
+      "medium",
+      "steam_ban_evasion_context",
+      safeArray(
+        correlation?.previousBannedSteamIds)
+        .join(", ") ||
+        "Conta anterior",
+      {
+        ...correlation,
+        confidence: "context",
+        note:
+          "Outra conta usada anteriormente nesta máquina possui histórico de ban. Computadores podem ser compartilhados; use este sinal apenas em conjunto com outras evidências.",
+      }
+    );
+  }
+}
+
+
+function normalizeSeverity(value) {
+  const allowed = new Set(["info", "low", "medium", "high", "critical"]);
+  const severity = String(value || "medium").toLowerCase();
+  return allowed.has(severity) ? severity : "medium";
+}
+
+function cleanText(value, max = 250) {
+  return String(value || "").trim().slice(0, max);
+}
+
+function normalizeSteamId64Input(value) {
+  const raw = cleanText(value, 220);
+  const direct = raw.match(/(?:^|\D)(7656119\d{10})(?!\d)/)?.[1] || "";
+  if (/^7656119\d{10}$/.test(direct)) return direct;
+
+  const steamId3 = raw.match(/^\[?U:1:(\d{1,10})\]?$/i);
+  const steamId2 = raw.match(/^STEAM_[0-5]:([01]):(\d{1,10})$/i);
+
+  try {
+    let accountId = null;
+    if (steamId3) accountId = BigInt(steamId3[1]);
+    if (steamId2) accountId = BigInt(steamId2[2]) * 2n + BigInt(steamId2[1]);
+    if (accountId === null) return "";
+
+    const steamId64 = String(76561197960265728n + accountId);
+    return /^7656119\d{10}$/.test(steamId64) ? steamId64 : "";
+  } catch {
+    return "";
+  }
+}
+
+function sanitizePostgresString(value) {
+  const input = String(value ?? "");
+  let output = "";
+
+  for (let index = 0; index < input.length; index++) {
+    const code = input.charCodeAt(index);
+
+    if (code === 0) {
+      continue;
+    }
+
+    if (code >= 0xD800 && code <= 0xDBFF) {
+      const next =
+        index + 1 < input.length
+          ? input.charCodeAt(index + 1)
+          : -1;
+
+      if (next >= 0xDC00 && next <= 0xDFFF) {
+        output += input[index] + input[index + 1];
+        index++;
+      } else {
+        output += "\uFFFD";
+      }
+
+      continue;
+    }
+
+    if (code >= 0xDC00 && code <= 0xDFFF) {
+      output += "\uFFFD";
+      continue;
+    }
+
+    output += input[index];
+  }
+
+  return output;
+}
+
+function sanitizeJsonForPostgres(value, seen = new WeakSet()) {
+  if (value === null || value === undefined)
+    return value;
+
+  if (typeof value === "string")
+    return sanitizePostgresString(value);
+
+  if (
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) =>
+      sanitizeJsonForPostgres(item, seen));
+  }
+
+  if (typeof value === "object") {
+    if (seen.has(value))
+      return "[circular]";
+
+    seen.add(value);
+
+    const clean = {};
+
+    for (const [rawKey, rawValue] of Object.entries(value)) {
+      const key = sanitizePostgresString(rawKey);
+      clean[key] = sanitizeJsonForPostgres(rawValue, seen);
+    }
+
+    seen.delete(value);
+    return clean;
+  }
+
+  return sanitizePostgresString(value);
+}
+
+function encodeRawReport(value) {
+  const json =
+    JSON.stringify(value);
+
+  return gzipSync(
+    Buffer.from(json, "utf8"),
+    { level: 6 }
+  );
+}
+
+function decodeStoredRawReport(row) {
+  if (
+    row?.payload &&
+    row.payload?.storageFallback !== true
+  ) {
+    return row.payload;
+  }
+
+  if (!row?.payload_raw)
+    return row?.payload ?? null;
+
+  try {
+    const buffer =
+      Buffer.isBuffer(row.payload_raw)
+        ? row.payload_raw
+        : Buffer.from(row.payload_raw);
+
+    const raw =
+      row.payload_encoding === "gzip-json"
+        ? gunzipSync(buffer)
+        : buffer;
+
+    return sanitizeJsonForPostgres(
+      JSON.parse(
+        raw.toString("utf8")));
+  } catch (error) {
+    console.error(
+      "Falha ao decodificar payload_raw do relatório:",
+      error?.message || error
+    );
+
+    return row?.payload ?? null;
+  }
+}
+
+function windowsBaseName(value) {
+  const normalized = String(value || "")
+    .replaceAll("/", "\\")
+    .trim();
+
+  const parts = normalized.split("\\").filter(Boolean);
+  return parts.at(-1) || "";
+}
+
+function findCommonAppByFileName(value) {
+  const name = windowsBaseName(value).toLowerCase();
+  if (!name) return null;
+
+  for (const appInfo of commonAppCatalog) {
+    const exact = (appInfo.filenames || [])
+      .some((item) => String(item || "").toLowerCase() === name);
+
+    if (exact) return appInfo;
+
+    const prefix = (appInfo.filenamePrefixes || [])
+      .some((item) => {
+        const needle = String(item || "").toLowerCase();
+        return needle && name.startsWith(needle);
+      });
+
+    if (prefix) return appInfo;
+  }
+
+  return null;
+}
+
+function signerMatchesCommonApp(appInfo, signerSubject) {
+  if (!appInfo) return false;
+
+  const signer = String(signerSubject || "").toLowerCase();
+  if (!signer) return false;
+
+  return (appInfo.signerContains || [])
+    .some((needle) =>
+      signer.includes(String(needle || "").toLowerCase()));
+}
+
+function downloadMatchesOfficialSource(appInfo, download) {
+  if (!appInfo) return false;
+
+  const urls = [
+    download?.sourceUrl,
+    download?.finalUrl,
+    download?.referrerUrl,
+    download?.siteUrl,
+    download?.pageUrl,
+    ...(Array.isArray(download?.urlChain) ? download.urlChain : [])
+  ]
+    .filter(Boolean)
+    .map((value) => String(value).toLowerCase());
+
+  if (!urls.length) return false;
+
+  for (const needleRaw of appInfo.officialUrlIncludes || []) {
+    const needle = String(needleRaw || "").toLowerCase();
+    if (!needle) continue;
+
+    if (urls.some((url) => url.includes(needle)))
+      return true;
+  }
+
+  return false;
+}
+
+function normalizeInputAppToken(value) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+function matchesTrustedMouseInputApp(
+  value,
+  evidence = {}
+) {
+  const haystack =
+    [
+      value,
+      evidence?.name,
+      evidence?.fileName,
+      evidence?.path,
+      evidence?.fullPath,
+      evidence?.targetPath,
+      evidence?.currentPath,
+      evidence?.originalPath,
+      evidence?.companyName,
+      evidence?.signerSubject,
+    ]
+      .filter(Boolean)
+      .map(normalizeInputAppToken)
+      .join("|");
+
+  if (!haystack)
+    return false;
+
+  return trustedMouseInputApps.some((app) => {
+    const token =
+      normalizeInputAppToken(app);
+
+    return (
+      token.length >= 5 &&
+      haystack.includes(token)
+    );
+  });
+}
+
+function isTrustedMouseInputApp(
+  value,
+  evidence = {}
+) {
+  if (!matchesTrustedMouseInputApp(value, evidence))
+    return false;
+
+  const signed =
+    evidence?.signed === true ||
+    evidence?.signatureValid === true ||
+    Boolean(
+      String(
+        evidence?.signerSubject ||
+        evidence?.publisher ||
+        evidence?.companyName ||
+        ""
+      ).trim()
+    );
+
+  const installedPath =
+    isTrustedInstalledPathForCommonApp(
+      evidence?.path ||
+      evidence?.fullPath ||
+      evidence?.currentPath ||
+      evidence?.targetPath ||
+      value
+    );
+
+  const commonApp =
+    isTrustedCommonAppArtifact(
+      value,
+      evidence
+    );
+
+  return (
+    signed ||
+    installedPath ||
+    commonApp
+  );
+}
+
+function isTrustedCommonAppArtifact(value, evidence = {}) {
+  const appInfo =
+    findCommonAppByFileName(
+      evidence?.fileName ||
+      evidence?.name ||
+      evidence?.path ||
+      evidence?.fullPath ||
+      evidence?.targetPath ||
+      evidence?.currentPath ||
+      evidence?.originalPath ||
+      value
+    );
+
+  if (!appInfo)
+    return false;
+
+  const signerOk =
+    signerMatchesCommonApp(
+      appInfo,
+      evidence?.signerSubject ||
+      evidence?.publisher ||
+      evidence?.companyName
+    );
+
+  const officialSourceOk =
+    downloadMatchesOfficialSource(
+      appInfo,
+      evidence
+    );
+
+  const installedPathOk =
+    isTrustedInstalledPathForCommonApp(
+      evidence?.path ||
+      evidence?.fullPath ||
+      evidence?.currentPath ||
+      evidence?.targetPath ||
+      value
+    );
+
+  return (
+    signerOk ||
+    officialSourceOk ||
+    installedPathOk
+  );
+}
+
+function isTrustedInstalledPathForCommonApp(value) {
+  const p = String(value || "")
+    .replaceAll("/", "\\")
+    .toLowerCase();
+
+  return (
+    p.includes("\\program files\\") ||
+    p.includes("\\program files (x86)\\") ||
+    p.includes("\\windowsapps\\") ||
+    p.includes("\\appdata\\local\\discord\\") ||
+    p.includes("\\appdata\\local\\programs\\") ||
+    p.includes("\\appdata\\local\\spotify\\")
+  );
+}
+
+const readableExecutableTokens = [
+  "installer",
+  "install",
+  "setup",
+  "updater",
+  "update",
+  "uninstall",
+  "bootstrapper",
+  "launcher",
+  "browser",
+  "microsoft",
+  "windows",
+  "store",
+  "opera",
+  "avast",
+  "crystal",
+  "disk",
+  "info",
+  "control",
+  "driver",
+  "client",
+  "helper",
+  "service",
+  "runtime",
+  "manager",
+  "discord",
+  "chrome",
+  "edge",
+  "steam",
+  "spotify",
+  "firefox",
+  "nvidia",
+  "amd",
+  "intel",
+];
+
+function normalizedExecutableStem(value) {
+  const name = windowsBaseName(value);
+  const dot = name.lastIndexOf(".");
+  return (dot > 0 ? name.slice(0, dot) : name)
+    .toLowerCase()
+    .trim();
+}
+
+function isGenericInstallerExecutableName(value) {
+  const stem = normalizedExecutableStem(value);
+
+  return new Set([
+    "installer",
+    "install",
+    "setup",
+    "setup64",
+    "setup32",
+    "updater",
+    "update",
+    "uninstall",
+    "uninstaller",
+    "bootstrapper",
+    "launcherinstaller",
+  ]).has(stem);
+}
+
+function hasReadableExecutableToken(value) {
+  const stem = normalizedExecutableStem(value)
+    .replace(/[^a-z0-9]+/g, "");
+
+  if (!stem)
+    return false;
+
+  return readableExecutableTokens.some((token) =>
+    token.length >= 4 && stem.includes(token));
+}
+
+function looksRandomExecutableName(value) {
+  const name = windowsBaseName(value);
+  let stem = normalizedExecutableStem(name);
+
+  stem = stem.replace(/\.(zip|rar|7z|pdf|jpg|jpeg|png|txt)$/i, "");
+
+  if (
+    isGenericInstallerExecutableName(name) ||
+    hasReadableExecutableToken(name)
+  ) {
+    return false;
+  }
+
+  if (stem.length < 4 || stem.length > 28) return false;
+  if (!/^[a-z0-9]+$/i.test(stem)) return false;
+
+  const letters = [...stem].filter((ch) => /[a-z]/i.test(ch));
+  const digits = [...stem].filter((ch) => /[0-9]/.test(ch));
+  const vowels = letters.filter((ch) => /[aeiou]/i.test(ch));
+  const distinct = new Set(stem.toUpperCase()).size;
+  const originalStem = windowsBaseName(name).replace(/\.[^.]+$/, "");
+  const allUpperOrDigits = /^[A-Z0-9]+$/.test(originalStem);
+  const vowelRatio = letters.length ? vowels.length / letters.length : 0;
+
+  // 4-5 chars: only flag very "machine-like" tokens. This protects short
+  // legitimate names such as java/node/code while still catching X7Q2.exe.
+  if (stem.length <= 5) {
+    return (
+      allUpperOrDigits &&
+      distinct >= Math.max(4, stem.length - 1) &&
+      (
+        digits.length >= 1 ||
+        vowels.length === 0
+      ) &&
+      vowelRatio <= 0.25
+    );
+  }
+
+  if (
+    allUpperOrDigits &&
+    distinct >= Math.min(6, stem.length - 1) &&
+    (
+      digits.length >= 1
+        ? vowelRatio <= 0.35
+        : vowelRatio <= 0.12
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    stem.length >= 8 &&
+    stem.length <= 18 &&
+    digits.length === 0 &&
+    letters.length === stem.length &&
+    distinct >= 7 &&
+    vowelRatio <= 0.22
+  ) {
+    return true;
+  }
+
+  const transitions =
+    stem
+      .split("")
+      .slice(1)
+      .reduce((count, ch, index) => {
+        const previous = stem[index];
+        const currentIsDigit = /[0-9]/.test(ch);
+        const previousIsDigit = /[0-9]/.test(previous);
+        return count + (currentIsDigit !== previousIsDigit ? 1 : 0);
+      }, 0);
+
+  const trailingDigitsOnly =
+    /^[a-z]+[0-9]{1,4}$/i.test(stem);
+
+  if (
+    trailingDigitsOnly &&
+    letters.length >= 5 &&
+    vowelRatio >= 0.16
+  ) {
+    return false;
+  }
+
+  return (
+    stem.length >= 10 &&
+    letters.length >= 6 &&
+    digits.length >= 2 &&
+    distinct >= 8 &&
+    (
+      transitions >= 3 ||
+      vowelRatio <= 0.12
+    )
+  );
+}
+
+function isDeceptiveDoubleExtensionExecutable(value) {
+  const name = path.basename(String(value || "")).toLowerCase();
+  return /\.(zip|rar|7z|pdf|jpg|jpeg|png|gif|txt|doc|docx|xls|xlsx|ppt|pptx)\.exe$/.test(name);
+}
+
+function downloadUrlCandidates(download) {
+  return [
+    download?.sourceUrl,
+    download?.finalUrl,
+    download?.referrerUrl,
+    download?.siteUrl,
+    download?.pageUrl,
+    ...(Array.isArray(download?.urlChain) ? download.urlChain : [])
+  ].filter(Boolean);
+}
+
+function isOfficialDiscordInstallerOrUpdate(download) {
+  const name = path.basename(
+    String(download?.fileName || download?.targetPath || "")
+  ).toLowerCase();
+
+  const target = String(
+    download?.targetPath ||
+    download?.currentPath ||
+    ""
+  )
+    .replaceAll("/", "\\")
+    .toLowerCase();
+
+  if (
+    target.includes("\\appdata\\local\\discord\\") &&
+    ["update.exe", "discord.exe", "discordsetup.exe", "squirrel.exe"].includes(name)
+  ) {
+    return true;
+  }
+
+  return downloadUrlCandidates(download).some((value) => {
+    try {
+      const url = new URL(String(value || ""));
+      const host = url.hostname.toLowerCase();
+      const pathname = url.pathname.toLowerCase();
+
+      const officialHost =
+        host === "discord.com" ||
+        host === "www.discord.com" ||
+        host === "discordapp.com" ||
+        host === "www.discordapp.com" ||
+        host === "dl.discordapp.net" ||
+        host === "stable.dl2.discordapp.net";
+
+      return officialHost && (
+        pathname.includes("/api/download") ||
+        pathname.includes("/apps/") ||
+        pathname.includes("/download")
+      );
+    } catch {
+      return false;
+    }
+  });
+}
+
+function isDiscordAttachmentDownload(download) {
+  if (isOfficialDiscordInstallerOrUpdate(download))
+    return false;
+
+  return downloadUrlCandidates(download).some((value) => {
+    try {
+      const url = new URL(String(value || ""));
+      const host = url.hostname.toLowerCase();
+      const pathname = url.pathname.toLowerCase();
+
+      return (
+        (
+          host === "cdn.discordapp.com" ||
+          host === "media.discordapp.net" ||
+          host.endsWith(".discordattachments.com")
+        ) &&
+        (
+          pathname.includes("/attachments/") ||
+          host.endsWith(".discordattachments.com")
+        )
+      );
+    } catch {
+      return false;
+    }
+  });
+}
+
+
+function isDiscordRelatedWebEvidence(evidence = {}, artifactValue = "") {
+  const values = [
+    artifactValue,
+    evidence?.url,
+    evidence?.sourceUrl,
+    evidence?.finalUrl,
+    evidence?.pageUrl,
+    evidence?.siteUrl,
+    evidence?.referrerUrl,
+    evidence?.recoveredUrl,
+    evidence?.host,
+    ...(Array.isArray(evidence?.urlChain) ? evidence.urlChain : []),
+  ]
+    .filter(Boolean)
+    .map((value) => String(value).toLowerCase());
+
+  return values.some((value) =>
+    value.includes("discord.com/") ||
+    value.includes("discord.gg/") ||
+    value.includes("discordapp.com/") ||
+    value.includes("discordapp.net/") ||
+    value.includes("discordattachments.com/")
+  );
+}
+
+function discordDownloadedPayloadName(evidence = {}, artifactValue = "") {
+  const candidates = [
+    evidence?.fileName,
+    evidence?.targetPath,
+    evidence?.currentPath,
+    evidence?.recoveredFileName,
+    artifactValue,
+  ].filter(Boolean);
+
+  for (const value of candidates) {
+    const raw = String(value || "");
+
+    try {
+      const parsed = new URL(raw);
+      const name = decodeURIComponent(
+        parsed.pathname.split("/").filter(Boolean).at(-1) || ""
+      );
+      if (name)
+        return name;
+    } catch {
+    }
+
+    const normalized = raw.replaceAll("/", "\\");
+    const name = normalized.split("\\").filter(Boolean).at(-1) || "";
+    if (name)
+      return name;
+  }
+
+  return "";
+}
+
+function isAllowedDiscordExecutableOrZipDownload(
+  evidence = {},
+  artifactValue = ""
+) {
+  if (!isDiscordRelatedWebEvidence(evidence, artifactValue))
+    return false;
+
+  const attachmentLike = [
+    evidence?.sourceUrl,
+    evidence?.finalUrl,
+    evidence?.pageUrl,
+    evidence?.siteUrl,
+    evidence?.referrerUrl,
+    evidence?.recoveredUrl,
+    artifactValue,
+    ...(Array.isArray(evidence?.urlChain) ? evidence.urlChain : []),
+  ]
+    .filter(Boolean)
+    .some((value) => {
+      try {
+        const parsed = new URL(String(value));
+        const host = parsed.hostname.toLowerCase();
+        const pathname = parsed.pathname.toLowerCase();
+
+        return (
+          (
+            host === "cdn.discordapp.com" ||
+            host === "media.discordapp.net" ||
+            host.endsWith(".discordattachments.com")
+          ) &&
+          (
+            pathname.includes("/attachments/") ||
+            host.endsWith(".discordattachments.com")
+          )
+        );
+      } catch {
+        return false;
+      }
+    });
+
+  if (!attachmentLike)
+    return false;
+
+  const payloadName =
+    discordDownloadedPayloadName(
+      evidence,
+      artifactValue
+    );
+
+  return /\.(exe|zip)$/i.test(payloadName);
+}
+
+function shouldSuppressDiscordWebFinding(
+  artifactType,
+  artifactValue,
+  evidence = {}
+) {
+  if (
+    ![
+      "browser_history",
+      "browser_recovery",
+      "browser_download",
+    ].includes(String(artifactType || ""))
+  ) {
+    return false;
+  }
+
+  if (!isDiscordRelatedWebEvidence(evidence, artifactValue))
+    return false;
+
+  return !isAllowedDiscordExecutableOrZipDownload(
+    evidence,
+    artifactValue
+  );
+}
+
+function downloadOriginKind(download) {
+  const values = downloadUrlCandidates(download)
+    .map((value) => String(value).toLowerCase());
+
+  const joined = values.join(" ");
+
+  const discord =
+    joined.includes("discord.com/") ||
+    joined.includes("discord.gg/") ||
+    joined.includes("discordapp.com/") ||
+    joined.includes("cdn.discordapp.com/") ||
+    joined.includes("media.discordapp.net/") ||
+    joined.includes("discordattachments.com/");
+
+  if (discord) return "Discord";
+
+  const telegram =
+    joined.includes("t.me/") ||
+    joined.includes("telegram.me/") ||
+    joined.includes("telegram.org/") ||
+    joined.includes("web.telegram.org/") ||
+    joined.includes("telegram-cdn.org/") ||
+    joined.includes("cdn-telegram.org/");
+
+  if (telegram) return "Telegram";
+
+  return "";
+}
+
+function chromiumDangerInfo(value) {
+  const code = Number(value ?? 0);
+
+  const map = new Map([
+    [1, ["Arquivo perigoso", "high"]],
+    [2, ["URL perigosa", "high"]],
+    [3, ["Conteúdo perigoso", "high"]],
+    [4, ["Conteúdo possivelmente perigoso", "medium"]],
+    [5, ["Download incomum", "medium"]],
+    [6, ["Alerta validado/ignorado pelo usuário", "medium"]],
+    [7, ["Host perigoso", "high"]],
+    [8, ["Software potencialmente indesejado", "high"]],
+    [16, ["Deep Scan: perigoso", "high"]],
+    [19, ["Risco de comprometimento de conta", "high"]],
+  ]);
+
+  const hit = map.get(code);
+  return hit
+    ? { code, label: hit[0], severity: hit[1], suspicious: true }
+    : { code, label: code ? "DangerType " + code : "Sem alerta", severity: "info", suspicious: false };
+}
+
+function isRiskyDownloadName(value) {
+  const name = String(value || "").toLowerCase();
+  return /\.(exe|com|scr|dll|msi|bat|cmd|ps1|zip|rar|7z)$/.test(name) ||
+    isDeceptiveDoubleExtensionExecutable(name);
+}
+
+function parsedHost(value) {
+  try {
+    return new URL(String(value || "")).hostname.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function isStrangeDeletedExecutableName(value) {
+  const name =
+    windowsBaseName(value);
+
+  if (
+    !/\.exe$/i.test(name) ||
+    isVorkenOwnedArtifact(name) ||
+    isKnownBenignPeNoise(name) ||
+    isGenericInstallerExecutableName(name) ||
+    findCommonAppByFileName(name)
+  ) {
+    return false;
+  }
+
+  const lower =
+    name.toLowerCase();
+
+  const explicitTerms = [
+    "cheat",
+    "hack",
+    "aimbot",
+    "wallhack",
+    "esp",
+    "injector",
+    "spoofer",
+    "bypass",
+    "recoil",
+    "script",
+    "loader",
+    "silentaim",
+    "ragebot",
+  ];
+
+  return (
+    looksRandomExecutableName(name) ||
+    isDeceptiveDoubleExtensionExecutable(name) ||
+    explicitTerms.some((term) =>
+      lower.includes(term)
+    ) ||
+    findRustCatalogMatches(name).length > 0
+  );
+}
+
+function isSearchEngineUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    const host = url.hostname.toLowerCase();
+
+    const searchHosts = [
+      "google.com",
+      "www.google.com",
+      "bing.com",
+      "www.bing.com",
+      "duckduckgo.com",
+      "search.brave.com",
+      "yahoo.com",
+      "search.yahoo.com",
+      "yandex.com",
+      "www.ecosia.org"
+    ];
+
+    return searchHosts.some((item) =>
+      host === item || host.endsWith("." + item));
+  } catch {
+    return false;
+  }
+}
+
+function isKnownBenignWebHost(value) {
+  const host = parsedHost(value);
+  if (!host) return false;
+
+  return [
+    "vorkenac.guerrafriarust.com.br",
+    "iceotimizacoes.store"
+  ].some((item) => host === item || host.endsWith("." + item));
+}
+
+function isDirectCatalogWebMatch(match, evidence = {}) {
+  const artifactType = evidence?.recoveredUrl
+    ? "browser_recovery"
+    : evidence?.targetPath || evidence?.fileName
+      ? "browser_download"
+      : "browser_history";
+
+  return catalogWebTargetMatch(
+    match,
+    evidence,
+    artifactType
+  ).direct;
+}
+
+function isKnownBenignPeNoise(value) {
+  const name = path.basename(String(value || "")).toLowerCase();
+
+  return (
+    name === "openhardwaremonitor.exe" ||
+    name === "openhardwaremonitorlib.dll" ||
+    name === "librehardwaremonitor.exe" ||
+    name === "librehardwaremonitorlib.dll" ||
+    name === "dnsjumper.exe" ||
+    name === "vorken.agent.exe" ||
+    /^vorken[-_.].*\.exe$/i.test(name)
+  );
+}
+
+function isTrustedSignedSystemFinding(value, evidence = {}) {
+  const p = String(
+    value ||
+    evidence.path ||
+    evidence.fullPath ||
+    evidence.modulePath ||
+    evidence.processPath ||
+    ""
+  )
+    .replaceAll("/", "\\")
+    .toLowerCase();
+
+  const signer = String(
+    evidence.signerSubject ||
+    evidence.publisher ||
+    evidence.companyName ||
+    ""
+  ).toLowerCase();
+
+  const signed = evidence.signed === true;
+  const microsoftSigned =
+    signed &&
+    (
+      signer.includes("microsoft corporation") ||
+      signer.includes("microsoft windows")
+    );
+
+  const trustedWindowsPath =
+    p.includes("\\windows\\system32\\") ||
+    p.includes("\\windows\\syswow64\\") ||
+    p.includes("\\windows\\winsxs\\") ||
+    p.includes("\\windows\\microsoft.net\\");
+
+  if (trustedWindowsPath && microsoftSigned)
+    return true;
+
+  const trustedInstalledPath =
+    p.includes("\\program files\\") ||
+    p.includes("\\program files (x86)\\") ||
+    p.includes("\\windowsapps\\") ||
+    p.includes("\\steamapps\\common\\");
+
+  if (trustedInstalledPath && signed)
+    return true;
+
+  const legitimateAntiCheat =
+    p.includes("\\easyanticheat\\") ||
+    p.includes("\\easyanticheat_eos\\") ||
+    p.includes("\\battleye\\") ||
+    p.includes("\\riot vanguard\\") ||
+    p.includes("\\vgc\\") ||
+    p.includes("\\warframe\\") ||
+    /(^|\\)(easyanticheat|easyanticheat_eos|beservice|bedaisy|vgc|vgk|warframe)(64)?\.(exe|dll|sys)$/i.test(p);
+
+  if (legitimateAntiCheat && signed)
+    return true;
+
+  return false;
+}
+
+function isDistinctiveCatalogAlias(value) {
+  const alias = String(value || "").toLowerCase().trim();
+  if (!alias) return false;
+
+  return (
+    alias.length >= 7 ||
+    /rust|cheat|script|aimbot|recoil|loader|private|dma|external|internal/.test(alias)
+  );
+}
+
+function containsCatalogAlias(haystack, value) {
+  const alias = String(value || "").toLowerCase().trim();
+  if (!isDistinctiveCatalogAlias(alias))
+    return false;
+
+  let start = 0;
+  while (start <= haystack.length - alias.length) {
+    const index = haystack.indexOf(alias, start);
+    if (index < 0) return false;
+
+    const end = index + alias.length;
+    const leftOk =
+      index === 0 ||
+      !/[a-z0-9]/i.test(haystack[index - 1]);
+    const rightOk =
+      end === haystack.length ||
+      !/[a-z0-9]/i.test(haystack[end]);
+
+    if (leftOk && rightOk)
+      return true;
+
+    start = index + 1;
+  }
+
+  return false;
+}
+
+function findRustCatalogMatches(...values) {
+  const haystack = values
+    .flat(Infinity)
+    .filter((value) => value !== null && value !== undefined)
+    .map((value) =>
+      typeof value === "string"
+        ? value
+        : JSON.stringify(value)
+    )
+    .join(" ")
+    .toLowerCase();
+
+  if (!haystack) return [];
+
+  const matches = [];
+
+  for (const brand of rustThreatCatalog) {
+    let matchedBy = "";
+
+    for (const domain of brand.domains || []) {
+      const needle = String(domain || "").toLowerCase();
+      if (needle && haystack.includes(needle)) {
+        matchedBy = "domain:" + domain;
+        break;
+      }
+    }
+
+    if (!matchedBy) {
+      for (const invite of brand.discordInvites || []) {
+        const needle = String(invite || "").toLowerCase();
+        if (
+          needle &&
+          (
+            haystack.includes("discord.gg/" + needle) ||
+            haystack.includes("discord.com/invite/" + needle) ||
+            haystack.includes("discord.me/" + needle)
+          )
+        ) {
+          matchedBy = "discord:" + invite;
+          break;
+        }
+      }
+    }
+
+    if (!matchedBy) {
+      for (const alias of brand.aliases || []) {
+        const needle = String(alias || "").toLowerCase().trim();
+        if (!needle || !containsCatalogAlias(haystack, needle)) continue;
+
+        matchedBy = "alias:" + alias;
+        break;
+      }
+    }
+
+    if (matchedBy) {
+      matches.push({
+        name: brand.name,
+        severity: normalizeSeverity(brand.severity || "high"),
+        matchedBy,
+      });
+    }
+  }
+
+  const seenOsint = new Set(
+    matches.map((item) =>
+      String(item?.name || "") +
+      "|" +
+      String(item?.matchedBy || "")
+    )
+  );
+
+  for (const source of rustOsintCatalog.verified || []) {
+    const sourceName =
+      String(source?.name || "Fonte OSINT");
+
+    const confidence =
+      String(source?.confidence || "").toLowerCase();
+
+    const severity =
+      confidence === "high"
+        ? "critical"
+        : "high";
+
+    const domain =
+      normalizeCatalogHost(source?.domain);
+
+    const directDomain =
+      domain &&
+      !osintGenericHosts.has(domain) &&
+      haystack.includes(domain);
+
+    let matchedBy =
+      directDomain
+        ? "osint-domain:" + domain
+        : "";
+
+    if (!matchedBy) {
+      for (const term of normalizedOsintUrlTerms(source?.url)) {
+        if (
+          term.length >= 8 &&
+          haystack.includes(term)
+        ) {
+          matchedBy = "osint-url:" + term;
+          break;
+        }
+      }
+    }
+
+    if (!matchedBy)
+      continue;
+
+    const key =
+      sourceName + "|" + matchedBy;
+
+    if (seenOsint.has(key))
+      continue;
+
+    seenOsint.add(key);
+
+    matches.push({
+      name: sourceName,
+      severity,
+      matchedBy,
+      sourceCatalog:
+        "rust_cheat_sources_catalog_2026-09-24.xlsx",
+      confidence:
+        confidence || "medium",
+    });
+  }
+
+  const contextualHaystack =
+    /\brust\b|cheat|hack|script|dma|spoofer|aimbot|recoil|loader|external|internal|esp|eac/i
+      .test(haystack);
+
+  if (contextualHaystack) {
+    for (const rawAlias of rustOsintCatalog.aliases || []) {
+      const alias =
+        String(rawAlias || "")
+          .trim()
+          .toLowerCase();
+
+      if (
+        !alias ||
+        !containsCatalogAlias(haystack, alias)
+      ) {
+        continue;
+      }
+
+      const key =
+        alias + "|osint-alias:" + alias;
+
+      if (seenOsint.has(key))
+        continue;
+
+      seenOsint.add(key);
+
+      matches.push({
+        name: rawAlias,
+        severity: "high",
+        matchedBy: "osint-alias:" + rawAlias,
+        sourceCatalog:
+          "rust_cheat_sources_catalog_2026-09-24.xlsx",
+        contextual: true,
+      });
+
+      if (matches.length >= 12)
+        break;
+    }
+  }
+
+  return matches;
+}
+
+async function initDb() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS analyses (
+      id BIGSERIAL PRIMARY KEY,
+      public_token TEXT UNIQUE NOT NULL,
+      label TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'waiting',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      expires_at TIMESTAMPTZ NOT NULL,
+      started_at TIMESTAMPTZ NULL,
+      finished_at TIMESTAMPTZ NULL,
+      machine_name TEXT NULL,
+      os_version TEXT NULL,
+      agent_version TEXT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS detection_rules (
+      id BIGSERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL,
+      pattern TEXT NOT NULL,
+      severity TEXT NOT NULL DEFAULT 'medium',
+      description TEXT NOT NULL DEFAULT '',
+      enabled BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS scan_reports (
+      id BIGSERIAL PRIMARY KEY,
+      analysis_id BIGINT NOT NULL REFERENCES analyses(id) ON DELETE CASCADE,
+      payload JSONB NOT NULL,
+      payload_raw BYTEA NULL,
+      payload_encoding TEXT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS scan_findings (
+      id BIGSERIAL PRIMARY KEY,
+      analysis_id BIGINT NOT NULL REFERENCES analyses(id) ON DELETE CASCADE,
+      rule_id BIGINT NULL REFERENCES detection_rules(id) ON DELETE SET NULL,
+      title TEXT NOT NULL,
+      severity TEXT NOT NULL,
+      artifact_type TEXT NOT NULL,
+      artifact_value TEXT NOT NULL,
+      evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS learned_trusted_artifacts (
+      id BIGSERIAL PRIMARY KEY,
+      signature TEXT NOT NULL UNIQUE,
+      signature_type TEXT NOT NULL,
+      file_name TEXT NOT NULL DEFAULT '',
+      sha256 TEXT NOT NULL DEFAULT '',
+      artifact_type TEXT NOT NULL DEFAULT '',
+      artifact_value TEXT NOT NULL DEFAULT '',
+      source_analysis_id BIGINT NULL REFERENCES analyses(id) ON DELETE SET NULL,
+      source_reason TEXT NOT NULL DEFAULT '',
+      learned_count INTEGER NOT NULL DEFAULT 1,
+      enabled BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_learned_trusted_artifacts_enabled
+      ON learned_trusted_artifacts(enabled, signature);
+
+    CREATE TABLE IF NOT EXISTS vorken_migrations (
+      migration_key TEXT PRIMARY KEY,
+      completed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      details JSONB NOT NULL DEFAULT '{}'::jsonb
+    );
+
+    ALTER TABLE analyses
+      ADD COLUMN IF NOT EXISTS machine_fingerprint TEXT NULL;
+
+    ALTER TABLE analyses
+      ADD COLUMN IF NOT EXISTS processing_stage TEXT NOT NULL DEFAULT 'waiting';
+
+    ALTER TABLE analyses
+      ADD COLUMN IF NOT EXISTS processing_message TEXT NULL;
+
+    ALTER TABLE analyses
+      ADD COLUMN IF NOT EXISTS client_report_released BOOLEAN NOT NULL DEFAULT FALSE;
+
+    ALTER TABLE analyses
+      ADD COLUMN IF NOT EXISTS external_source TEXT NULL;
+
+    ALTER TABLE analyses
+      ADD COLUMN IF NOT EXISTS external_player_id TEXT NULL;
+
+    ALTER TABLE analyses
+      ADD COLUMN IF NOT EXISTS external_discord_user_id TEXT NULL;
+
+    ALTER TABLE analyses
+      ADD COLUMN IF NOT EXISTS external_ticket_channel_id TEXT NULL;
+
+    ALTER TABLE analyses
+      ADD COLUMN IF NOT EXISTS external_verification_code TEXT NULL;
+
+    ALTER TABLE analyses
+      ADD COLUMN IF NOT EXISTS external_decision TEXT NULL;
+
+    ALTER TABLE analyses
+      ADD COLUMN IF NOT EXISTS external_decision_at TIMESTAMPTZ NULL;
+
+    ALTER TABLE analyses
+      ADD COLUMN IF NOT EXISTS external_decision_result TEXT NULL;
+
+    ALTER TABLE analyses
+      ADD COLUMN IF NOT EXISTS external_evidence_url TEXT NULL;
+
+    CREATE TABLE IF NOT EXISTS evidence_packages (
+      id BIGSERIAL PRIMARY KEY,
+      analysis_id BIGINT NOT NULL REFERENCES analyses(id) ON DELETE CASCADE,
+      public_token TEXT NOT NULL UNIQUE,
+      reason TEXT NOT NULL DEFAULT '',
+      findings JSONB NOT NULL DEFAULT '[]'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_evidence_packages_analysis
+      ON evidence_packages(analysis_id, id DESC);
+
+    CREATE TABLE IF NOT EXISTS guerra_fria_verifications (
+      id BIGSERIAL PRIMARY KEY,
+      verification_code TEXT NOT NULL UNIQUE,
+      steam_id TEXT NOT NULL,
+      player_name TEXT NOT NULL,
+      administrator_id TEXT NULL,
+      discord_user_id TEXT NULL,
+      ticket_channel_id TEXT NULL,
+      analysis_id BIGINT NULL REFERENCES analyses(id) ON DELETE SET NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      expires_at TIMESTAMPTZ NOT NULL,
+      redeemed_at TIMESTAMPTZ NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS guerra_fria_actions (
+      id BIGSERIAL PRIMARY KEY,
+      analysis_id BIGINT NOT NULL REFERENCES analyses(id) ON DELETE CASCADE,
+      steam_id TEXT NOT NULL,
+      discord_user_id TEXT NULL,
+      ticket_channel_id TEXT NULL,
+      action TEXT NOT NULL,
+      reason TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'pending',
+      result TEXT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      claimed_at TIMESTAMPTZ NULL,
+      processed_at TIMESTAMPTZ NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_gf_verification_code
+      ON guerra_fria_verifications(verification_code, status);
+
+    CREATE INDEX IF NOT EXISTS idx_gf_actions_status
+      ON guerra_fria_actions(status, id);
+
+    UPDATE analyses
+    SET
+      processing_stage = CASE
+        WHEN status='completed'
+          THEN 'completed'
+        WHEN status='running'
+          THEN 'collecting'
+        ELSE processing_stage
+      END,
+      processing_message = CASE
+        WHEN status='completed'
+          THEN COALESCE(processing_message, 'Análise concluída e resultado final preparado.')
+        WHEN status='running'
+          THEN COALESCE(processing_message, 'Análise em andamento.')
+        ELSE processing_message
+      END
+    WHERE processing_stage='waiting';
+
+    UPDATE analyses
+    SET
+      processing_stage = CASE
+        WHEN processing_stage IN ('ai_filter','review_filter','needs_ai','needs_review')
+          THEN 'finalizing'
+        WHEN processing_stage IN ('ai_error','review_error')
+          THEN 'filter_error'
+        ELSE processing_stage
+      END,
+      processing_message = CASE
+        WHEN processing_stage IN ('ai_filter','review_filter','needs_ai','needs_review')
+          THEN 'Aplicando filtros locais e preparando o resultado final...'
+        WHEN processing_stage IN ('ai_error','review_error')
+          THEN 'Análise concluída com erro parcial nos filtros locais.'
+        WHEN processing_stage='finalizing'
+          THEN 'Preparando o resultado final...'
+        WHEN processing_stage='completed'
+          THEN 'Análise concluída e resultado final preparado.'
+        ELSE processing_message
+      END
+    WHERE processing_stage IN (
+      'ai_filter','review_filter','needs_ai','needs_review',
+      'ai_error','review_error','finalizing','completed'
+    );
+
+    ALTER TABLE scan_reports
+      ADD COLUMN IF NOT EXISTS payload_raw BYTEA NULL;
+
+    ALTER TABLE scan_reports
+      ADD COLUMN IF NOT EXISTS payload_encoding TEXT NULL;
+
+    CREATE INDEX IF NOT EXISTS idx_analyses_created ON analyses(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_analyses_fingerprint ON analyses(machine_fingerprint);
+    CREATE INDEX IF NOT EXISTS idx_findings_analysis ON scan_findings(analysis_id, id);
+    CREATE INDEX IF NOT EXISTS idx_reports_analysis ON scan_reports(analysis_id, id DESC);
+
+    INSERT INTO detection_rules(name, type, pattern, severity, description)
+    SELECT 'Nome contendo loader', 'filename_contains', 'loader', 'medium',
+           'Arquivo executável com loader no nome; requer revisão manual.'
+    WHERE NOT EXISTS (
+      SELECT 1 FROM detection_rules WHERE type='filename_contains' AND pattern='loader'
+    );
+
+    INSERT INTO detection_rules(name, type, pattern, severity, description)
+    SELECT 'Nome contendo injector', 'filename_contains', 'injector', 'high',
+           'Arquivo executável com injector no nome; requer revisão manual.'
+    WHERE NOT EXISTS (
+      SELECT 1 FROM detection_rules WHERE type='filename_contains' AND pattern='injector'
+    );
+
+    INSERT INTO detection_rules(name, type, pattern, severity, description)
+    SELECT 'Dispositivo DMA', 'device_keyword', 'dma', 'high',
+           'Dispositivo cujo nome/identificador contém DMA; não é prova isolada de cheat.'
+    WHERE NOT EXISTS (
+      SELECT 1 FROM detection_rules WHERE type='device_keyword' AND pattern='dma'
+    );
+  `);
+}
+
+
+function safePublicEvidence(evidence = {}) {
+  const source =
+    evidence && typeof evidence === "object"
+      ? evidence
+      : {};
+
+  const keys = [
+    "name",
+    "fileName",
+    "path",
+    "fullPath",
+    "originalPath",
+    "targetPath",
+    "currentPath",
+    "relativePath",
+    "drive",
+    "volumeLabel",
+    "extension",
+    "size",
+    "sha256",
+    "signed",
+    "signerSubject",
+    "companyName",
+    "publisher",
+    "sourceUrl",
+    "finalUrl",
+    "hostUrl",
+    "siteUrl",
+    "pageUrl",
+    "referrerUrl",
+    "lastRunUtc",
+    "lastExecutionUtc",
+    "timeCreatedUtc",
+    "lastConnectedUtc",
+    "lastDisconnectedUtc",
+    "driveType",
+    "volumeNotMounted",
+    "executablePresent",
+    "priorityMaximum",
+    "executionConfirmed",
+    "technicalVerdict",
+    "confidence",
+    "note",
+    "catalogMatch",
+    "correlatedUsb"
+  ];
+
+  const output = {};
+
+  for (const key of keys) {
+    if (source[key] !== undefined && source[key] !== null)
+      output[key] = source[key];
+  }
+
+  return output;
+}
+
+function htmlEscape(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+async function notifyGuerraFriaProgress(analysisId, stage, message) {
+  try {
+    const baseUrl =
+      String(process.env.GUERRA_FRIA_INTEGRATION_URL || "")
+        .trim()
+        .replace(/\/$/, "");
+
+    const key =
+      String(process.env.VORKEN_GF_INTEGRATION_KEY || "").trim();
+
+    if (!baseUrl || !key)
+      return;
+
+    const result = await pool.query(
+      `SELECT
+         external_source,
+         external_player_id,
+         external_discord_user_id,
+         external_ticket_channel_id
+       FROM analyses
+       WHERE id=$1
+       LIMIT 1`,
+      [analysisId]
+    );
+
+    const analysis = result.rows[0];
+
+    if (
+      !analysis ||
+      analysis.external_source !== "guerra_fria" ||
+      !analysis.external_ticket_channel_id
+    ) {
+      return;
+    }
+
+    const playerNameResult = await pool.query(
+      `SELECT player_name
+       FROM guerra_fria_verifications
+       WHERE analysis_id=$1
+       ORDER BY id DESC
+       LIMIT 1`,
+      [analysisId]
+    );
+
+    const playerName =
+      cleanText(
+        playerNameResult.rows[0]?.player_name,
+        100
+      ) || cleanText(analysis.external_player_id, 100);
+
+    await fetch(
+      baseUrl + "/api/integrations/vorken/progress",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-vorken-integration-key": key
+        },
+        body: JSON.stringify({
+          analysisId,
+          steamId: analysis.external_player_id,
+          playerName,
+          discordUserId: analysis.external_discord_user_id,
+          ticketChannelId: analysis.external_ticket_channel_id,
+          stage,
+          message
+        })
+      }
+    ).catch(() => {});
+  } catch (error) {
+    console.warn(
+      "Falha ao atualizar progresso da verificação no Guerra Fria:",
+      error?.message || error
+    );
+  }
+}
+
+
+async function getAnalysisDecisionCounts(analysisId) {
+  const result = await pool.query(
+    `SELECT
+       COUNT(DISTINCT LOWER(sf.artifact_type) || '|' || LOWER(TRIM(sf.artifact_value)))
+         FILTER (
+           WHERE sf.severity='critical'
+             AND LOWER(COALESCE(sf.artifact_value,'')) NOT LIKE '%vorken%'
+             AND LOWER(COALESCE(sf.evidence::text,'')) NOT LIKE '%vorken%'
+         )::int AS critical_findings,
+       COUNT(DISTINCT LOWER(sf.artifact_type) || '|' || LOWER(TRIM(sf.artifact_value)))
+         FILTER (
+           WHERE sf.severity IN ('high','medium')
+             AND LOWER(COALESCE(sf.artifact_value,'')) NOT LIKE '%vorken%'
+             AND LOWER(COALESCE(sf.evidence::text,'')) NOT LIKE '%vorken%'
+         )::int AS review_findings
+     FROM scan_findings sf
+     WHERE sf.analysis_id=$1`,
+    [analysisId]
+  );
+
+  return {
+    critical:
+      Number(result.rows[0]?.critical_findings || 0),
+    review:
+      Number(result.rows[0]?.review_findings || 0),
+  };
+}
+
+async function tryAutoApproveCleanGuerraFriaAnalysis(
+  analysisId
+) {
+  const counts =
+    await getAnalysisDecisionCounts(
+      analysisId
+    );
+
+  if (
+    counts.critical > 0 ||
+    counts.review > 0
+  ) {
+    return {
+      eligible: false,
+      approved: false,
+      counts,
+    };
+  }
+
+  const analysisResult = await pool.query(
+    `SELECT
+       id,
+       status,
+       label,
+       external_source,
+       external_player_id,
+       external_discord_user_id,
+       external_ticket_channel_id,
+       external_decision,
+       processing_stage
+     FROM analyses
+     WHERE id=$1
+     LIMIT 1`,
+    [analysisId]
+  );
+
+  const analysis =
+    analysisResult.rows[0];
+
+  if (
+    !analysis ||
+    analysis.status !== "completed" ||
+    analysis.processing_stage !== "completed" ||
+    analysis.external_source !== "guerra_fria" ||
+    !STEAM_ID64_PATTERN.test(
+      String(
+        analysis.external_player_id || ""
+      )
+    )
+  ) {
+    return {
+      eligible: true,
+      approved: false,
+      skipped: "not_linked",
+      counts,
+    };
+  }
+
+  if (analysis.external_decision) {
+    return {
+      eligible: true,
+      approved:
+        analysis.external_decision === "approve",
+      skipped: "already_decided",
+      counts,
+    };
+  }
+
+  const baseUrl =
+    String(
+      process.env.GUERRA_FRIA_INTEGRATION_URL ||
+      ""
+    )
+      .trim()
+      .replace(/\/$/, "");
+
+  const key =
+    String(
+      process.env.VORKEN_GF_INTEGRATION_KEY ||
+      ""
+    ).trim();
+
+  if (!baseUrl || !key) {
+    return {
+      eligible: true,
+      approved: false,
+      skipped: "integration_not_configured",
+      counts,
+    };
+  }
+
+  const reason =
+    "Verificação automática aprovada pelo Vorken: nenhum item crítico ou suspeito foi encontrado.";
+
+  let response;
+  let body = {};
+
+  try {
+    response = await fetch(
+      baseUrl +
+        "/api/integrations/vorken/decision",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-vorken-integration-key": key,
+        },
+        body: JSON.stringify({
+          analysisId,
+          decision: "approve",
+          reason,
+          evidenceUrl: null,
+          evidenceCount: 0,
+          steamId:
+            analysis.external_player_id,
+          discordUserId:
+            analysis.external_discord_user_id,
+          ticketChannelId:
+            analysis.external_ticket_channel_id,
+          automatic: true,
+          source: "vorken_clean_scan",
+        }),
+        signal:
+          AbortSignal.timeout(15000),
+      }
+    );
+
+    body =
+      await response
+        .json()
+        .catch(() => ({}));
+  } catch (error) {
+    console.warn(
+      "Falha na liberação automática do Guerra Fria:",
+      error?.message || error
+    );
+
+    return {
+      eligible: true,
+      approved: false,
+      skipped: "request_failed",
+      counts,
+    };
+  }
+
+  if (!response.ok) {
+    console.warn(
+      "Guerra Fria recusou a liberação automática:",
+      body?.message ||
+      body?.error ||
+      response.status
+    );
+
+    return {
+      eligible: true,
+      approved: false,
+      skipped: "decision_failed",
+      counts,
+    };
+  }
+
+  const decisionResult =
+    cleanText(
+      body?.result,
+      900
+    ) ||
+    "Verificação limpa aprovada automaticamente.";
+
+  await pool.query(
+    `UPDATE analyses
+     SET external_decision='approve',
+         external_decision_at=NOW(),
+         external_decision_result=$2,
+         processing_message='Análise limpa. Verificação aprovada automaticamente.'
+     WHERE id=$1
+       AND external_decision IS NULL`,
+    [
+      analysisId,
+      decisionResult,
+    ]
+  );
+
+  return {
+    eligible: true,
+    approved: true,
+    result: decisionResult,
+    counts,
+  };
+}
+
+function sanitizeWindowsFileName(value) {
+  const cleaned = String(value || "")
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/[. ]+$/g, "")
+    .trim()
+    .slice(0, 72);
+
+  return cleaned || "Cliente";
+}
+
+async function getAnalysisClientName(analysis) {
+  if (!analysis)
+    return "Cliente";
+
+  if (analysis.external_source === "guerra_fria") {
+    const result = await pool.query(
+      `SELECT player_name
+       FROM guerra_fria_verifications
+       WHERE analysis_id=$1
+       ORDER BY id DESC
+       LIMIT 1`,
+      [analysis.id]
+    );
+
+    const linkedName =
+      sanitizeWindowsFileName(
+        result.rows[0]?.player_name
+      );
+
+    if (linkedName && linkedName !== "Cliente")
+      return linkedName;
+  }
+
+  const label =
+    String(analysis.label || "")
+      .replace(/^Guerra Fria\s*·\s*/i, "")
+      .replace(/\s*·\s*7656119\d{10}\s*$/i, "");
+
+  return sanitizeWindowsFileName(label);
+}
+
+async function getAnalysisByToken(token) {
+  const result = await pool.query(
+    `SELECT *
+     FROM analyses
+     WHERE public_token = $1
+     LIMIT 1`,
+    [token]
+  );
+  return result.rows[0] || null;
+}
+
+function ensureAnalysisUsable(analysis, res) {
+  if (!analysis) {
+    res.status(404).json({ error: "analysis_not_found", message: "Análise não encontrada." });
+    return false;
+  }
+
+  if (new Date(analysis.expires_at).getTime() <= Date.now() && analysis.status !== "completed") {
+    res.status(410).json({ error: "analysis_expired", message: "Esta análise expirou." });
+    return false;
+  }
+
+  return true;
+}
+
+function flattenArtifacts(report) {
+  const items = [];
+  const push = (type, value, evidence = {}) => {
+    if (!value) return;
+    items.push({ type, value: String(value), evidence });
+  };
+
+  for (const file of report.files || []) {
+    push("file", file.path || file.name, file);
+  }
+
+  for (const item of report.peInspections || []) {
+    push("pe_inspection", item.path || item.name, item);
+  }
+
+  for (const item of report.zoneIdentifiers || []) {
+    push("zone_identifier", item.path || item.hostUrl || item.fileName, item);
+  }
+
+  for (const item of report.alternateDataStreams || []) {
+    push("alternate_stream", (item.path || "") + (item.streamName || ""), item);
+  }
+
+  for (const item of report.autorunIntegrity || []) {
+    push("autorun_integrity", item.executablePath || item.command || item.name, item);
+  }
+
+  for (const item of report.processModuleIntegrity || []) {
+    push("module_integrity", item.modulePath || item.moduleName, item);
+  }
+
+  for (const item of report.processMemoryIntegrity || []) {
+    push("memory_integrity", item.processPath || item.processName || item.baseAddress, item);
+  }
+
+  for (const item of report.protectedWindows || []) {
+    push("protected_window", item.processPath || item.processName, item);
+  }
+
+  for (const process of report.processes || []) {
+    push("process", process.name || process.path, process);
+  }
+
+  for (const device of [...(report.usbCurrent || []), ...(report.usbHistory || []), ...(report.serialDevices || [])]) {
+    push("device", device.name || device.deviceId || device.instanceId, device);
+  }
+
+  for (const file of report.usbFiles || []) {
+    push("usb_file", file.path || file.relativePath || file.name, file);
+  }
+
+  for (const service of report.services || []) {
+    push("service", service.name || service.displayName, service);
+  }
+
+  for (const driver of report.drivers || []) {
+    push("driver", driver.name || driver.pathName, driver);
+  }
+
+  for (const prefetch of report.prefetch || []) {
+    push("prefetch", prefetch.name || prefetch.path, prefetch);
+  }
+
+  for (const execution of report.prefetchExecutions || []) {
+    push(
+      "prefetch_execution",
+      execution.executableName || execution.nativeExecutablePath || execution.prefetchFile,
+      execution
+    );
+  }
+
+  for (const usbEvent of report.usbTimeline || []) {
+    push(
+      "usb_event",
+      usbEvent.deviceId || usbEvent.evidence || String(usbEvent.eventId || ""),
+      usbEvent
+    );
+  }
+
+  for (const startup of report.startup || []) {
+    push("startup", startup.name || startup.command, startup);
+  }
+
+  for (const bam of report.bam || []) {
+    push("bam", bam.path, bam);
+  }
+
+  for (const item of report.userAssist || []) {
+    push("userassist", item.decodedName || item.encodedName, item);
+  }
+
+  for (const item of report.muiCache || []) {
+    push("muicache", item.path || item.displayName, item);
+  }
+
+  for (const item of report.pca || []) {
+    push("pca", item.path, item);
+  }
+
+  for (const item of report.amcache || []) {
+    push("amcache", item.fullPath || item.name, item);
+  }
+
+  for (const item of report.shimCache || []) {
+    push("shimcache", item.path, item);
+  }
+
+  for (const item of report.setupApiUsb || []) {
+    push("setupapi_usb", item.evidence || item.section, item);
+  }
+
+  for (const item of report.powerShellHits || []) {
+    push("powershell", item.matchedLine || item.pattern, item);
+  }
+
+  for (const item of report.powerShellArtifacts || []) {
+    push("powershell_artifact", item.command || item.source, item);
+  }
+
+  for (const item of report.prefetchIntegrity || []) {
+    push("prefetch_integrity", item.name || item.kind, item);
+  }
+
+  for (const item of report.hiddenVolumes || []) {
+    push("volume", item.deviceId || item.label, item);
+  }
+
+  for (const item of report.logClearSignals || []) {
+    push("log_signal", item.signal || item.channel, item);
+  }
+
+  for (const item of report.processCreationEvents || []) {
+    push("process_history", item.processPath || item.processName, item);
+  }
+
+  for (const item of report.defenderDetections || []) {
+    push("defender_detection", item.threatName || item.path, item);
+  }
+
+  for (const item of report.recentShortcuts || []) {
+    push("recent_link", item.targetPath || item.shortcutName, item);
+  }
+
+  for (const item of report.crashArtifacts || []) {
+    push("crash_artifact", item.appPath || item.appName || item.artifactPath, item);
+  }
+
+  for (const item of report.securityProducts || []) {
+    push("security_product", item.displayName || item.category, item);
+  }
+
+  for (const item of report.browserDownloads || []) {
+    push(
+      "browser_download",
+      item.targetPath || item.fileName || item.sourceUrl || item.finalUrl,
+      item
+    );
+  }
+
+  for (const item of report.browserHistorySignals || []) {
+    push(
+      "browser_history",
+      item.searchQuery || item.url || item.title || item.host,
+      item
+    );
+  }
+
+  for (const item of report.browserRecoveredArtifacts || []) {
+    push(
+      "browser_recovery",
+      item.recoveredUrl || item.recoveredFileName || item.sourceArtifact,
+      item
+    );
+  }
+
+  for (const item of report.networkIndicators || []) {
+    push(
+      "network_indicator",
+      item.domain || item.processPath || item.remoteAddress || item.processName,
+      item
+    );
+  }
+
+  for (const item of report.deletedUsnRecords || []) {
+    push(
+      "usn_delete",
+      item.fileName || item.volume,
+      item
+    );
+  }
+
+  for (const item of report.recycleBin || []) {
+    push(
+      "recycle_bin",
+      item.originalPath || item.fileName || item.recycledDataPath,
+      item
+    );
+  }
+
+  for (const item of report.extensionMismatches || []) {
+    push("extension_mismatch", item.path || item.name, item);
+  }
+
+  for (const item of report.defenderExclusions || []) {
+    push("defender_exclusion", item.value || item.category, item);
+  }
+
+  for (const item of report.bootIntegrity || []) {
+    push("boot_integrity", item.raw || item.setting, item);
+  }
+
+  for (const item of report.systemTimeChanges || []) {
+    push("time_change", item.processName || item.newTime, item);
+  }
+
+  for (const item of report.virtualDisks || []) {
+    push("virtual_disk", item.model || item.caption || item.deviceId, item);
+  }
+
+  for (const item of report.rustModules || []) {
+    push("rust_module", item.path || item.moduleName, item);
+  }
+
+  for (const item of report.usnJournalState || []) {
+    push("usn_state", item.volume, item);
+  }
+
+  for (const item of report.usnActivity || []) {
+    push("usn_activity", item.fileName || item.volume, item);
+  }
+
+  for (const item of report.systemIntegrityExpansion || []) {
+    push("system_integrity_expansion", item.name || item.kind || item.detail, item);
+  }
+
+  if (report.activityHistory) {
+    push("activity_history", "activity-history-state", report.activityHistory);
+  }
+
+  if (report.systemArtifacts) {
+    push("system_artifact", "windows-artifact-state", report.systemArtifacts);
+  }
+
+  return items;
+}
+
+function matchesRule(rule, artifact) {
+  const pattern = String(rule.pattern || "").toLowerCase();
+  const value = String(artifact.value || "").toLowerCase();
+  const evidence = artifact.evidence || {};
+
+  switch (rule.type) {
+    case "filename_contains":
+      return artifact.type === "file" &&
+        String(evidence.name || path.basename(value)).toLowerCase().includes(pattern);
+    case "path_contains":
+      return artifact.type === "file" && value.includes(pattern);
+    case "sha256":
+      return artifact.type === "file" &&
+        String(evidence.sha256 || "").toLowerCase() === pattern.replace(/\s/g, "");
+    case "process_name":
+      return artifact.type === "process" &&
+        String(evidence.name || value).toLowerCase().includes(pattern);
+    case "service_name":
+      return artifact.type === "service" &&
+        (String(evidence.name || "").toLowerCase().includes(pattern) ||
+         String(evidence.displayName || "").toLowerCase().includes(pattern));
+    case "driver_name":
+      return artifact.type === "driver" &&
+        (String(evidence.name || "").toLowerCase().includes(pattern) ||
+         String(evidence.pathName || "").toLowerCase().includes(pattern));
+    case "device_keyword":
+      return artifact.type === "device" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "prefetch_contains":
+      return artifact.type === "prefetch" && value.includes(pattern);
+    case "bam_contains":
+      return artifact.type === "bam" && value.includes(pattern);
+    case "userassist_contains":
+      return artifact.type === "userassist" && value.includes(pattern);
+    case "muicache_contains":
+      return artifact.type === "muicache" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "pca_contains":
+      return artifact.type === "pca" && value.includes(pattern);
+    case "amcache_contains":
+      return artifact.type === "amcache" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "shimcache_contains":
+      return artifact.type === "shimcache" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "setupapi_contains":
+      return artifact.type === "setupapi_usb" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "powershell_contains":
+      return artifact.type === "powershell" &&
+        (value.includes(pattern) ||
+         String(evidence.pattern || "").toLowerCase() === pattern);
+    case "signer_contains":
+      return ["file", "process"].includes(artifact.type) &&
+        String(evidence.signerSubject || "").toLowerCase().includes(pattern);
+    case "prefetch_integrity":
+      return artifact.type === "prefetch_integrity" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "volume_keyword":
+      return artifact.type === "volume" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "log_clear_signal":
+      return artifact.type === "log_signal" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "execution_name":
+      return artifact.type === "prefetch_execution" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "usb_event_keyword":
+      return artifact.type === "usb_event" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "process_history_contains":
+      return artifact.type === "process_history" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "recent_link_contains":
+      return artifact.type === "recent_link" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "download_url_contains":
+      return artifact.type === "browser_download" &&
+        [
+          evidence.sourceUrl,
+          evidence.finalUrl,
+          evidence.referrerUrl,
+          evidence.pageUrl,
+          evidence.siteUrl,
+        ].some((value) =>
+          String(value || "").toLowerCase().includes(pattern));
+    case "download_name_contains":
+      return artifact.type === "browser_download" &&
+        [
+          evidence.fileName,
+          evidence.targetPath,
+          evidence.currentPath,
+        ].some((value) =>
+          String(value || "").toLowerCase().includes(pattern));
+    case "browser_history_contains":
+      return artifact.type === "browser_history" &&
+        [
+          evidence.url,
+          evidence.host,
+          evidence.title,
+          evidence.searchQuery,
+          ...(Array.isArray(evidence.matchedTerms) ? evidence.matchedTerms : []),
+        ].some((value) =>
+          String(value || "").toLowerCase().includes(pattern));
+    case "browser_recovery_contains":
+      return artifact.type === "browser_recovery" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "deleted_name_contains":
+      return artifact.type === "usn_delete" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "recycle_name_contains":
+      return artifact.type === "recycle_bin" &&
+        [
+          evidence.fileName,
+          evidence.originalPath,
+          evidence.recycledDataPath,
+        ].some((value) =>
+          String(value || "").toLowerCase().includes(pattern));
+    case "rust_module_contains":
+      return artifact.type === "rust_module" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "defender_history_contains":
+      return artifact.type === "defender_detection" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "defender_exclusion_contains":
+      return artifact.type === "defender_exclusion" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "pe_indicator_contains":
+      return artifact.type === "pe_inspection" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "zone_url_contains":
+      return artifact.type === "zone_identifier" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "ads_contains":
+      return artifact.type === "alternate_stream" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "autorun_contains":
+      return artifact.type === "autorun_integrity" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "powershell_artifact_contains":
+      return artifact.type === "powershell_artifact" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "network_indicator_contains":
+      return artifact.type === "network_indicator" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "usn_activity_contains":
+      return artifact.type === "usn_activity" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "system_integrity_contains":
+      return artifact.type === "system_integrity_expansion" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "module_integrity_contains":
+      return artifact.type === "module_integrity" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "memory_integrity_contains":
+      return artifact.type === "memory_integrity" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    case "crash_contains":
+      return artifact.type === "crash_artifact" &&
+        JSON.stringify(evidence).toLowerCase().includes(pattern);
+    default:
+      return false;
+  }
+}
+
+function artifactFileExtension(artifactValue, evidence = {}) {
+  const candidates = [
+    artifactValue,
+    evidence?.fileName,
+    evidence?.name,
+    evidence?.path,
+    evidence?.fullPath,
+    evidence?.modulePath,
+    evidence?.originalPath,
+    evidence?.targetPath,
+    evidence?.currentPath,
+    evidence?.recoveredFileName,
+    evidence?.resolvedExecutablePath,
+    evidence?.nativeExecutablePath,
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    const clean = String(candidate || "")
+      .split(/[?#]/, 1)[0]
+      .replaceAll("/", "\\")
+      .trim()
+      .toLowerCase();
+
+    const ext = path.extname(clean);
+    if (ext) return ext;
+  }
+
+  return "";
+}
+
+function isVorkenOwnedArtifact(value, evidence = {}) {
+  // Regra absoluta solicitada para evitar auto-detecção:
+  // qualquer artefato cujo valor OU qualquer metadado contenha "vorken"
+  // é considerado pertencente ao próprio scanner, independentemente
+  // do diretório, extensão, estado do arquivo ou origem da evidência.
+  const haystack = [
+    value,
+    (() => {
+      try {
+        return JSON.stringify(evidence || {});
+      } catch {
+        return String(evidence || "");
+      }
+    })()
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .replaceAll("/", "\\")
+    .toLowerCase();
+
+  return (
+    haystack.includes("vorken") ||
+    haystack.includes("vorkenac.guerrafriarust.com.br")
+  );
+}
+
+function trustedCatalogCandidateName(value) {
+  const raw =
+    String(value || "").trim();
+
+  if (!raw)
+    return "";
+
+  try {
+    const parsed =
+      new URL(raw);
+
+    const urlName =
+      decodeURIComponent(
+        parsed.pathname
+          .split("/")
+          .filter(Boolean)
+          .at(-1) || ""
+      )
+        .trim()
+        .toLowerCase();
+
+    if (urlName)
+      return urlName;
+  } catch {
+  }
+
+  const normalized =
+    raw
+      .replaceAll("/", "\\")
+      .replace(/^["']+|["']+$/g, "")
+      .trim();
+
+  const parts =
+    normalized
+      .split("\\")
+      .filter(Boolean);
+
+  let name =
+    String(parts.at(-1) || normalized)
+      .trim()
+      .toLowerCase();
+
+  // Commands may append arguments after the executable path.
+  const quoted =
+    name.match(/^"([^"]+)"/);
+
+  if (quoted?.[1])
+    name =
+      String(
+        quoted[1]
+          .split("\\")
+          .filter(Boolean)
+          .at(-1) || quoted[1]
+      ).toLowerCase();
+
+  const extensionMatch =
+    name.match(
+      /([^\\/:*?"<>|]+\.(?:exe|com|sys|dll|msi|msc|ps1|bat|cmd|scr))\b/i
+    );
+
+  return String(
+    extensionMatch?.[1] || name
+  )
+    .trim()
+    .toLowerCase();
+}
+
+function isAbsoluteTrustedCatalogArtifact(
+  artifactType,
+  artifactValue,
+  evidence = {}
+) {
+  // Explicit exception: a real EXE/ZIP attachment downloaded from
+  // Discord is always priority maximum, even when its filename
+  // appears in the trusted catalog.
+  if (
+    isAllowedDiscordExecutableOrZipDownload(
+      evidence,
+      artifactValue
+    )
+  ) {
+    return false;
+  }
+
+  const values = [
+    artifactValue,
+    evidence?.name,
+    evidence?.fileName,
+    evidence?.path,
+    evidence?.fullPath,
+    evidence?.targetPath,
+    evidence?.currentPath,
+    evidence?.originalPath,
+    evidence?.executablePath,
+    evidence?.processPath,
+    evidence?.processName,
+    evidence?.modulePath,
+    evidence?.nativeExecutablePath,
+    evidence?.resolvedExecutablePath,
+    evidence?.executableName,
+    evidence?.recoveredFileName,
+    evidence?.command,
+    evidence?.imagePath,
+    evidence?.servicePath,
+  ].filter(Boolean);
+
+  return values.some((value) => {
+    const name =
+      trustedCatalogCandidateName(value);
+
+    return Boolean(
+      name &&
+      absoluteTrustedExecutableCatalog.has(name)
+    );
+  });
+}
+
+function isTrustedPortableExecutableName(value) {
+  const name = path.basename(
+    String(value || "")
+      .replaceAll("/", "\\")
+      .toLowerCase()
+  );
+
+  if (!name)
+    return false;
+
+  const exact = new Set([
+    "discord.exe",
+    "discordsetup.exe",
+    "update.exe",
+    "steam.exe",
+    "steamsetup.exe",
+    "chrome.exe",
+    "chromesetup.exe",
+    "msedge.exe",
+    "microsoftedgeupdate.exe",
+    "firefox.exe",
+    "firefox installer.exe",
+    "opera.exe",
+    "operasetup.exe",
+    "brave.exe",
+    "bravesetup.exe",
+    "epicgameslauncher.exe",
+    "epicinstaller.exe",
+    "riotclientservices.exe",
+    "battle.net.exe",
+    "battle.net-setup.exe",
+    "nvidia app.exe",
+    "nvidiaapp.exe",
+    "geforce_experience.exe",
+    "radeonsoftware.exe",
+    "obs64.exe",
+    "obs-studio.exe",
+    "medal.exe",
+    "spotify.exe",
+    "telegram.exe",
+    "whatsapp.exe",
+    "teams.exe",
+    "ms-teams.exe",
+    "logioptionsplus.exe",
+    "razercentral.exe"
+  ]);
+
+  if (exact.has(name))
+    return true;
+
+  return /^(discord|steam|chrome|firefox|opera|brave|epic|riot|battle[ ._-]?net|nvidia|geforce|radeon|amd|obs|medal|spotify|telegram|whatsapp|teams|logi|logitech|razer).*(setup|installer|update|updater|launcher)?\.exe$/i.test(name);
+}
+
+function capFindingSeverityForArtifact(severity, artifactType, artifactValue, evidence = {}) {
+  const normalized = normalizeSeverity(severity);
+  const extension = artifactFileExtension(artifactValue, evidence);
+
+  // DLLs are libraries, not standalone proof of a cheat. A DLL may be useful
+  // correlation context, but must never reach the critical/high bucket by
+  // filename, deletion history, download origin or catalog match alone.
+  // Strong module/memory evidence remains visible for human review as medium.
+  if (
+    extension === ".dll" &&
+    ["high", "critical"].includes(normalized) &&
+    evidence?.injectionIntoRust !== true &&
+    evidence?.manualMapInRust !== true
+  ) {
+    return "medium";
+  }
+
+  return normalized;
+}
+
+function forceInformationalFinding(artifactType, evidence = {}, title = "") {
+  if (artifactType === "powershell" || artifactType === "powershell_artifact")
+    return true;
+
+  if (
+    artifactType === "usn_activity" &&
+    (
+      evidence?.underPrefetchDirectory === true ||
+      evidence?.windowsForensicArtifact === true
+    )
+  ) {
+    return true;
+  }
+
+  const lowerTitle = String(title || "").toLowerCase();
+  const evidenceName = String(
+    evidence?.name ||
+    evidence?.serviceName ||
+    evidence?.kind ||
+    ""
+  ).toLowerCase();
+
+  if (
+    artifactType === "system_integrity_expansion" &&
+    (
+      evidenceName === "pcasvc" ||
+      lowerTitle.includes("pcasvc")
+    )
+  ) {
+    return true;
+  }
+
+  return (
+    lowerTitle.includes("prefetch apagado") ||
+    lowerTitle.includes("artefato forense") ||
+    lowerTitle.includes("powershell") ||
+    lowerTitle.includes("recurso de rede")
+  );
+}
+
+async function removeVorkenFindings(analysisId) {
+  await pool.query(
+    `DELETE FROM scan_findings
+     WHERE analysis_id=$1
+       AND (
+         LOWER(COALESCE(artifact_value, '')) LIKE '%vorken%'
+         OR LOWER(COALESCE(evidence::text, '')) LIKE '%vorken%'
+       )`,
+    [analysisId]
+  );
+}
+
+
+const LEARNED_FILE_EXTENSIONS =
+  /\.(exe|zip|dll|sys|msi|com|scr|bat|cmd|ps1|rar|7z)$/i;
+
+let learnedTrustedArtifactCache = {
+  expiresAt: 0,
+  signatures: new Set(),
+};
+
+function learnedArtifactFileName(
+  artifactValue,
+  evidence = {}
+) {
+  const candidates = [
+    evidence?.fileName,
+    evidence?.recoveredFileName,
+    evidence?.executableName,
+    evidence?.name,
+    evidence?.targetPath,
+    evidence?.currentPath,
+    evidence?.originalPath,
+    evidence?.path,
+    evidence?.fullPath,
+    evidence?.executablePath,
+    evidence?.processPath,
+    artifactValue,
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    const raw =
+      String(candidate || "")
+        .trim();
+
+    if (!raw)
+      continue;
+
+    let decoded = raw;
+
+    try {
+      const parsed =
+        new URL(raw);
+
+      decoded =
+        decodeURIComponent(
+          parsed.pathname
+        );
+    } catch {
+    }
+
+    const clean =
+      decoded
+        .replaceAll("/", "\\")
+        .replace(/^["']+|["']+$/g, "")
+        .split("\\")
+        .filter(Boolean)
+        .at(-1) || "";
+
+    const match =
+      clean.match(
+        /([^\\/:*?"<>|]+\.(?:exe|zip|dll|sys|msi|com|scr|bat|cmd|ps1|rar|7z))\b/i
+      );
+
+    if (match?.[1])
+      return String(match[1]).toLowerCase();
+  }
+
+  return "";
+}
+
+function learnedArtifactSha256(
+  evidence = {}
+) {
+  const direct = [
+    evidence?.sha256,
+    evidence?.sha256Hash,
+    evidence?.fileSha256,
+    evidence?.hash,
+    evidence?.hashes?.sha256,
+    evidence?.fileHashes?.sha256,
+  ];
+
+  for (const value of direct) {
+    const normalized =
+      String(value || "")
+        .trim()
+        .toLowerCase();
+
+    if (/^[a-f0-9]{64}$/.test(normalized))
+      return normalized;
+  }
+
+  return "";
+}
+
+function normalizedLearnedIdentity(value) {
+  return String(value || "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .slice(0, 180);
+}
+
+function learnedSignedPublisher(evidence = {}) {
+  const candidates = [
+    evidence,
+    ...safeArray(evidence?.executionSources)
+      .map((item) => item?.raw)
+      .filter(Boolean),
+    ...safeArray(evidence?.fileEvidence),
+  ];
+
+  for (const item of candidates) {
+    const signed =
+      item?.signed === true ||
+      item?.signatureValid === true;
+
+    if (!signed)
+      continue;
+
+    const publisher = normalizedLearnedIdentity(
+      item?.signerSubject ||
+      item?.publisher ||
+      item?.companyName
+    );
+
+    if (publisher.length >= 4)
+      return publisher;
+  }
+
+  return "";
+}
+
+function isCatalogProtectedArtifact(
+  artifactType,
+  artifactValue,
+  evidence = {}
+) {
+  if (
+    evidence?.knownCheatDomain === true ||
+    evidence?.directCatalogMatch === true ||
+    Boolean(evidence?.catalogMatch) ||
+    (
+      Array.isArray(evidence?.catalogMatches) &&
+      evidence.catalogMatches.length > 0
+    )
+  ) {
+    return true;
+  }
+
+  const values = [
+    artifactValue,
+    evidence?.url,
+    evidence?.sourceUrl,
+    evidence?.finalUrl,
+    evidence?.pageUrl,
+    evidence?.siteUrl,
+    evidence?.referrerUrl,
+    evidence?.recoveredUrl,
+    evidence?.fileName,
+    evidence?.recoveredFileName,
+    evidence?.executableName,
+    evidence?.name,
+    evidence?.targetPath,
+    evidence?.currentPath,
+    evidence?.originalPath,
+    evidence?.path,
+    evidence?.fullPath,
+    evidence?.executablePath,
+    evidence?.processPath,
+    evidence?.processName,
+  ].filter(Boolean);
+
+  return findRustCatalogMatches(values).length > 0;
+}
+
+function learnedArtifactSignatures(
+  artifactType,
+  artifactValue,
+  evidence = {},
+  { forLearning = false } = {}
+) {
+  // Evidência correlacionada/realmente executada e histórico do Defender
+  // nunca podem ser neutralizados pelo auto-aprendizado. A mera presença de
+  // APIs de injeção, sem execução, pode ser aprendida como falso positivo.
+  if (
+    isArtifactProtectedFromLearning(
+      artifactType,
+      evidence
+    )
+  ) {
+    return [];
+  }
+
+  // Catálogo de cheats/sites/apps sempre vence o auto-aprendizado.
+  if (
+    isCatalogProtectedArtifact(
+      artifactType,
+      artifactValue,
+      evidence
+    )
+  ) {
+    return [];
+  }
+
+  // Discord EXE/ZIP real permanece prioridade máxima e nunca é aprendido.
+  if (
+    isAllowedDiscordExecutableOrZipDownload(
+      evidence,
+      artifactValue
+    )
+  ) {
+    return [];
+  }
+
+  const fileName =
+    learnedArtifactFileName(
+      artifactValue,
+      evidence
+    );
+
+  if (
+    !fileName ||
+    !LEARNED_FILE_EXTENSIONS.test(fileName)
+  ) {
+    return [];
+  }
+
+  const sha256 =
+    learnedArtifactSha256(evidence);
+
+  const signedPublisher =
+    learnedSignedPublisher(evidence);
+
+  const signatures = [];
+
+  if (sha256)
+    signatures.push("sha256:" + sha256);
+
+  if (signedPublisher)
+    signatures.push("signed-publisher:" + signedPublisher);
+
+  // Nome é apenas a identidade de último recurso. Quando há hash ou editor
+  // verificado, confiar só no nome permitiria que outro binário herdasse a
+  // confiança após ser renomeado.
+  if (!forLearning || (!sha256 && !signedPublisher))
+    signatures.push("name:" + fileName);
+
+  return [
+    ...new Set(signatures),
+  ];
+}
+
+async function getLearnedTrustedSignatures(
+  force = false
+) {
+  if (
+    !force &&
+    learnedTrustedArtifactCache.expiresAt >
+      Date.now()
+  ) {
+    return learnedTrustedArtifactCache.signatures;
+  }
+
+  const result =
+    await pool.query(
+      `SELECT signature
+       FROM learned_trusted_artifacts
+       WHERE enabled=TRUE`
+    );
+
+  const signatures =
+    new Set(
+      result.rows
+        .map((row) =>
+          String(row.signature || "")
+        )
+        .filter(Boolean)
+    );
+
+  learnedTrustedArtifactCache = {
+    expiresAt:
+      Date.now() + 30000,
+    signatures,
+  };
+
+  return signatures;
+}
+
+function invalidateLearnedTrustedArtifacts() {
+  learnedTrustedArtifactCache = {
+    expiresAt: 0,
+    signatures: new Set(),
+  };
+}
+
+async function isLearnedTrustedArtifact(
+  artifactType,
+  artifactValue,
+  evidence = {}
+) {
+  const candidates =
+    learnedArtifactSignatures(
+      artifactType,
+      artifactValue,
+      evidence
+    );
+
+  if (!candidates.length)
+    return false;
+
+  const trusted =
+    await getLearnedTrustedSignatures();
+
+  return candidates.some((signature) =>
+    trusted.has(signature)
+  );
+}
+
+async function learnAnalysisArtifacts(
+  analysisId,
+  reason,
+  {
+    includeIds = null,
+    excludeIds = [],
+  } = {}
+) {
+  const included = Array.isArray(includeIds)
+    ? [...new Set(includeIds.map(Number).filter(Number.isInteger))]
+    : null;
+  const excluded = [...new Set(
+    safeArray(excludeIds).map(Number).filter(Number.isInteger)
+  )];
+
+  if (included && included.length === 0)
+    return 0;
+
+  const result =
+    await pool.query(
+      `SELECT
+         id,
+         severity,
+         artifact_type,
+         artifact_value,
+         evidence
+       FROM scan_findings
+       WHERE analysis_id=$1
+         AND severity IN ('critical','high','medium')
+         AND ($2::bigint[] IS NULL OR id = ANY($2::bigint[]))
+         AND NOT (id = ANY($3::bigint[]))
+       ORDER BY id ASC`,
+      [analysisId, included, excluded]
+    );
+
+  let learned = 0;
+
+  for (const finding of result.rows) {
+    const evidence =
+      finding.evidence &&
+      typeof finding.evidence === "object"
+        ? finding.evidence
+        : {};
+
+    const signatures =
+      learnedArtifactSignatures(
+        finding.artifact_type,
+        finding.artifact_value,
+        evidence,
+        { forLearning: true }
+      );
+
+    if (!signatures.length)
+      continue;
+
+    const fileName =
+      learnedArtifactFileName(
+        finding.artifact_value,
+        evidence
+      );
+
+    const sha256 =
+      learnedArtifactSha256(evidence);
+
+    for (const signature of signatures) {
+      await pool.query(
+        `INSERT INTO learned_trusted_artifacts(
+           signature,
+           signature_type,
+           file_name,
+           sha256,
+           artifact_type,
+           artifact_value,
+           source_analysis_id,
+           source_reason
+         )
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+         ON CONFLICT (signature)
+         DO UPDATE SET
+           enabled=TRUE,
+           learned_count=
+             learned_trusted_artifacts.learned_count + 1,
+           source_analysis_id=EXCLUDED.source_analysis_id,
+           source_reason=EXCLUDED.source_reason,
+           artifact_type=EXCLUDED.artifact_type,
+           artifact_value=EXCLUDED.artifact_value,
+           file_name=EXCLUDED.file_name,
+           sha256=CASE
+             WHEN EXCLUDED.sha256 <> ''
+               THEN EXCLUDED.sha256
+             ELSE learned_trusted_artifacts.sha256
+           END,
+           updated_at=NOW()`,
+        [
+          signature,
+          signature.startsWith("sha256:")
+            ? "sha256"
+            : signature.startsWith("signed-publisher:")
+              ? "signed_publisher"
+              : "file_name",
+          fileName,
+          sha256,
+          String(finding.artifact_type || ""),
+          String(finding.artifact_value || "").slice(0, 2000),
+          analysisId,
+          cleanText(reason, 500),
+        ]
+      );
+
+      learned++;
+    }
+  }
+
+  if (learned > 0)
+    invalidateLearnedTrustedArtifacts();
+
+  return learned;
+}
+
+async function revokeLearnedTrustForFindings(
+  analysisId,
+  findingIds
+) {
+  const ids = [...new Set(
+    safeArray(findingIds).map(Number).filter(Number.isInteger)
+  )];
+
+  if (!ids.length)
+    return 0;
+
+  const result = await pool.query(
+    `SELECT artifact_type, artifact_value, evidence
+     FROM scan_findings
+     WHERE analysis_id=$1
+       AND id = ANY($2::bigint[])`,
+    [analysisId, ids]
+  );
+
+  const signatures = [...new Set(
+    result.rows.flatMap((finding) =>
+      learnedArtifactSignatures(
+        finding.artifact_type,
+        finding.artifact_value,
+        finding.evidence || {}
+      )
+    )
+  )];
+
+  if (!signatures.length)
+    return 0;
+
+  const disabled = await pool.query(
+    `UPDATE learned_trusted_artifacts
+     SET enabled=FALSE,
+         updated_at=NOW()
+     WHERE signature = ANY($1::text[])
+       AND enabled=TRUE
+     RETURNING id`,
+    [signatures]
+  );
+
+  if (disabled.rows.length > 0)
+    invalidateLearnedTrustedArtifacts();
+
+  return disabled.rows.length;
+}
+
+async function disableLearnedArtifactsNowInCatalog() {
+  const result =
+    await pool.query(
+      `SELECT
+         id,
+         signature,
+         file_name,
+         artifact_value
+       FROM learned_trusted_artifacts
+       WHERE enabled=TRUE`
+    );
+
+  const disableIds = [];
+
+  for (const row of result.rows) {
+    const matches =
+      findRustCatalogMatches(
+        row.file_name,
+        row.artifact_value
+      );
+
+    if (matches.length > 0)
+      disableIds.push(Number(row.id));
+  }
+
+  if (disableIds.length > 0) {
+    await pool.query(
+      `UPDATE learned_trusted_artifacts
+       SET enabled=FALSE,
+           updated_at=NOW()
+       WHERE id = ANY($1::bigint[])`,
+      [disableIds]
+    );
+
+    invalidateLearnedTrustedArtifacts();
+  }
+
+  console.log(
+    "Proteção do catálogo aplicada à base aprendida:",
+    {
+      disabledLearnedArtifacts: disableIds.length,
+    }
+  );
+
+  return disableIds.length;
+}
+
+async function backfillPreviouslyApprovedAnalyses() {
+  const migrationKey =
+    "learned_trust_from_historic_approvals_v1";
+
+  const alreadyDone =
+    await pool.query(
+      `SELECT 1
+       FROM vorken_migrations
+       WHERE migration_key=$1
+       LIMIT 1`,
+      [migrationKey]
+    );
+
+  if (alreadyDone.rows.length > 0)
+    return {
+      skipped: true,
+      analyses: 0,
+      signatures: 0,
+    };
+
+  const approved =
+    await pool.query(
+      `SELECT
+         a.id
+       FROM analyses a
+       WHERE a.external_decision='approve'
+         AND a.external_source IS DISTINCT FROM 'vorken'
+         AND EXISTS (
+           SELECT 1
+           FROM scan_findings sf
+           WHERE sf.analysis_id=a.id
+             AND sf.severity IN ('critical','high','medium')
+         )
+       ORDER BY a.id ASC`
+    );
+
+  let signatures = 0;
+  let analyses = 0;
+
+  for (const row of approved.rows) {
+    try {
+      const learned =
+        await learnAnalysisArtifacts(
+          Number(row.id),
+          "Backfill automático: análise já liberada anteriormente pela administração."
+        );
+
+      signatures += Number(learned || 0);
+      analyses++;
+    } catch (error) {
+      console.error(
+        "Falha ao importar análise liberada antiga para aprendizado:",
+        {
+          analysisId: row.id,
+          message: error?.message,
+          code: error?.code,
+        }
+      );
+    }
+  }
+
+  await pool.query(
+    `INSERT INTO vorken_migrations(
+       migration_key,
+       details
+     )
+     VALUES ($1,$2::jsonb)
+     ON CONFLICT (migration_key)
+     DO NOTHING`,
+    [
+      migrationKey,
+      JSON.stringify({
+        approvedAnalysesProcessed: analyses,
+        learnedSignatures: signatures,
+        completedAt: new Date().toISOString(),
+      }),
+    ]
+  );
+
+  if (signatures > 0)
+    invalidateLearnedTrustedArtifacts();
+
+  console.log(
+    "Backfill de falsos positivos concluído:",
+    { analyses, signatures }
+  );
+
+  return {
+    skipped: false,
+    analyses,
+    signatures,
+  };
+}
+
+async function applyManualDetectionRules(
+  analysisId,
+  report
+) {
+  const rulesResult =
+    await pool.query(
+      `SELECT id, name, type, pattern, severity, description
+       FROM detection_rules
+       WHERE enabled = TRUE
+       ORDER BY id ASC`
+    );
+
+  const rules =
+    Array.isArray(rulesResult.rows)
+      ? rulesResult.rows
+      : [];
+
+  if (!rules.length)
+    return {
+      matchedArtifacts: 0,
+      appliedRules: 0,
+    };
+
+  const artifacts =
+    flattenArtifacts(report);
+
+  let matchedArtifacts = 0;
+  const appliedRuleIds = new Set();
+
+  for (const rule of rules) {
+    const selectedSeverity =
+      normalizeSeverity(rule.severity);
+
+    for (const artifact of artifacts) {
+      if (!matchesRule(rule, artifact))
+        continue;
+
+      const artifactValue =
+        String(artifact.value || "")
+          .slice(0, 2000);
+
+      if (!artifactValue)
+        continue;
+
+      matchedArtifacts += 1;
+      appliedRuleIds.add(Number(rule.id));
+
+      const manualEvidence = {
+        ...(artifact.evidence || {}),
+        manualRule: true,
+        manualRuleOverride: true,
+        manualRuleId: Number(rule.id),
+        manualRuleName: String(rule.name || ""),
+        manualRuleType: String(rule.type || ""),
+        manualRulePattern: String(rule.pattern || ""),
+        manualRuleSeverity: selectedSeverity,
+        manualRuleDescription:
+          String(rule.description || ""),
+        classificationSource:
+          "manual_admin_rule",
+        confidence:
+          selectedSeverity === "critical"
+            ? "high"
+            : selectedSeverity === "high"
+              ? "high"
+              : selectedSeverity === "medium"
+                ? "medium"
+                : "low",
+        note:
+          rule.description ||
+          "Regra manual configurada pela administração. A severidade selecionada nesta regra prevalece sobre pesos, caps e classificações automáticas para este artefato.",
+      };
+
+      // If the automatic engine already created a card for this exact artifact,
+      // convert that card to the manual rule instead of leaving two severities
+      // competing for the same evidence.
+      const updated =
+        await pool.query(
+          `UPDATE scan_findings
+           SET rule_id=$3,
+               title=$4,
+               severity=$5,
+               evidence=$6::jsonb
+           WHERE analysis_id=$1
+             AND LOWER(TRIM(artifact_value)) =
+                 LOWER(TRIM($2))
+           RETURNING id`,
+          [
+            analysisId,
+            artifactValue,
+            Number(rule.id),
+            String(rule.name || "Regra manual"),
+            selectedSeverity,
+            JSON.stringify(manualEvidence),
+          ]
+        );
+
+      if (updated.rowCount > 0)
+        continue;
+
+      // No automatic finding existed for the matched raw artifact. Insert a
+      // dedicated manual finding directly, bypassing insertReviewFinding so
+      // no automatic severity cap, allowlist or learned trust can alter it.
+      await pool.query(
+        `INSERT INTO scan_findings(
+           analysis_id,
+           rule_id,
+           title,
+           severity,
+           artifact_type,
+           artifact_value,
+           evidence
+         )
+         SELECT
+           $1,$2,$3,$4,$5,$6,$7::jsonb
+         WHERE NOT EXISTS (
+           SELECT 1
+           FROM scan_findings
+           WHERE analysis_id=$1
+             AND rule_id=$2
+             AND artifact_type=$5
+             AND LOWER(TRIM(artifact_value)) =
+                 LOWER(TRIM($6))
+         )`,
+        [
+          analysisId,
+          Number(rule.id),
+          String(rule.name || "Regra manual"),
+          selectedSeverity,
+          String(artifact.type || "manual_rule"),
+          artifactValue,
+          JSON.stringify(manualEvidence),
+        ]
+      );
+    }
+  }
+
+  return {
+    matchedArtifacts,
+    appliedRules:
+      appliedRuleIds.size,
+  };
+}
+
+async function rebuildFindings(analysisId, report) {
+  await pool.query(
+    `UPDATE analyses
+     SET processing_stage='normal_filter',
+         processing_message='Aplicando filtros técnicos e correlacionando evidências...'
+     WHERE id=$1`,
+    [analysisId]
+  );
+
+  await pool.query("DELETE FROM scan_findings WHERE analysis_id = $1", [analysisId]);
+
+  // Automatic engine runs first. Custom rules configured by the administrator
+  // are applied afterwards as an authoritative layer: their selected severity
+  // is used exactly as configured and is not capped/reweighted by automatic logic.
+  await runDetectionEngineV4({
+    analysisId,
+    report,
+    insertFinding: insertReviewFinding,
+    helpers: {
+      isAbsoluteTrustedCatalogArtifact,
+      isTrustedCommonAppArtifact,
+      isTrustedPortableExecutableName,
+      findRustCatalogMatches,
+      isDirectCatalogWebMatch,
+      isKnownBenignPeNoise,
+      knownCheatExecutableMatch,
+    },
+  });
+
+  await removeVorkenFindings(analysisId);
+
+  await applyManualDetectionRules(
+    analysisId,
+    report
+  );
+
+  await pool.query(
+    `UPDATE analyses
+     SET processing_stage='finalizing',
+         processing_message='Filtros automáticos e regras manuais concluídos. Preparando o resultado final...'
+     WHERE id=$1`,
+    [analysisId]
+  );
+
+  return {
+    status: "completed",
+    mode: "local_filters",
+  };
+}
+
+async function insertReviewFinding(
+  analysisId,
+  title,
+  severity,
+  artifactType,
+  artifactValue,
+  evidence
+) {
+  const normalizedValue = String(artifactValue || "").slice(0, 2000);
+
+  if (isVorkenOwnedArtifact(normalizedValue, evidence || {}))
+    return;
+
+  if (isKnownBenignPeNoise(normalizedValue))
+    return;
+
+  const protectedFinding =
+    evidence?.priorityMaximum === true ||
+    evidence?.protectedByTechnicalEngine === true ||
+    evidence?.usbExecution === true ||
+    evidence?.knownCheatDomain === true ||
+    evidence?.directCatalogMatch === true ||
+    evidence?.injectionIntoRust === true ||
+    evidence?.deletedExecutedExecutable === true ||
+    evidence?.correlatedEvidence === true ||
+    (
+      evidence?.executionConfirmed === true &&
+      (
+        evidence?.catalogMatch ||
+        (
+          Array.isArray(evidence?.catalogMatches) &&
+          evidence.catalogMatches.length > 0
+        )
+      )
+    );
+
+  const strongUnsignedInjection =
+    evidence?.executionConfirmed === true &&
+    evidence?.injectionCapability === true &&
+    evidence?.signed !== true &&
+    (
+      Array.isArray(evidence?.injectionApis) &&
+      evidence.injectionApis.length >= 2
+    );
+
+  // Evidência técnica forte não pode desaparecer por uma allowlist antiga
+  // ou por aprendizado de falso positivo. Para apps legítimos conhecidos,
+  // a regra de injeção só atravessa a allowlist quando o binário é não assinado
+  // e possui múltiplas APIs clássicas de injeção.
+  if (
+    !protectedFinding &&
+    !strongUnsignedInjection &&
+    isAbsoluteTrustedCatalogArtifact(
+      artifactType,
+      normalizedValue,
+      evidence || {}
+    )
+  ) {
+    return;
+  }
+
+  if (
+    shouldSuppressDiscordWebFinding(
+      artifactType,
+      normalizedValue,
+      evidence || {}
+    )
+  ) {
+    return;
+  }
+
+  if (
+    canApplyLearnedArtifactTrust(
+      artifactType,
+      evidence || {},
+      {
+        protectedFinding,
+        strongUnsignedInjection,
+      }
+    ) &&
+    await isLearnedTrustedArtifact(
+      artifactType,
+      normalizedValue,
+      evidence || {}
+    )
+  ) {
+    return;
+  }
+
+  if (
+    !protectedFinding &&
+    isTrustedCommonAppArtifact(
+      normalizedValue,
+      evidence || {}
+    )
+  ) {
+    return;
+  }
+
+  if (
+    !protectedFinding &&
+    isTrustedSignedSystemFinding(normalizedValue, evidence || {})
+  ) {
+    return;
+  }
+
+  const normalizedSeverity = forceInformationalFinding(
+    artifactType,
+    evidence,
+    title
+  )
+    ? "info"
+    : capFindingSeverityForArtifact(
+        severity,
+        artifactType,
+        normalizedValue,
+        evidence || {}
+      );
+
+  await pool.query(
+    `INSERT INTO scan_findings(
+       analysis_id, rule_id, title, severity, artifact_type, artifact_value, evidence
+     )
+     SELECT $1,NULL,$2,$3,$4,$5,$6::jsonb
+     WHERE NOT EXISTS (
+       SELECT 1
+       FROM scan_findings
+       WHERE analysis_id = $1
+         AND title = $2
+         AND artifact_type = $4
+         AND LOWER(TRIM(artifact_value)) = LOWER(TRIM($5))
+     )`,
+    [
+      analysisId,
+      title,
+      normalizedSeverity,
+      artifactType,
+      normalizedValue,
+      JSON.stringify(evidence || {}),
+    ]
+  );
+}
+
+async function downgradeUnexecutedExeFindings(analysisId, report) {
+  const normalize = (value) =>
+    String(value || "")
+      .replaceAll("/", "\\")
+      .toLowerCase()
+      .trim();
+
+  const baseName = (value) => {
+    const normalized = normalize(value);
+    const parts = normalized.split("\\").filter(Boolean);
+    return parts.at(-1) || "";
+  };
+
+  const executedPaths = new Set();
+  const executedNames = new Set();
+
+  const remember = (...values) => {
+    for (const raw of values.flat(Infinity)) {
+      const normalized = normalize(raw);
+      if (!normalized)
+        continue;
+
+      executedPaths.add(normalized);
+
+      const name = baseName(normalized);
+      if (name)
+        executedNames.add(name);
+    }
+  };
+
+  for (const item of report.processes || []) {
+    remember(item.path, item.name);
+  }
+
+  for (const item of report.prefetchExecutions || []) {
+    remember(
+      item.resolvedExecutablePath,
+      item.nativeExecutablePath,
+      item.executableName
+    );
+  }
+
+  for (const item of report.bam || []) {
+    remember(item.path);
+  }
+
+  for (const item of report.processCreationEvents || []) {
+    remember(item.processPath, item.processName);
+  }
+
+  const executed = (...values) =>
+    values
+      .flat(Infinity)
+      .filter((value) => value !== null && value !== undefined)
+      .some((raw) => {
+        const normalized = normalize(raw);
+        if (!normalized)
+          return false;
+
+        if (executedPaths.has(normalized))
+          return true;
+
+        const name = baseName(normalized);
+        return Boolean(name && executedNames.has(name));
+      });
+
+  const fileOnlyTypes = new Set([
+    "file",
+    "pe_inspection",
+    "browser_download",
+    "browser_recovery",
+    "usn_delete",
+    "recycle_bin",
+    "unknown_app",
+    "hash_reputation",
+    "zone_identifier"
+  ]);
+
+  const findings = await pool.query(
+    `SELECT id, title, severity, artifact_type, artifact_value, evidence
+     FROM scan_findings
+     WHERE analysis_id = $1
+       AND severity IN ('high','critical')`,
+    [analysisId]
+  );
+
+  for (const finding of findings.rows) {
+    if (!fileOnlyTypes.has(String(finding.artifact_type || "")))
+      continue;
+
+    const evidence = finding.evidence || {};
+
+    if (
+      evidence.priorityMaximum === true ||
+      evidence.deletedSuspiciousExecutable === true
+    )
+      continue;
+
+    const candidates = [
+      finding.artifact_value,
+      evidence.name,
+      evidence.fileName,
+      evidence.path,
+      evidence.targetPath,
+      evidence.currentPath,
+      evidence.originalPath,
+      evidence.recoveredFileName
+    ].filter(Boolean);
+
+    const exeCandidate = candidates.some((value) =>
+      /\.exe(?:$|[?#])/i.test(String(value || "").trim()));
+
+    if (!exeCandidate || executed(candidates))
+      continue;
+
+    const updatedEvidence = {
+      ...evidence,
+      originalSeverity: finding.severity,
+      executionConfirmed: false,
+      executionGate: "catalog_or_file_only",
+      note:
+        "Arquivo EXE identificado por catálogo/reputação/artefato, mas sem evidência independente de execução no PC. Mantido apenas como catálogo/inventário azul."
+    };
+
+    await pool.query(
+      `UPDATE scan_findings
+       SET severity = 'info',
+           evidence = $2::jsonb
+       WHERE id = $1`,
+      [finding.id, JSON.stringify(updatedEvidence)]
+    );
+  }
+}
+
+
+function executableNameFromFinding(finding) {
+  const evidence =
+    finding?.evidence &&
+    typeof finding.evidence === "object"
+      ? finding.evidence
+      : {};
+
+  const candidates = [
+    evidence.fileName,
+    evidence.name,
+    evidence.executableName,
+    evidence.processName,
+    evidence.path,
+    evidence.fullPath,
+    evidence.targetPath,
+    evidence.currentPath,
+    evidence.originalPath,
+    evidence.recoveredFileName,
+    finding?.artifact_value,
+  ].filter(Boolean);
+
+  for (const raw of candidates) {
+    const name =
+      windowsBaseName(raw)
+        .replace(/[?#].*$/, "")
+        .trim();
+
+    if (/\.exe$/i.test(name))
+      return name;
+  }
+
+  return "";
+}
+
+async function consolidateExecutableEvidence(
+  analysisId
+) {
+  const result =
+    await pool.query(
+      `SELECT
+         id,
+         title,
+         severity,
+         artifact_type,
+         artifact_value,
+         evidence
+       FROM scan_findings
+       WHERE analysis_id=$1
+         AND severity IN ('critical','high','medium')
+       ORDER BY id ASC`,
+      [analysisId]
+    );
+
+  const groups = new Map();
+
+  for (const finding of result.rows) {
+    const executableName =
+      executableNameFromFinding(finding);
+
+    if (!executableName)
+      continue;
+
+    const key =
+      executableName.toLowerCase();
+
+    if (!groups.has(key))
+      groups.set(key, {
+        executableName,
+        findings: [],
+      });
+
+    groups.get(key).findings.push(finding);
+  }
+
+  for (const group of groups.values()) {
+    if (group.findings.length < 2)
+      continue;
+
+    let execution = false;
+    let deletedOrMissing = false;
+    let usb = false;
+    let injection = false;
+    let mouseInput = false;
+    let catalog = false;
+
+    const sourceTypes = new Set();
+
+    for (const finding of group.findings) {
+      const evidence =
+        finding.evidence &&
+        typeof finding.evidence === "object"
+          ? finding.evidence
+          : {};
+
+      sourceTypes.add(
+        String(finding.artifact_type || "")
+      );
+
+      execution =
+        execution ||
+        evidence.executionConfirmed === true ||
+        ["bam", "prefetch_execution", "process_history"]
+          .includes(String(finding.artifact_type || ""));
+
+      deletedOrMissing =
+        deletedOrMissing ||
+        evidence.deletedExecutedExecutable === true ||
+        evidence.deletedSuspiciousExecutable === true ||
+        evidence.fileExists === false ||
+        evidence.executablePresent === false ||
+        ["usn_delete", "recycle_bin"]
+          .includes(String(finding.artifact_type || ""));
+
+      usb =
+        usb ||
+        evidence.usbExecution === true ||
+        evidence.currentRemovable === true ||
+        evidence.correlatedUsbExecutionByName === true ||
+        String(evidence.driveType || "")
+          .toLowerCase() === "removable";
+
+      injection =
+        injection ||
+        evidence.injectionCapability === true ||
+        (
+          Array.isArray(evidence.injectionApis) &&
+          evidence.injectionApis.length >= 2
+        );
+
+      mouseInput =
+        mouseInput ||
+        evidence.recoilInputApi === true;
+
+      catalog =
+        catalog ||
+        evidence.knownCheatDomain === true ||
+        evidence.directCatalogMatch === true ||
+        Boolean(evidence.catalogMatch) ||
+        (
+          Array.isArray(evidence.catalogMatches) &&
+          evidence.catalogMatches.length > 0
+        );
+    }
+
+    const strong =
+      usb ||
+      injection ||
+      mouseInput ||
+      catalog ||
+      (
+        execution &&
+        deletedOrMissing
+      );
+
+    if (!strong)
+      continue;
+
+    let title =
+      "Evidência correlacionada: executável suspeito";
+
+    if (usb)
+      title =
+        "PRIORIDADE MÁXIMA: EXE executado em pendrive/USB";
+    else if (
+      injection &&
+      execution &&
+      deletedOrMissing
+    )
+      title =
+        "PRIORIDADE MÁXIMA: injector executado e depois apagado";
+    else if (injection)
+      title =
+        "PRIORIDADE MÁXIMA: executável com capacidade de injeção";
+    else if (
+      execution &&
+      deletedOrMissing
+    )
+      title =
+        "PRIORIDADE MÁXIMA: EXE executado e depois apagado/ausente";
+    else if (
+      catalog &&
+      execution
+    )
+      title =
+        "PRIORIDADE MÁXIMA: executável catalogado com execução confirmada";
+    else if (catalog)
+      title =
+        "PRIORIDADE MÁXIMA: executável correspondente ao catálogo";
+    else if (mouseInput)
+      title =
+        "PRIORIDADE MÁXIMA: automação de mouse/input em executável não confiável";
+
+    const sourceFindings =
+      group.findings
+        .slice(0, 16)
+        .map((finding) => ({
+          id: Number(finding.id),
+          title: finding.title,
+          severity: finding.severity,
+          artifactType:
+            finding.artifact_type,
+          artifactValue:
+            finding.artifact_value,
+        }));
+
+    const sourceIds =
+      group.findings
+        .map((finding) => Number(finding.id))
+        .filter(Number.isInteger);
+
+    await pool.query(
+      `DELETE FROM scan_findings
+       WHERE analysis_id=$1
+         AND id = ANY($2::bigint[])`,
+      [analysisId, sourceIds]
+    );
+
+    await pool.query(
+      `INSERT INTO scan_findings(
+         analysis_id,
+         rule_id,
+         title,
+         severity,
+         artifact_type,
+         artifact_value,
+         evidence
+       )
+       VALUES (
+         $1,
+         NULL,
+         $2,
+         'critical',
+         'correlated_executable',
+         $3,
+         $4::jsonb
+       )`,
+      [
+        analysisId,
+        title,
+        group.executableName,
+        JSON.stringify({
+          correlatedEvidence: true,
+          priorityMaximum: true,
+          protectedByTechnicalEngine: true,
+          executableName:
+            group.executableName,
+          executionConfirmed: execution,
+          deletedOrMissing,
+          usbExecution: usb,
+          injectionCapability: injection,
+          recoilInputApi: mouseInput,
+          catalogMatchPresent: catalog,
+          sourceCount:
+            sourceFindings.length,
+          sourceTypes:
+            [...sourceTypes],
+          sourceFindings,
+          confidence: "high",
+          note:
+            "O Vorken correlacionou múltiplas fontes forenses referentes ao mesmo executável. O cartão consolidado substitui alertas duplicados sem remover os detalhes das fontes da evidência auditável."
+        }),
+      ]
+    );
+  }
+}
+
+async function addBuiltInReviewFindings(analysisId, report) {
+  for(const finding of criticalHardwareFindings(report))await insertReviewFinding(analysisId,finding.title,"critical",finding.artifactType,finding.artifactValue,finding.evidence);
+  const now = Date.now();
+
+  const ageDays = (value) => {
+    if (!value) return Number.POSITIVE_INFINITY;
+    const ms = new Date(value).getTime();
+    return Number.isFinite(ms)
+      ? (now - ms) / 86400000
+      : Number.POSITIVE_INFINITY;
+  };
+
+  const normalizePath = (value) =>
+    String(value || "")
+      .replaceAll("/", "\\")
+      .toLowerCase();
+
+  const isTrustedInstalledPath = (value) => {
+    const p = normalizePath(value);
+
+    return (
+      p.includes("\\windows\\") ||
+      p.includes("\\program files\\") ||
+      p.includes("\\program files (x86)\\") ||
+      p.includes("\\steam\\steamapps\\common\\") ||
+      p.includes("\\steamapps\\common\\")
+    );
+  };
+
+  const isSuspiciousUserPath = (value) => {
+    const p = normalizePath(value);
+
+    return (
+      p.includes("\\appdata\\local\\temp\\") ||
+      p.includes("\\temp\\") ||
+      p.includes("\\downloads\\") ||
+      p.includes("\\desktop\\")
+    );
+  };
+
+  const isVolumeRootExecutable = (value) => {
+    const p = normalizePath(value);
+    return /^\\volume\{[^}]+\}\\[^\\]+\.(exe|com|scr)$/i.test(p);
+  };
+
+  const fileName = (value) => {
+    const p = normalizePath(value);
+    const parts = p.split("\\").filter(Boolean);
+    return parts.at(-1) || "";
+  };
+
+  const isTrustedExecutableCandidate = (value) => {
+    const candidatePath = normalizePath(value);
+    const candidateName = fileName(candidatePath);
+
+    if (!candidateName)
+      return false;
+
+    if (
+      isKnownBenignPeNoise(candidateName) ||
+      isVorkenOwnedArtifact(candidatePath) ||
+      isTrustedPortableExecutableName(candidateName)
+    )
+      return true;
+
+    return (report.files || []).some((item) => {
+      const itemPath = normalizePath(item.path || item.name);
+      const itemName = fileName(itemPath);
+
+      if (
+        itemName !== candidateName &&
+        itemPath !== candidatePath
+      ) {
+        return false;
+      }
+
+      return item.signed === true;
+    });
+  };
+
+  // Keep file reputation/catalog matches separate from proof of execution.
+  // A file being present, downloaded, deleted or named like a catalog entry
+  // is not execution evidence by itself.
+  const executedPaths = new Set();
+  const executedNames = new Set();
+
+  const rememberExecution = (...values) => {
+    for (const raw of values.flat(Infinity)) {
+      const normalized = normalizePath(raw);
+      if (!normalized)
+        continue;
+
+      executedPaths.add(normalized);
+
+      const name = fileName(normalized);
+      if (name)
+        executedNames.add(name);
+    }
+  };
+
+  for (const item of report.processes || []) {
+    rememberExecution(item.path, item.name);
+  }
+
+  for (const item of report.prefetchExecutions || []) {
+    rememberExecution(
+      item.resolvedExecutablePath,
+      item.nativeExecutablePath,
+      item.executableName
+    );
+  }
+
+  for (const item of report.bam || []) {
+    rememberExecution(item.path);
+  }
+
+  for (const item of report.processCreationEvents || []) {
+    rememberExecution(item.processPath, item.processName);
+  }
+
+  const hasExecutionEvidence = (...values) =>
+    values
+      .flat(Infinity)
+      .filter((value) => value !== null && value !== undefined)
+      .some((raw) => {
+        const normalized = normalizePath(raw);
+        if (!normalized)
+          return false;
+
+        if (executedPaths.has(normalized))
+          return true;
+
+        const name = fileName(normalized);
+        return Boolean(name && executedNames.has(name));
+      });
+
+  const isExeCandidate = (...values) =>
+    values
+      .flat(Infinity)
+      .filter(Boolean)
+      .some((value) =>
+        /\.exe(?:$|[?#])/i.test(String(value || "").trim()));
+
+  const catalogFindingKeys = new Set();
+
+  const addCatalogFindings = async (artifactType, artifactValue, evidence, values) => {
+    const matches = findRustCatalogMatches(values);
+
+    for (const match of matches) {
+      const key = [
+        artifactType,
+        match.name,
+        String(artifactValue || "").toLowerCase()
+      ].join("|");
+
+      if (catalogFindingKeys.has(key))
+        continue;
+
+      catalogFindingKeys.add(key);
+
+      let catalogSeverity =
+        match.severity === "critical"
+          ? "critical"
+          : "high";
+
+      if (artifactType === "browser_history") {
+        const searched =
+          Boolean(String(evidence?.searchQuery || "").trim()) ||
+          isSearchEngineUrl(evidence?.url);
+
+        if (searched) {
+          catalogSeverity = "medium";
+        } else if (isDirectCatalogWebMatch(match, evidence)) {
+          catalogSeverity = "critical";
+        } else {
+          catalogSeverity = "medium";
+        }
+      } else if (artifactType === "browser_recovery") {
+        const recoveredUrl = evidence?.recoveredUrl || artifactValue;
+        if (isSearchEngineUrl(recoveredUrl)) {
+          catalogSeverity = "medium";
+        } else if (isDirectCatalogWebMatch(match, evidence)) {
+          catalogSeverity = "critical";
+        } else {
+          catalogSeverity = "medium";
+        }
+      } else if (artifactType === "browser_download") {
+        catalogSeverity = isDirectCatalogWebMatch(match, evidence)
+          ? "critical"
+          : "high";
+      }
+
+      const directCatalogPriority =
+        ["browser_history", "browser_recovery", "browser_download"]
+          .includes(artifactType) &&
+        isDirectCatalogWebMatch(match, evidence) &&
+        !shouldSuppressDiscordWebFinding(
+          artifactType,
+          artifactValue,
+          evidence
+        );
+
+      const fileLikeArtifact =
+        ["file", "browser_download", "usn_delete", "recycle_bin"]
+          .includes(artifactType);
+
+      const catalogExePriority =
+        fileLikeArtifact &&
+        isExeCandidate(
+          artifactValue,
+          values,
+          evidence?.name,
+          evidence?.fileName,
+          evidence?.path,
+          evidence?.targetPath,
+          evidence?.currentPath,
+          evidence?.originalPath
+        );
+
+      const unexecutedExe =
+        catalogExePriority &&
+        !hasExecutionEvidence(
+          artifactValue,
+          values,
+          evidence?.name,
+          evidence?.fileName,
+          evidence?.path,
+          evidence?.targetPath,
+          evidence?.currentPath,
+          evidence?.originalPath
+        );
+
+      // Executável .exe que corresponde diretamente ao catálogo de cheat/app
+      // conhecido é sempre crítico, mesmo sem execução confirmada.
+      if (catalogExePriority) {
+        catalogSeverity = "critical";
+      } else if (unexecutedExe && !directCatalogPriority) {
+        catalogSeverity = "info";
+      }
+
+      await insertReviewFinding(
+        analysisId,
+        "Catálogo Rust: " + match.name,
+        catalogSeverity,
+        artifactType,
+        artifactValue || match.name,
+        {
+          ...evidence,
+          catalogMatch: match,
+          priorityMaximum:
+            directCatalogPriority ||
+            catalogExePriority,
+          protectedByTechnicalEngine:
+            directCatalogPriority ||
+            catalogExePriority ||
+            ["prefetch_execution", "process_history", "bam"].includes(artifactType),
+          executionConfirmed:
+            ["prefetch_execution", "process_history", "bam"].includes(artifactType),
+          directCatalogPriority,
+          confidence:
+            catalogSeverity === "info"
+              ? "info"
+              : catalogSeverity === "medium"
+                ? "medium"
+                : "high",
+          note:
+            catalogExePriority
+              ? "O arquivo .exe corresponde diretamente ao catálogo de cheat/app conhecido. Executáveis catalogados são classificados como críticos mesmo sem execução confirmada."
+              : unexecutedExe
+                ? "O arquivo corresponde ao catálogo, mas não há evidência de execução no PC. Mantido apenas como catálogo/inventário azul."
+                : artifactType === "browser_history" && (
+              Boolean(String(evidence?.searchQuery || "").trim()) ||
+              isSearchEngineUrl(evidence?.url)
+            )
+              ? "A ocorrência veio de uma pesquisa em mecanismo de busca. É sinal para revisão, não prova de acesso direto ao site."
+              : artifactType === "browser_recovery" && isSearchEngineUrl(evidence?.recoveredUrl || artifactValue)
+                ? "Vestígio recuperado de uma pesquisa em mecanismo de busca. Mantido como ocorrência média, não como acesso direto."
+                : "Nome, domínio ou convite público associado a software/comunidade de cheat/script para Rust foi encontrado em evidência direta e deve ser revisado no contexto completo.",
+        }
+      );
+    }
+  };
+
+  for (const item of report.files || []) {
+    await addCatalogFindings(
+      "file",
+      item.path || item.name,
+      item,
+      [item.name, item.path, item.archiveEntries]
+    );
+  }
+
+  for (const item of report.browserDownloads || []) {
+    await addCatalogFindings(
+      "browser_download",
+      item.targetPath || item.fileName || item.sourceUrl,
+      item,
+      [
+        item.fileName,
+        item.targetPath,
+        item.currentPath,
+        item.sourceUrl,
+        item.finalUrl,
+        item.pageUrl,
+        item.referrerUrl,
+        item.siteUrl
+      ]
+    );
+  }
+
+  for (const item of report.deletedUsnRecords || []) {
+    await addCatalogFindings(
+      "usn_delete",
+      item.fileName || item.volume,
+      item,
+      [item.fileName]
+    );
+  }
+
+  for (const item of report.recycleBin || []) {
+    await addCatalogFindings(
+      "recycle_bin",
+      item.originalPath || item.fileName,
+      item,
+      [item.fileName, item.originalPath, item.recycledDataPath]
+    );
+  }
+
+  for (const item of report.prefetchExecutions || []) {
+    await addCatalogFindings(
+      "prefetch_execution",
+      item.resolvedExecutablePath ||
+        item.nativeExecutablePath ||
+        item.executableName,
+      item,
+      [
+        item.executableName,
+        item.resolvedExecutablePath,
+        item.nativeExecutablePath,
+        item.prefetchFile
+      ]
+    );
+  }
+
+  for (const item of report.bam || []) {
+    await addCatalogFindings(
+      "bam",
+      item.path,
+      item,
+      [item.path]
+    );
+  }
+
+  const liveBrowserText = JSON.stringify([
+    ...(report.browserDownloads || []),
+    ...(report.browserHistorySignals || [])
+  ]).toLowerCase();
+
+  const recoveryFindingKeys = new Set();
+
+  const recoveryKey = (urlValue, fileValue) => {
+    const url = String(urlValue || "");
+    const file = String(fileValue || "").toLowerCase();
+
+    if (url && isSearchEngineUrl(url)) {
+      try {
+        const parsed = new URL(url);
+        const query =
+          parsed.searchParams.get("q") ||
+          parsed.searchParams.get("query") ||
+          parsed.searchParams.get("p") ||
+          parsed.searchParams.get("text") ||
+          "";
+        return "search|" + parsed.hostname.toLowerCase() + "|" + query.toLowerCase().trim();
+      } catch {
+      }
+    }
+
+    if (url) {
+      try {
+        const parsed = new URL(url);
+        return "url|" + parsed.hostname.toLowerCase() + "|" + parsed.pathname.toLowerCase();
+      } catch {
+      }
+    }
+
+    return "file|" + file;
+  };
+
+  for (const item of report.browserRecoveredArtifacts || []) {
+    const recoveredUrl = String(item.recoveredUrl || "");
+    const recoveredFileName = String(item.recoveredFileName || "");
+
+    if (recoveredUrl && isKnownBenignWebHost(recoveredUrl))
+      continue;
+
+    const alreadyLive =
+      (recoveredUrl && liveBrowserText.includes(recoveredUrl.toLowerCase())) ||
+      (recoveredFileName && liveBrowserText.includes(recoveredFileName.toLowerCase()));
+
+    if (alreadyLive)
+      continue;
+
+    const key = recoveryKey(recoveredUrl, recoveredFileName);
+    if (key && recoveryFindingKeys.has(key))
+      continue;
+    if (key) recoveryFindingKeys.add(key);
+
+    // Recompute from the recovered candidate itself. Do not trust older
+    // catalogMatches produced from large raw SQLite chunks.
+    const recoveredCatalogMatches =
+      findRustCatalogMatches(recoveredUrl, recoveredFileName);
+
+    const directCatalog =
+      recoveredCatalogMatches.some((match) =>
+        isDirectCatalogWebMatch(match, {
+          recoveredUrl,
+          recoveredFileName
+        }));
+
+    const searchEngine = recoveredUrl && isSearchEngineUrl(recoveredUrl);
+    const strongTerms =
+      Array.isArray(item.matchedTerms) &&
+      item.matchedTerms.length >= 2;
+
+    const discordPayload =
+      isAllowedDiscordExecutableOrZipDownload(
+        {
+          ...item,
+          recoveredUrl,
+          recoveredFileName,
+        },
+        recoveredUrl || recoveredFileName
+      );
+
+    const discordRelated =
+      isDiscordRelatedWebEvidence(
+        {
+          ...item,
+          recoveredUrl,
+          recoveredFileName,
+        },
+        recoveredUrl || recoveredFileName
+      );
+
+    const socialFile =
+      item.socialOrigin === true &&
+      Boolean(recoveredFileName) &&
+      (
+        !discordRelated ||
+        discordPayload
+      );
+
+    let severity = "";
+    let title = "";
+
+    if (discordRelated && !discordPayload)
+      continue;
+
+    if (
+      (
+        recoveredFileName &&
+        looksRandomExecutableName(recoveredFileName)
+      ) ||
+      item.deceptiveDoubleExtension === true
+    ) {
+      severity = "critical";
+      title = "Vestígio crítico recuperado de histórico apagado";
+    } else if (directCatalog) {
+      severity = "critical";
+      title = "Acesso direto recuperado de site do catálogo Rust";
+    } else if (searchEngine && recoveredCatalogMatches.length > 0) {
+      severity = "medium";
+      title = "Pesquisa recuperada relacionada ao catálogo Rust";
+    } else if (discordPayload) {
+      severity = "critical";
+      title = "PRIORIDADE MÁXIMA: EXE/ZIP baixado do Discord recuperado do histórico";
+    } else if (socialFile) {
+      severity = "medium";
+      title = "Download/arquivo social recuperado do histórico";
+    } else if (strongTerms && searchEngine) {
+      severity = "medium";
+      title = "Pesquisa suspeita recuperada do histórico";
+    } else if (recoveredCatalogMatches.length > 0 && recoveredFileName) {
+      severity = "high";
+      title = "Arquivo recuperado relacionado ao catálogo Rust";
+    }
+
+    if (!severity)
+      continue;
+
+    await insertReviewFinding(
+      analysisId,
+      title,
+      severity,
+      "browser_recovery",
+      recoveredUrl || recoveredFileName || item.sourceArtifact || "SQLite",
+      {
+        ...item,
+        catalogMatches: recoveredCatalogMatches,
+        confidence: severity === "critical" ? "high" : "medium",
+        note:
+          searchEngine
+            ? "Vestígio recuperado de mecanismo de busca. Mantido como amarelo/médio; pesquisa não equivale a acesso direto ao site."
+            : "Vestígio recuperado de páginas SQLite/WAL/journal ainda não sobrescritas. A classificação usa apenas o candidato recuperado, sem misturar strings vizinhas."
+      }
+    );
+  }
+
+  for (const item of report.deletedUsnRecords || []) {
+    if (String(item.reason || "") !== "FILE_DELETE")
+      continue;
+
+    if (ageDays(item.timestampUtc) > 30)
+      continue;
+
+    const name = String(item.fileName || "");
+    const extension = String(item.extension || path.extname(name)).toLowerCase();
+
+    // PS1s de política/teste do Windows geravam muito ruído; comandos
+    // PowerShell realmente suspeitos continuam sendo avaliados pelo módulo
+    // próprio de histórico/eventos.
+    if (extension === ".ps1")
+      continue;
+
+    const catalogMatches = findRustCatalogMatches(name);
+    const removable =
+      String(item.driveType || "").toLowerCase() === "removable";
+
+    const executed =
+      hasExecutionEvidence(
+        name,
+        item.fileName,
+        item.originalPath,
+        item.path
+      );
+
+    const strongMatch =
+      item.deceptiveDoubleExtension === true ||
+      catalogMatches.length > 0;
+
+    const recentRandomExecutable =
+      extension === ".exe" &&
+      looksRandomExecutableName(name) &&
+      !isGenericInstallerExecutableName(name) &&
+      !hasReadableExecutableToken(name) &&
+      ageDays(item.timestampUtc) <= 3;
+
+    // DLL deletion/name alone is not a critical anti-cheat signal. Keep it
+    // available for local/human correlation, but never promote it to red/high.
+    if (extension === ".dll") {
+      if (strongMatch || removable || executed) {
+        await insertReviewFinding(
+          analysisId,
+          "DLL apagada para correlação",
+          "medium",
+          "usn_delete",
+          name || item.volume || "DLL apagada",
+          {
+            ...item,
+            catalogMatches,
+            executionConfirmed: executed,
+            confidence: "medium",
+            note: "DLL registrada pelo USN. DLL por si só não prova cheat e nunca é promovida para crítico/alto; mantida apenas para correlação com carregamento em processo, origem e outras evidências."
+          }
+        );
+      }
+      continue;
+    }
+
+    const trustedDeletedExe =
+      extension === ".exe" &&
+      (
+        isAbsoluteTrustedCatalogArtifact(
+          "usn_delete",
+          name || item.originalPath || item.path || "",
+          item
+        ) ||
+        isTrustedCommonAppArtifact(
+          name || item.originalPath || item.path || "",
+          item
+        )
+      );
+
+    if (
+      extension === ".exe" &&
+      executed &&
+      !trustedDeletedExe
+    ) {
+      await insertReviewFinding(
+        analysisId,
+        "PRIORIDADE MÁXIMA: EXE executado e depois apagado",
+        "critical",
+        "usn_delete",
+        name || item.originalPath || item.path || item.volume || "EXE apagado",
+        {
+          ...item,
+          catalogMatches,
+          priorityMaximum: true,
+          protectedByTechnicalEngine: true,
+          deletedSuspiciousExecutable: true,
+          deletedExecutedExecutable: true,
+          executionConfirmed: true,
+          confidence: "high",
+          note:
+            "O Windows possui evidência independente de execução e o USN confirma que o arquivo .exe foi apagado. Como o executável não pertence ao catálogo confiável, o Vorken classifica o achado como crítico."
+        }
+      );
+
+      continue;
+    }
+
+    const strangeDeletedExe =
+      extension === ".exe" &&
+      isStrangeDeletedExecutableName(name);
+
+    if (strangeDeletedExe) {
+      await insertReviewFinding(
+        analysisId,
+        "PRIORIDADE MÁXIMA: EXE suspeito apagado pelo USN",
+        "critical",
+        "usn_delete",
+        name || item.volume || "arquivo apagado",
+        {
+          ...item,
+          catalogMatches,
+          priorityMaximum: true,
+          protectedByTechnicalEngine: true,
+          deletedSuspiciousExecutable: true,
+          executionConfirmed: executed,
+          confidence: "high",
+          note:
+            executed
+              ? "O USN registrou a exclusão de um EXE suspeito e há evidência independente de execução. Mantido no topo."
+              : "O USN registrou a exclusão de um EXE suspeito. A prioridade máxima independe de haver evidência de execução.",
+        }
+      );
+
+      continue;
+    }
+
+    if (extension === ".exe" && !executed) {
+      if (strongMatch || recentRandomExecutable) {
+        await insertReviewFinding(
+          analysisId,
+          "PRIORIDADE MÁXIMA: EXE apagado com sinal forte",
+          "critical",
+          "usn_delete",
+          name || item.volume || "arquivo apagado",
+          {
+            ...item,
+            catalogMatches,
+            priorityMaximum: true,
+            protectedByTechnicalEngine: true,
+            deletedSuspiciousExecutable: true,
+            executionConfirmed: false,
+            confidence: "high",
+            note:
+              "O USN registrou a exclusão de um EXE com correspondência de catálogo, dupla extensão ou nome fortemente aleatório. Mantido no topo mesmo sem execução confirmada.",
+          }
+        );
+      }
+
+      continue;
+    }
+
+    if (strongMatch || recentRandomExecutable) {
+      await insertReviewFinding(
+        analysisId,
+        "Arquivo apagado recuperado pelo USN Journal",
+        strongMatch ? "critical" : "high",
+        "usn_delete",
+        name || item.volume || "arquivo apagado",
+        {
+          ...item,
+          catalogMatches,
+          confidence: strongMatch ? "high" : "medium",
+          note: strongMatch
+            ? "O NTFS registrou a exclusão e há dupla extensão ou correspondência direta com o catálogo."
+            : "Executável com nome altamente aleatório apagado nos últimos 3 dias. Mantido para revisão sem tratar nomes aleatórios antigos como detecção crítica."
+        }
+      );
+      continue;
+    }
+
+    if (removable && [".exe", ".com", ".scr", ".dll", ".msi", ".zip", ".rar", ".7z"].includes(extension)) {
+      const removableExe =
+        extension === ".exe";
+
+      await insertReviewFinding(
+        analysisId,
+        removableExe
+          ? "PRIORIDADE MÁXIMA: EXE localizado em pendrive/removível"
+          : "Arquivo apagado de dispositivo externo",
+        removableExe
+          ? "critical"
+          : "high",
+        "usn_delete",
+        name || item.volume || "arquivo apagado",
+        {
+          ...item,
+          priorityMaximum: removableExe,
+          usbExecution: removableExe && executed,
+          protectedByTechnicalEngine: removableExe,
+          executionConfirmed: executed,
+          confidence: "high",
+          note: removableExe
+            ? "O USN Journal confirma um arquivo .exe em unidade removível. Executáveis associados a pendrive/USB são tratados como críticos independentemente de allowlist ou auto-aprendizado."
+            : "O USN Journal de unidade removível registrou a exclusão de executável ou arquivo compactado."
+        }
+      );
+    }
+  }
+
+  // Vulnerable-driver reputation based on the public LOLDrivers hash catalog.
+  const vulnerableDriverIndex = await getLolDriversIndex();
+
+  if (vulnerableDriverIndex.size > 0) {
+    for (const driver of report.drivers || []) {
+      const sha256 = String(driver.sha256 || "").toLowerCase();
+      if (!/^[a-f0-9]{64}$/.test(sha256))
+        continue;
+
+      const match = vulnerableDriverIndex.get(sha256);
+      if (!match)
+        continue;
+
+      await insertReviewFinding(
+        analysisId,
+        "Driver vulnerável conhecido",
+        "critical",
+        "driver",
+        driver.resolvedPath || driver.pathName || driver.name || sha256,
+        {
+          ...driver,
+          vulnerableDriverMatch: match,
+          confidence: "high",
+          note: "O SHA-256 do driver corresponde a uma amostra pública do catálogo LOLDrivers. A presença do driver não prova uso malicioso, mas é uma evidência de alta prioridade."
+        }
+      );
+    }
+  }
+
+  // Optional multi-engine hash reputation. Only SHA-256 values are sent;
+  // files themselves are never uploaded by Vorken.
+  if (String(process.env.VIRUSTOTAL_API_KEY || "").trim()) {
+    const vtCandidates = (report.files || [])
+      .filter((item) =>
+        item.signed !== true &&
+        /^[a-f0-9]{64}$/i.test(String(item.sha256 || "")) &&
+        (
+          isSuspiciousUserPath(item.path) ||
+          looksRandomExecutableName(item.name || item.path)
+        )
+      )
+      .slice(0, 20);
+
+    for (const item of vtCandidates) {
+      const reputation = await queryVirusTotalHash(item.sha256);
+      if (!reputation?.found)
+        continue;
+
+      const malicious = Number(reputation.stats?.malicious || 0);
+      const suspicious = Number(reputation.stats?.suspicious || 0);
+
+      if (malicious <= 0 && suspicious <= 0)
+        continue;
+
+      await insertReviewFinding(
+        analysisId,
+        "Reputação multi-engine do hash",
+        malicious >= 5 ? "critical" : malicious >= 2 ? "high" : "medium",
+        "hash_reputation",
+        item.path || item.name || item.sha256,
+        {
+          ...item,
+          virusTotal: reputation,
+          confidence: malicious >= 5 ? "high" : "medium",
+          note: "Consulta opcional por SHA-256 em serviço de reputação. O Vorken enviou apenas o hash e não fez upload do arquivo."
+        }
+      );
+    }
+  }
+
+  // PE / StringExplorer-style metadata checks.
+  // PE strings/entropy alone are inventory, not detections. Promote only
+  // high-signal combinations so tools such as OpenHardwareMonitor and the
+  // Vorken agent itself do not flood the report.
+  for (const item of report.peInspections || []) {
+    const pathValue = item.path || item.name || "PE";
+
+    if (isKnownBenignPeNoise(pathValue))
+      continue;
+
+    const inputApis =
+      (Array.isArray(item.suspiciousApis)
+        ? item.suspiciousApis
+        : [])
+        .filter((api) =>
+          ["mouse_event", "SendInput"]
+            .some((needle) =>
+              String(api || "").toLowerCase() === needle.toLowerCase()
+            )
+        );
+
+    const trustedInputApp =
+      isAbsoluteTrustedCatalogArtifact(
+        "pe_inspection",
+        pathValue,
+        item
+      ) ||
+      isTrustedCommonAppArtifact(
+        pathValue,
+        item
+      ) ||
+      isTrustedMouseInputApp(
+        pathValue,
+        item
+      ) ||
+      isTrustedExecutableCandidate(pathValue);
+
+    if (inputApis.length > 0 && !trustedInputApp) {
+      await insertReviewFinding(
+        analysisId,
+        "PRIORIDADE MÁXIMA: automação de mouse/input detectada",
+        "critical",
+        "pe_inspection",
+        pathValue,
+        {
+          ...item,
+          inputApis,
+          priorityMaximum: true,
+          protectedByTechnicalEngine: true,
+          recoilInputApi: true,
+          confidence: "high",
+          note:
+            "O executável contém referência a API(s) de automação de mouse/input usada(s) por scripts de recoil e não pertence ao catálogo de software confiável."
+        }
+      );
+
+      continue;
+    }
+
+    const injectionApis =
+      (Array.isArray(item.suspiciousApis)
+        ? item.suspiciousApis
+        : [])
+        .filter((api) =>
+          [
+            "VirtualAllocEx",
+            "WriteProcessMemory",
+            "CreateRemoteThread",
+            "NtWriteVirtualMemory",
+            "NtCreateThreadEx",
+            "QueueUserAPC",
+            "SetWindowsHookEx"
+          ].some((needle) =>
+            String(api || "").toLowerCase() ===
+            needle.toLowerCase()
+          )
+        );
+
+    const trustedInjectionApp =
+      item.signed === true &&
+      (
+        isAbsoluteTrustedCatalogArtifact(
+          "pe_inspection",
+          pathValue,
+          item
+        ) ||
+        isTrustedCommonAppArtifact(
+          pathValue,
+          item
+        ) ||
+        isTrustedExecutableCandidate(pathValue)
+      );
+
+    const strongUntrustedInjection =
+      item.signed !== true &&
+      injectionApis.length >= 2;
+
+    if (
+      strongUntrustedInjection ||
+      (
+        injectionApis.length >= 2 &&
+        !trustedInjectionApp
+      )
+    ) {
+      await insertReviewFinding(
+        analysisId,
+        "PRIORIDADE MÁXIMA: APIs de injeção de processo detectadas",
+        "critical",
+        "pe_inspection",
+        pathValue,
+        {
+          ...item,
+          injectionApis,
+          priorityMaximum: true,
+          protectedByTechnicalEngine: true,
+          injectionCapability: true,
+          executionSensitive: true,
+          confidence: "high",
+          note:
+            "O executável não confiável contém múltiplas APIs clássicas de injeção/manipulação de processo. O Vorken classifica essa combinação como crítica."
+        }
+      );
+
+      continue;
+    }
+
+    if (
+      looksRandomExecutableName(pathValue) &&
+      item.signed !== true
+    ) {
+      await insertReviewFinding(
+        analysisId,
+        "Executável aleatório com indicadores PE",
+        "critical",
+        "pe_inspection",
+        pathValue,
+        {
+          ...item,
+          confidence: "high",
+          note: "Executável com nome aleatório, sem assinatura confiável e com metadados PE relevantes."
+        }
+      );
+      continue;
+    }
+
+    const explicitPacker =
+      Array.isArray(item.packerIndicators) &&
+      item.packerIndicators.length > 0;
+
+    const manyInjectionApis =
+      Array.isArray(item.suspiciousApis) &&
+      item.suspiciousApis.length >= 5;
+
+    const antiAnalysis =
+      Array.isArray(item.environmentProbeIndicators) &&
+      item.environmentProbeIndicators.length > 0;
+
+    if (
+      item.signed !== true &&
+      isSuspiciousUserPath(pathValue) &&
+      explicitPacker &&
+      manyInjectionApis &&
+      antiAnalysis
+    ) {
+      await insertReviewFinding(
+        analysisId,
+        "Executável não assinado com múltiplos indicadores PE",
+        "medium",
+        "pe_inspection",
+        pathValue,
+        {
+          ...item,
+          confidence: "medium",
+          note: "Packer explícito + várias APIs de manipulação de processos + indicador de anti-análise. Isoladamente, packer/entropia/APIs não geram mais detecção."
+        }
+      );
+    }
+  }
+
+
+  // Defense-in-depth for reports reprocessed from older agents: if an EXE name
+  // contains "injector" and the PE inventory confirms the same file is unsigned
+  // with multiple injection APIs, create an explicit protected critical finding.
+  for (const item of report.peInspections || []) {
+    const pathValue =
+      item.path ||
+      item.name ||
+      "";
+
+    if (
+      !/injector/i.test(
+        windowsBaseName(pathValue)
+      ) ||
+      item.signed === true
+    ) {
+      continue;
+    }
+
+    const injectionApis =
+      (Array.isArray(item.suspiciousApis)
+        ? item.suspiciousApis
+        : [])
+        .filter((api) =>
+          [
+            "VirtualAllocEx",
+            "WriteProcessMemory",
+            "CreateRemoteThread",
+            "NtWriteVirtualMemory",
+            "NtCreateThreadEx",
+            "QueueUserAPC"
+          ].some((needle) =>
+            String(api || "").toLowerCase() ===
+            needle.toLowerCase()
+          )
+        );
+
+    if (injectionApis.length < 2)
+      continue;
+
+    await insertReviewFinding(
+      analysisId,
+      "PRIORIDADE MÁXIMA: injector não assinado com APIs de injeção",
+      "critical",
+      "pe_inspection",
+      pathValue,
+      {
+        ...item,
+        injectionApis,
+        priorityMaximum: true,
+        protectedByTechnicalEngine: true,
+        injectionCapability: true,
+        confidence: "high",
+        note:
+          "O executável contém 'injector' no nome, não possui assinatura confiável e expõe múltiplas APIs clássicas de injeção de processo. Tratado como crítico."
+      }
+    );
+  }
+
+  // Mark-of-the-Web / SavedFiles-style origin checks.
+  for (const item of report.zoneIdentifiers || []) {
+    await addCatalogFindings(
+      "zone_identifier",
+      item.path || item.fileName || item.hostUrl,
+      item,
+      [item.fileName, item.path, item.hostUrl, item.referrerUrl]
+    );
+
+    const name = item.fileName || item.path || "";
+    const source = [
+      item.hostUrl,
+      item.referrerUrl
+    ].filter(Boolean).join(" ").toLowerCase();
+
+    const social =
+      source.includes("discord.com/") ||
+      source.includes("discordapp.com/") ||
+      source.includes("cdn.discordapp.com/") ||
+      source.includes("t.me/") ||
+      source.includes("telegram.org/");
+
+    if (social && isRiskyDownloadName(name)) {
+      const randomExe =
+        path.extname(name).toLowerCase() === ".exe" &&
+        looksRandomExecutableName(name);
+
+      await insertReviewFinding(
+        analysisId,
+        "Arquivo com origem Discord/Telegram preservada no Zone.Identifier",
+        randomExe ? "critical" : "medium",
+        "zone_identifier",
+        item.path || name,
+        {
+          ...item,
+          confidence: randomExe ? "high" : "medium",
+          note: "A origem sobrevive no Mark-of-the-Web mesmo quando o histórico do navegador não está mais disponível."
+        }
+      );
+    }
+  }
+
+  // Alternate Data Streams.
+  for (const item of report.alternateDataStreams || []) {
+    if (item.suspicious !== true)
+      continue;
+
+    await insertReviewFinding(
+      analysisId,
+      item.executableLike === true
+        ? "Alternate Data Stream executável/suspeito"
+        : "Alternate Data Stream suspeito",
+      item.executableLike === true ? "high" : "medium",
+      "alternate_stream",
+      (item.path || "") + (item.streamName || ""),
+      {
+        ...item,
+        confidence: "medium",
+        note: "Foi encontrado um fluxo NTFS alternativo não padrão. A presença isolada não prova execução por ADS."
+      }
+    );
+  }
+
+  // Autoruns / persistence integrity.
+  // Re-evaluate the path on the server instead of trusting older agents that
+  // marked every unsigned executable (including System32 scheduled tasks) as
+  // suspicious. Protected Windows/Program Files paths are inventory only.
+  for (const item of report.autorunIntegrity || []) {
+    if (item.enabled === false)
+      continue;
+
+    const executable =
+      item.executablePath ||
+      item.command ||
+      item.name ||
+      "";
+
+    if (!executable || isTrustedInstalledPath(executable))
+      continue;
+
+    if (
+      isTrustedExecutableCandidate(executable) ||
+      isTrustedCommonAppArtifact(
+        executable,
+        {
+          ...item,
+          path: item.executablePath || executable,
+          fileName: fileName(item.executablePath || executable),
+        }
+      )
+    ) {
+      continue;
+    }
+
+    const userWritable =
+      item.userWritablePath === true ||
+      isSuspiciousUserPath(executable);
+
+    if (!userWritable)
+      continue;
+
+    const unsignedExisting =
+      item.fileExists === true &&
+      item.signed !== true;
+
+    await insertReviewFinding(
+      analysisId,
+      "Autorun/tarefa em caminho gravável pelo usuário",
+      unsignedExisting ? "high" : "medium",
+      "autorun_integrity",
+      executable,
+      {
+        ...item,
+        confidence: unsignedExisting ? "high" : "medium",
+        note: unsignedExisting
+          ? "Entrada de inicialização aponta para caminho gravável pelo usuário e o executável existente não possui assinatura Authenticode confiável."
+          : "Entrada de inicialização aponta para caminho gravável pelo usuário. Mantida como amarela/média para revisão; caminhos protegidos do Windows e Program Files são ignorados."
+      }
+    );
+  }
+
+  // PowerShell is preserved strictly as blue/informational context.
+  // It must never be treated as suspicious by itself.
+  for (const item of report.powerShellArtifacts || []) {
+    await insertReviewFinding(
+      analysisId,
+      "Registro de PowerShell (informativo)",
+      "info",
+      "powershell_artifact",
+      item.command || item.source || "PowerShell",
+      {
+        ...item,
+        confidence: "info",
+        note: "Histórico de PowerShell preservado apenas como contexto forense. Não é considerado detecção ou evidência suspeita por si só."
+      }
+    );
+  }
+
+  // Unsigned modules loaded into Rust/system processes.
+  for (const item of report.processModuleIntegrity || []) {
+    if (item.suspicious !== true)
+      continue;
+
+    const processName = String(item.processName || "").toLowerCase();
+    const gameProcess =
+      processName === "rust" ||
+      processName === "rustclient";
+
+    await insertReviewFinding(
+      analysisId,
+      gameProcess
+        ? "DLL externa não assinada carregada no Rust"
+        : "Módulo não assinado em processo de alto valor",
+      gameProcess ? "critical" : "medium",
+      "module_integrity",
+      item.modulePath || item.moduleName,
+      {
+        ...item,
+        priorityMaximum: gameProcess,
+        protectedByTechnicalEngine: gameProcess,
+        injectionIntoRust: gameProcess,
+        confidence: gameProcess ? "high" : "medium",
+        note: gameProcess
+          ? "Módulo externo não assinado foi carregado dentro do processo do Rust. O Vorken trata isso como evidência crítica de possível injeção."
+          : "Módulo vindo do perfil do usuário/Temp foi carregado em processo relevante e não possui assinatura Authenticode confiável."
+      }
+    );
+  }
+
+  // Targeted live-memory integrity. Vorken only reads the two-byte PE
+  // signature from executable private regions; it does not dump arbitrary RAM.
+  for (const item of report.processMemoryIntegrity || []) {
+    if (item.potentialManualMap !== true)
+      continue;
+
+    const processName =
+      String(item.processName || "").toLowerCase();
+
+    const rustProcess =
+      processName === "rust" ||
+      processName === "rustclient";
+
+    await insertReviewFinding(
+      analysisId,
+      rustProcess
+        ? "Possível PE manual-mapped em memória do Rust"
+        : "Região privada executável com cabeçalho PE",
+      rustProcess ? "critical" : "high",
+      "memory_integrity",
+      (item.processName || "processo") + " @ " + (item.baseAddress || "memória"),
+      {
+        ...item,
+        confidence: rustProcess ? "high" : "medium",
+        note: "Foi encontrada região MEM_PRIVATE executável iniciando com cabeçalho MZ. O scanner registra apenas metadados e dois bytes de assinatura, sem fazer dump da memória."
+      }
+    );
+  }
+
+  // Streamproof / display-affinity indicators.
+  for (const item of report.protectedWindows || []) {
+    if (item.excludedFromCapture !== true)
+      continue;
+
+    const appInfo = findCommonAppByFileName(
+      item.processPath || ((item.processName || "") + ".exe")
+    );
+
+    const trustedCommon =
+      appInfo &&
+      item.signed === true &&
+      signerMatchesCommonApp(appInfo, item.signerSubject);
+
+    if (trustedCommon)
+      continue;
+
+    await insertReviewFinding(
+      analysisId,
+      "Janela excluída de captura de tela",
+      item.signed === true ? "medium" : "high",
+      "protected_window",
+      item.processPath || item.processName || "window",
+      {
+        ...item,
+        confidence: item.signed === true ? "medium" : "high",
+        note: "O processo usa WDA_EXCLUDEFROMCAPTURE. Esse recurso possui usos legítimos, mas também é usado por aplicações streamproof."
+      }
+    );
+  }
+
+  // Crash / WER correlation.
+  for (const item of report.crashArtifacts || []) {
+    const value =
+      item.appPath ||
+      item.appName ||
+      item.faultingModulePath ||
+      "";
+
+    const matches = findRustCatalogMatches(
+      value,
+      item.faultingModulePath,
+      item.artifactPath
+    );
+
+    if (matches.length > 0) {
+      await insertReviewFinding(
+        analysisId,
+        "Artefato de crash ligado ao catálogo Rust",
+        "high",
+        "crash_artifact",
+        value || item.artifactPath,
+        {
+          ...item,
+          catalogMatches: matches,
+          confidence: "high",
+          note: "Windows Error Reporting preservou referência a nome/caminho ligado ao catálogo defensivo."
+        }
+      );
+    } else if (
+      /\.exe$/i.test(value) &&
+      looksRandomExecutableName(value)
+    ) {
+      await insertReviewFinding(
+        analysisId,
+        "Crash preservou executável com nome aleatório",
+        "high",
+        "crash_artifact",
+        value,
+        {
+          ...item,
+          confidence: "medium",
+          note: "WER/minidump preservou referência a um executável com nome de alta aleatoriedade."
+        }
+      );
+    }
+  }
+
+  // Network/DNS indicators. DNS cache is intentionally not presented as
+  // proof of which process made the request.
+  for (const item of report.networkIndicators || []) {
+    if (String(item.source || "") === "DNS Cache") {
+      const indicators = item.matchedIndicators || [];
+      const authHit = indicators.some((value) =>
+        ["keyauth.cc", "keyauth.win", "eauth.us.to"].includes(
+          String(value || "").toLowerCase()
+        )
+      );
+
+      const catalogHit = indicators.some((value) =>
+        !["keyauth.cc", "keyauth.win", "eauth.us.to"].includes(
+          String(value || "").toLowerCase()
+        )
+      );
+
+      await insertReviewFinding(
+        analysisId,
+        catalogHit
+          ? "Domínio do catálogo Rust encontrado no cache DNS"
+          : "Domínio de autenticação de alto interesse no cache DNS",
+        catalogHit ? "critical" : authHit ? "medium" : "info",
+        "network_indicator",
+        item.domain || "DNS",
+        {
+          ...item,
+          confidence: catalogHit ? "high" : "low",
+          note: "Cache DNS indica resolução do domínio, mas não atribui sozinho a consulta a um executável específico."
+        }
+      );
+      continue;
+    }
+
+    if (
+      item.processSigned !== true &&
+      isSuspiciousUserPath(item.processPath)
+    ) {
+      await insertReviewFinding(
+        analysisId,
+        "Executável não assinado com conexão TCP ativa",
+        "medium",
+        "network_indicator",
+        item.processPath || item.processName || item.remoteAddress,
+        {
+          ...item,
+          confidence: "low",
+          note: "Conexão de rede atual de processo não assinado em caminho do usuário/Temp. Requer correlação com outras evidências."
+        }
+      );
+    }
+  }
+
+  // USN Journal activity and anti-forensic changes.
+  for (const item of report.usnActivity || []) {
+    if (item.deleted !== true)
+      continue;
+
+    const name = String(item.fileName || "");
+    const lower = name.toLowerCase();
+
+    if (
+      item.underPrefetchDirectory === true &&
+      lower.endsWith(".pf")
+    ) {
+      await insertReviewFinding(
+        analysisId,
+        "Prefetch apagado (informativo)",
+        "info",
+        "usn_activity",
+        name,
+        {
+          ...item,
+          confidence: "info",
+          note: "O USN Journal registrou exclusão de arquivo .PF. Mantido somente no inventário azul; não é considerado detecção."
+        }
+      );
+      continue;
+    }
+
+    if (
+      item.browserDatabase === true
+    ) {
+      await insertReviewFinding(
+        analysisId,
+        "Banco de histórico do navegador apagado/alterado (inventário)",
+        "info",
+        "usn_activity",
+        name,
+        {
+          ...item,
+          confidence: "info",
+          inventoryOnly: true,
+          note: "O USN Journal registrou exclusão/alteração de banco do navegador como History/places.sqlite. Mantido somente no inventário azul; não é evidência suspeita por si só."
+        }
+      );
+      continue;
+    }
+
+    if (
+      item.windowsForensicArtifact === true &&
+      (
+        lower === "srudb.dat" ||
+        lower.endsWith(".evtx") ||
+        lower.endsWith(".hve")
+      )
+    ) {
+      await insertReviewFinding(
+        analysisId,
+        "Artefato forense do Windows apagado (informativo)",
+        "info",
+        "usn_activity",
+        name,
+        {
+          ...item,
+          confidence: "info",
+          note: "O USN Journal registrou alteração/exclusão de artefato forense do Windows. Mantido somente no inventário azul; não é considerado detecção."
+        }
+      );
+    }
+  }
+
+  // System integrity expansion.
+  for (const item of report.systemIntegrityExpansion || []) {
+    const itemName = String(item.name || item.kind || "").toLowerCase();
+    const isPcaSvc = itemName === "pcasvc";
+
+    if (isPcaSvc) {
+      await insertReviewFinding(
+        analysisId,
+        "Integridade do sistema: PcaSvc (informativo)",
+        "info",
+        "system_integrity_expansion",
+        item.detail || item.name || item.kind,
+        {
+          ...item,
+          confidence: "info",
+          note: "PcaSvc é um serviço legítimo do Windows. Mantido somente como contexto de integridade, sem gerar alerta."
+        }
+      );
+      continue;
+    }
+
+    const severity =
+      String(item.severityHint || "info").toLowerCase();
+
+    if (!["medium", "high", "critical"].includes(severity))
+      continue;
+
+    await insertReviewFinding(
+      analysisId,
+      "Integridade do sistema: " + (item.name || item.kind || "sinal"),
+      severity,
+      "system_integrity_expansion",
+      item.detail || item.name || item.kind,
+      {
+        ...item,
+        confidence: severity === "high" ? "high" : "medium",
+        note: "Configuração/estado do Windows relevante para a confiabilidade do scan."
+      }
+    );
+  }
+
+  // Executed and later modified (self-destruct / replacement signal).
+  for (const item of report.files || []) {
+    if (!item.prefetchEvidenceUtc || !item.lastWriteUtc)
+      continue;
+
+    const executed = new Date(item.prefetchEvidenceUtc).getTime();
+    const modified = new Date(item.lastWriteUtc).getTime();
+
+    if (!Number.isFinite(executed) || !Number.isFinite(modified))
+      continue;
+
+    if (modified <= executed + 120000)
+      continue;
+
+    if (
+      ageDays(item.lastWriteUtc) > 30 ||
+      isTrustedInstalledPath(item.path)
+    ) {
+      continue;
+    }
+
+    await insertReviewFinding(
+      analysisId,
+      "Executado e modificado depois",
+      "medium",
+      "file",
+      item.path || item.name,
+      {
+        ...item,
+        confidence: "medium",
+        note: "O arquivo possui evidência de execução anterior e data de modificação posterior, compatível com atualização legítima ou self-destruct/replacement."
+      }
+    );
+  }
+
+  // Bypass routes: network paths and common RAR temporary execution paths.
+  const executionSources = [
+    ...(report.prefetchExecutions || []).map((item) => ({
+      type: "prefetch_execution",
+      value:
+        item.resolvedExecutablePath ||
+        item.nativeExecutablePath ||
+        item.executableName,
+      evidence: item
+    })),
+    ...(report.bam || []).map((item) => ({
+      type: "bam",
+      value: item.path,
+      evidence: item
+    })),
+    ...(report.processCreationEvents || []).map((item) => ({
+      type: "process_history",
+      value: item.processPath,
+      evidence: item
+    }))
+  ];
+
+  for (const execution of executionSources) {
+    const value = String(execution.value || "");
+    const normalized = normalizePath(value);
+
+    // True UNC paths start with two backslashes. A single leading slash is
+    // also used by NT volume paths such as \\VOLUME{GUID} and is NOT network.
+    if (value.startsWith("\\\\")) {
+      await insertReviewFinding(
+        analysisId,
+        "Execução a partir de recurso de rede (informativo)",
+        "info",
+        execution.type,
+        value,
+        {
+          ...execution.evidence,
+          confidence: "info",
+          note: "A execução aponta para caminho UNC/recurso de rede. Mantido apenas como contexto azul; não é considerado detecção por si só."
+        }
+      );
+    }
+
+    if (
+      normalized.includes("\\rar$") ||
+      normalized.includes("\\winrar\\") &&
+      normalized.includes("\\temp\\")
+    ) {
+      await insertReviewFinding(
+        analysisId,
+        "Execução a partir de extração temporária RAR",
+        "high",
+        execution.type,
+        value,
+        {
+          ...execution.evidence,
+          confidence: "medium",
+          note: "Caminho é compatível com execução temporária proveniente de arquivo RAR/WinRAR."
+        }
+      );
+    }
+  }
+
+  // Embedded signer exists but WinVerifyTrust did not accept the
+  // Authenticode chain. This catches self-signed/untrusted/fake-signature style cases.
+  for (const item of report.files || []) {
+    if (
+      item.signed === true ||
+      !String(item.signerSubject || "").trim()
+    ) {
+      continue;
+    }
+
+    const severity =
+      looksRandomExecutableName(item.name || item.path) ||
+      isSuspiciousUserPath(item.path)
+        ? "high"
+        : "medium";
+
+    await insertReviewFinding(
+      analysisId,
+      "Assinatura digital presente porém não confiável",
+      severity,
+      "file",
+      item.path || item.name || "arquivo",
+      {
+        ...item,
+        confidence: "medium",
+        note: "O arquivo contém certificado/assinante embutido, porém a validação WinVerifyTrust não aceitou a assinatura como confiável."
+      }
+    );
+  }
+
+
+  for (const download of report.browserDownloads || []) {
+    const appInfo = findCommonAppByFileName(
+      download.fileName || download.targetPath
+    );
+
+    if (!appInfo)
+      continue;
+
+    const hasSource = [
+      download.sourceUrl,
+      download.finalUrl,
+      download.referrerUrl,
+      download.siteUrl,
+      download.pageUrl,
+      ...(Array.isArray(download.urlChain) ? download.urlChain : [])
+    ].some(Boolean);
+
+    if (!hasSource)
+      continue;
+
+    if (downloadMatchesOfficialSource(appInfo, download))
+      continue;
+
+    await insertReviewFinding(
+      analysisId,
+      "Aplicativo conhecido baixado de fonte não oficial",
+      "high",
+      "browser_download",
+      download.targetPath || download.fileName || appInfo.name,
+      {
+        ...download,
+        expectedApplication: appInfo.name,
+        officialSourcePatterns: appInfo.officialUrlIncludes || [],
+        confidence: "high",
+        note: "O arquivo usa o nome de um aplicativo comum, porém o histórico de download não aponta para uma fonte oficial cadastrada.",
+      }
+    );
+  }
+
+  const archiveStrongTerms = [
+    "cheat",
+    "aimbot",
+    "wallhack",
+    "spoofer",
+    "injector",
+    "bypass",
+    "recoil"
+  ];
+
+  const archiveContextTerms = [
+    "rust",
+    "eac",
+    "script",
+    "loader",
+    "macro",
+    "hack"
+  ];
+
+  for (const item of report.files || []) {
+    const ext = String(item.extension || path.extname(item.path || item.name || ""))
+      .toLowerCase();
+
+    if ([".zip", ".rar", ".7z"].includes(ext)) {
+      const archiveText = [
+        item.name,
+        item.path,
+        ...(Array.isArray(item.archiveEntries) ? item.archiveEntries : [])
+      ].join(" ").toLowerCase();
+
+      const strongTerms = archiveStrongTerms.filter((term) =>
+        archiveText.includes(term));
+
+      const contextTerms = archiveContextTerms.filter((term) =>
+        archiveText.includes(term));
+
+      const randomExecutables = ext === ".zip"
+        ? (item.archiveEntries || [])
+            .filter((entry) =>
+              /\.exe$/i.test(String(entry || "")) &&
+              looksRandomExecutableName(entry))
+            .slice(0, 20)
+        : [];
+
+      const termSignal =
+        strongTerms.length >= 2 ||
+        (
+          strongTerms.length >= 1 &&
+          contextTerms.length >= 1
+        );
+
+      if (termSignal || randomExecutables.length > 0) {
+        await insertReviewFinding(
+          analysisId,
+          ext === ".zip"
+            ? "ZIP para revisão"
+            : "Arquivo compactado para revisão",
+          "medium",
+          "archive",
+          item.path || item.name || "arquivo compactado",
+          {
+            ...item,
+            matchedTerms: [...strongTerms, ...contextTerms],
+            strongTerms,
+            contextTerms,
+            randomExecutables,
+            confidence: "medium",
+            note: randomExecutables.length > 0
+              ? "Arquivo compactado contém EXE com nome fortemente aleatório, mas não há prova de execução. Mantido somente para revisão."
+              : "Arquivo compactado contém combinação explícita de termos de alto interesse. A presença no ZIP, sem execução, não é tratada como crítica.",
+          }
+        );
+      }
+    }
+
+    const isRandomExe =
+      ext === ".exe" &&
+      !isGenericInstallerExecutableName(item.name || item.path) &&
+      !hasReadableExecutableToken(item.name || item.path) &&
+      looksRandomExecutableName(item.name || item.path) &&
+      item.signed !== true &&
+      isSuspiciousUserPath(item.path);
+
+    if (isRandomExe) {
+      await insertReviewFinding(
+        analysisId,
+        "Executável com nome aleatório em pasta de risco",
+        "critical",
+        "file",
+        item.path || item.name || "EXE",
+        {
+          ...item,
+          confidence: "high",
+          note: "Nome com padrão de alta aleatoriedade, arquivo não assinado e localizado em Downloads/Desktop/Temp. Tratado como crítico para revisão manual.",
+        }
+      );
+    }
+  }
+
+  for (const download of report.browserDownloads || []) {
+    const sourceCatalogMatches =
+      findRustCatalogMatches(
+        download.sourceUrl,
+        download.finalUrl,
+        download.referrerUrl,
+        download.siteUrl,
+        download.pageUrl,
+        download.urlChain
+      );
+
+    const directSourceMatch =
+      sourceCatalogMatches.find((match) =>
+        isDirectCatalogWebMatch(
+          match,
+          download
+        )
+      );
+
+    if (directSourceMatch) {
+      const directSeverity =
+        normalizeSeverity(
+          directSourceMatch.severity || "high"
+        );
+
+      await insertReviewFinding(
+        analysisId,
+        "Download originado de fonte suspeita do catálogo",
+        directSeverity,
+        "browser_download",
+        download.targetPath ||
+          download.fileName ||
+          download.finalUrl ||
+          download.sourceUrl ||
+          "download",
+        {
+          ...download,
+          catalogMatch: directSourceMatch,
+          catalogMatches: sourceCatalogMatches,
+          directCatalogMatch: true,
+          knownCheatDomain: true,
+          confidence:
+            directSeverity === "critical"
+              ? "high"
+              : "medium",
+          note:
+            "O histórico do navegador confirma download cuja origem/referrer/URL final corresponde diretamente a uma fonte verificada da planilha OSINT. O tipo ou extensão do arquivo não é necessário para gerar o alerta.",
+        }
+      );
+    }
+
+    const name = download.fileName || download.targetPath || "";
+    const ext = path.extname(name).toLowerCase();
+    const originKind = downloadOriginKind(download);
+    const doubleExtension = isDeceptiveDoubleExtensionExecutable(name);
+    const randomExecutable =
+      ext === ".exe" && looksRandomExecutableName(name);
+    const danger = chromiumDangerInfo(download.dangerType);
+    const officialDiscordDownload =
+      isOfficialDiscordInstallerOrUpdate(download);
+    const discordAttachmentPriority =
+      [".exe", ".zip"].includes(ext) &&
+      isDiscordAttachmentDownload(download);
+
+    if (discordAttachmentPriority) {
+      await insertReviewFinding(
+        analysisId,
+        ext === ".zip"
+          ? "PRIORIDADE MÁXIMA: ZIP baixado de anexo CDN do Discord"
+          : "PRIORIDADE MÁXIMA: EXE baixado de anexo CDN do Discord",
+        "critical",
+        "browser_download",
+        download.targetPath ||
+          download.fileName ||
+          download.finalUrl ||
+          download.sourceUrl ||
+          "download",
+        {
+          ...download,
+          originKind: "Discord",
+          discordAttachment: true,
+          priorityMaximum: true,
+          protectedByTechnicalEngine: true,
+          confidence: "high",
+          note:
+            "Arquivo " +
+            ext.toUpperCase() +
+            " baixado por URL real de attachment/CDN do Discord. Esta regra tem prioridade máxima e ignora a allowlist de programas confiáveis.",
+        }
+      );
+    } else if (
+      originKind &&
+      isRiskyDownloadName(name) &&
+      !officialDiscordDownload
+    ) {
+      const severity =
+        randomExecutable ? "critical" :
+        doubleExtension ? "high" :
+        "medium";
+
+      await insertReviewFinding(
+        analysisId,
+        "Arquivo baixado do " + originKind,
+        severity,
+        "browser_download",
+        download.targetPath || download.fileName || "download",
+        {
+          ...download,
+          originKind,
+          doubleExtension,
+          randomExecutable,
+          confidence: severity === "critical" ? "high" : "medium",
+          note: doubleExtension
+            ? "Download originado do " + originKind + " usa dupla extensão que termina em .exe. Deve ser revisado."
+            : "Download executável/compactado originado do " + originKind + ". Classificado no mínimo como ocorrência média para revisão.",
+        }
+      );
+    }
+
+    const benignDangerExtension =
+      [
+        ".mp4", ".mkv", ".avi", ".mov", ".webm",
+        ".mp3", ".wav", ".flac", ".ogg",
+        ".jpg", ".jpeg", ".png", ".gif", ".webp",
+        ".txt", ".log", ".pdf"
+      ].includes(ext);
+
+    const officialUmodPlugin =
+      ext === ".cs" &&
+      [
+        download.sourceUrl,
+        download.finalUrl,
+        download.referrerUrl,
+        download.siteUrl,
+        download.pageUrl,
+      ]
+        .filter(Boolean)
+        .some((url) =>
+          /^https?:\/\/(?:www\.)?(?:umod\.org|codefling\.com)\//i
+            .test(String(url || ""))
+        );
+
+    if (
+      danger.suspicious &&
+      !benignDangerExtension &&
+      !officialUmodPlugin
+    ) {
+      const severity =
+        randomExecutable ? "critical" :
+        danger.severity;
+
+      await insertReviewFinding(
+        analysisId,
+        "Download sinalizado pelo navegador",
+        severity,
+        "browser_download",
+        download.targetPath || download.fileName || "download",
+        {
+          ...download,
+          browserDanger: danger,
+          confidence: severity === "critical" || severity === "high" ? "high" : "medium",
+          note: "O histórico Chromium marcou este download com indicador de risco: " + danger.label + ".",
+        }
+      );
+    }
+
+    if (randomExecutable) {
+      await insertReviewFinding(
+        analysisId,
+        "Executável baixado com nome aleatório",
+        "critical",
+        "browser_download",
+        download.targetPath || download.fileName || "download",
+        {
+          ...download,
+          originKind,
+          browserDanger: danger,
+          confidence: "high",
+          note: "Nome do executável apresenta padrão de alta aleatoriedade. Tratado como crítico para revisão.",
+        }
+      );
+    }
+
+    if (doubleExtension) {
+      await insertReviewFinding(
+        analysisId,
+        "Executável com dupla extensão disfarçada",
+        originKind ? "high" : "medium",
+        "browser_download",
+        download.targetPath || download.fileName || "download",
+        {
+          ...download,
+          originKind,
+          confidence: originKind ? "high" : "medium",
+          note: "O arquivo termina em .exe, mas usa extensão anterior de arquivo/documento (ex.: .zip.exe).",
+        }
+      );
+    }
+
+    if (download.fileMissing !== true)
+      continue;
+
+    const deletedStrangeExe =
+      ext === ".exe" &&
+      isStrangeDeletedExecutableName(name);
+
+    if (deletedStrangeExe) {
+      await insertReviewFinding(
+        analysisId,
+        "PRIORIDADE MÁXIMA: EXE suspeito baixado e apagado/movido",
+        "critical",
+        "browser_download",
+        download.targetPath || download.fileName || "download",
+        {
+          ...download,
+          priorityMaximum: true,
+          protectedByTechnicalEngine: true,
+          deletedSuspiciousExecutable: true,
+          executionConfirmed: false,
+          confidence: "high",
+          note:
+            "O histórico do navegador confirma um EXE de nome/identidade suspeita que não existe mais no destino. A prioridade máxima independe de haver evidência de execução.",
+        }
+      );
+
+      continue;
+    }
+
+    if (ext === ".exe" && looksRandomExecutableName(name)) {
+      await insertReviewFinding(
+        analysisId,
+        "Executável baixado com nome aleatório e depois não localizado",
+        "critical",
+        "browser_download",
+        download.targetPath || download.fileName || "download",
+        {
+          ...download,
+          confidence: "high",
+          note: "O histórico do navegador preservou um EXE com nome aleatório que não está mais no destino original. Tratado como crítico para revisão.",
+        }
+      );
+    }
+
+    if ([".zip", ".rar", ".7z"].includes(ext)) {
+      const archiveText = [
+        download.fileName,
+        download.targetPath,
+        download.sourceUrl,
+        download.finalUrl,
+        download.pageUrl,
+      ].join(" ").toLowerCase();
+
+      const strongTerms = archiveStrongTerms.filter((term) =>
+        archiveText.includes(term));
+
+      const contextTerms = archiveContextTerms.filter((term) =>
+        archiveText.includes(term));
+
+      const archiveTerms = [
+        ...new Set([
+          ...strongTerms,
+          ...contextTerms,
+        ]),
+      ];
+
+      const termSignal =
+        strongTerms.length >= 2 ||
+        (
+          strongTerms.length >= 1 &&
+          contextTerms.length >= 1
+        );
+
+      if (termSignal) {
+        await insertReviewFinding(
+          analysisId,
+          ext === ".zip"
+            ? "ZIP suspeito baixado e depois não localizado"
+            : "Arquivo compactado suspeito baixado e depois não localizado",
+          "high",
+          "browser_download",
+          download.targetPath || download.fileName || "arquivo compactado",
+          {
+            ...download,
+            matchedTerms: archiveTerms,
+            confidence: "high",
+            note: "Arquivo compactado apagado/movido possui combinação forte de termos ligados a cheat/script no nome, caminho ou URL de origem.",
+          }
+        );
+      }
+    }
+  }
+
+  for (const execution of report.prefetchExecutions || []) {
+    const executionPath =
+      execution.resolvedExecutablePath ||
+      execution.nativeExecutablePath ||
+      execution.executableName ||
+      "";
+
+    if (
+      looksRandomExecutableName(
+        execution.executableName || executionPath
+      ) &&
+      execution.executablePresent !== true &&
+      !isTrustedInstalledPath(executionPath) &&
+      (
+        isSuspiciousUserPath(executionPath) ||
+        isVolumeRootExecutable(execution.nativeExecutablePath)
+      )
+    ) {
+      await insertReviewFinding(
+        analysisId,
+        "EXE com nome aleatório executado e depois não localizado",
+        "critical",
+        "prefetch_execution",
+        executionPath,
+        {
+          ...execution,
+          confidence: "high",
+          note: "O Prefetch registra execução de um EXE com nome de alta aleatoriedade; o arquivo não está mais presente em pasta de usuário/volume removido.",
+        }
+      );
+    }
+  }
+
+  // HIGH-SIGNAL EXECUTION: only a drive that Windows currently identifies as
+  // removable is enough for maximum USB priority. A detached volume is not
+  // classified as USB without an exact device/volume identity correlation.
+  for (const execution of report.prefetchExecutions || []) {
+    const executionCandidates = [
+      execution.executableName,
+      execution.resolvedExecutablePath,
+      execution.nativeExecutablePath,
+      execution.prefetchFile
+    ].filter(Boolean);
+
+    const exeLike = executionCandidates.some((value) =>
+      /\.exe(?:$|[?#])/i.test(String(value || "").trim())
+    );
+
+    const confirmedRemovable =
+      execution.currentRemovable === true;
+
+    const maximumUsbPriority =
+      exeLike &&
+      confirmedRemovable;
+
+    if (
+      !maximumUsbPriority &&
+      !confirmedRemovable
+    ) {
+      continue;
+    }
+
+    await insertReviewFinding(
+      analysisId,
+      maximumUsbPriority
+        ? "EXECUTADO DENTRO DE PENDRIVE: EXE executado em mídia removível"
+        : confirmedRemovable
+          ? "Execução recente em mídia removível"
+          : "Execução recente em volume removido/não montado",
+      maximumUsbPriority
+        ? "critical"
+        : "high",
+      "prefetch_execution",
+      execution.executableName ||
+        execution.nativeExecutablePath ||
+        execution.prefetchFile,
+      {
+        ...execution,
+        correlatedUsb: null,
+        priorityMaximum: maximumUsbPriority,
+        usbExecution: maximumUsbPriority,
+        protectedByTechnicalEngine: maximumUsbPriority,
+        executionConfirmed: true,
+        technicalVerdict: maximumUsbPriority ? "critical_confirmed_execution" : "execution_evidence",
+        confidence: maximumUsbPriority
+          ? "high"
+          : confirmedRemovable
+            ? "high"
+            : "medium",
+        note: maximumUsbPriority
+          ? "A execução de um arquivo .exe em pendrive/USB foi confirmada por artefato técnico. Pela política Vorken, qualquer EXE executado em mídia removível é classificado como crítico, independentemente do nome, reputação ou allowlist."
+          : confirmedRemovable
+            ? "O Prefetch registrou execução em uma unidade atualmente identificada como removível."
+            : "O Prefetch registrou um executável recente em volume não montado, sem arquivo presente, em caminho compatível com execução portátil. Volume não resolvido sozinho não gera alerta.",
+      }
+    );
+  }
+
+  // BAM: execução de EXE que desapareceu depois é crítica quando o
+  // executável não pertence ao catálogo confiável. Também correlaciona o
+  // mesmo nome com execuções removíveis vistas no Prefetch.
+  const usbExecutedExeNames = new Set(
+    (report.prefetchExecutions || [])
+      .filter((execution) => {
+        const candidates = [
+          execution.executableName,
+          execution.resolvedExecutablePath,
+          execution.nativeExecutablePath,
+        ].filter(Boolean);
+
+        const exeLike =
+          candidates.some((value) =>
+            /\.exe(?:$|[?#])/i.test(
+              String(value || "").trim()
+            )
+          );
+
+        if (!exeLike)
+          return false;
+
+        return execution.currentRemovable === true;
+      })
+      .map((execution) =>
+        fileName(
+          execution.executableName ||
+          execution.resolvedExecutablePath ||
+          execution.nativeExecutablePath ||
+          ""
+        ).toLowerCase()
+      )
+      .filter(Boolean)
+  );
+
+  for (const item of report.bam || []) {
+    const lastAge = ageDays(item.lastExecutionUtc);
+    const p = item.path || "";
+    const name = fileName(p);
+    const exeLike = /\.exe$/i.test(name);
+
+    const trusted =
+      isTrustedInstalledPath(p) ||
+      isAbsoluteTrustedCatalogArtifact(
+        "bam",
+        p,
+        item
+      ) ||
+      isTrustedCommonAppArtifact(
+        p,
+        {
+          ...item,
+          path: p,
+          fileName: name,
+        }
+      ) ||
+      isTrustedExecutableCandidate(p);
+
+    const correlatedUsb =
+      exeLike &&
+      usbExecutedExeNames.has(
+        String(name || "").toLowerCase()
+      );
+
+    if (
+      lastAge > 7 ||
+      item.fileExists !== false ||
+      trusted ||
+      (
+        !isSuspiciousUserPath(p) &&
+        !isVolumeRootExecutable(p) &&
+        !correlatedUsb
+      )
+    ) {
+      continue;
+    }
+
+    const criticalExe =
+      exeLike &&
+      !trusted;
+
+    await insertReviewFinding(
+      analysisId,
+      correlatedUsb
+        ? "PRIORIDADE MÁXIMA: EXE executado também em pendrive/USB"
+        : criticalExe
+          ? "PRIORIDADE MÁXIMA: EXE executado e depois não localizado"
+          : "BAM: execução recente de arquivo não localizado",
+      criticalExe
+        ? "critical"
+        : "medium",
+      "bam",
+      p || "BAM",
+      {
+        ...item,
+        priorityMaximum: criticalExe,
+        protectedByTechnicalEngine: criticalExe,
+        deletedExecutedExecutable: criticalExe,
+        usbExecution: correlatedUsb,
+        executionConfirmed: true,
+        correlatedUsbExecutionByName: correlatedUsb,
+        confidence:
+          criticalExe
+            ? "high"
+            : "medium",
+        note:
+          correlatedUsb
+            ? "O BAM confirma execução do EXE e o Prefetch registrou o mesmo executável em mídia removível/USB. A execução local e a execução no USB permanecem evidências separadas."
+            : criticalExe
+              ? "O BAM confirma execução recente de um .exe que não está mais presente. Como não pertence ao catálogo confiável, o Vorken classifica como crítico."
+              : "BAM registrou execução recente de arquivo não localizado.",
+      }
+    );
+  }
+
+  // Event 4688 is strong execution evidence when audit logging was enabled.
+  for (const item of report.processCreationEvents || []) {
+    const lastAge = ageDays(item.timeCreatedUtc);
+    if (lastAge > 14) continue;
+
+    const p = item.processPath || "";
+
+    if (isTrustedInstalledPath(p))
+      continue;
+
+    const external =
+      item.driveType === "Removable" ||
+      item.driveType === "Network";
+
+    const removableExePriority =
+      item.driveType === "Removable" &&
+      /\.exe$/i.test(fileName(p || item.processName));
+
+    const missingSuspicious =
+      item.processPresent === false &&
+      (
+        isSuspiciousUserPath(p) ||
+        isVolumeRootExecutable(p)
+      );
+
+    if (!external && !missingSuspicious)
+      continue;
+
+    await insertReviewFinding(
+      analysisId,
+      removableExePriority
+        ? "PRIORIDADE MÁXIMA: EXE executado em pendrive/removível"
+        : external
+          ? (item.driveType === "Network"
+              ? "Execução registrada a partir de recurso de rede (informativo)"
+              : "Execução registrada a partir de mídia removível")
+          : "Processo executado recentemente e arquivo não localizado",
+      removableExePriority
+        ? "critical"
+        : item.driveType === "Network"
+          ? "info"
+          : external
+            ? "high"
+            : "medium",
+      "process_history",
+      p || item.processName || "processo",
+      {
+        ...item,
+        priorityMaximum: removableExePriority,
+        usbExecution: removableExePriority,
+        protectedByTechnicalEngine: removableExePriority,
+        executionConfirmed: true,
+        technicalVerdict: removableExePriority ? "critical_confirmed_execution" : "execution_evidence",
+        confidence:
+          removableExePriority
+            ? "high"
+            : item.driveType === "Network"
+              ? "info"
+              : external
+                ? "high"
+                : "medium",
+        note: removableExePriority
+          ? "O Event Log 4688 confirma execução de EXE não confiável em unidade removível. Deve aparecer no topo da prioridade."
+          : item.driveType === "Network"
+            ? "Execução confirmada pelo Event Log 4688 a partir de recurso de rede. Mantida apenas como contexto azul."
+            : "Execução confirmada pelo Event Log 4688; caminhos normais do Windows e Program Files são ignorados.",
+      }
+    );
+  }
+
+  // Defense in depth: older agents may have sent legitimate PE-based
+  // formats such as .node/.winmd. Only deceptive user-facing extensions count.
+  const deceptiveExtensions = new Set([
+    ".txt", ".log", ".csv", ".json", ".xml", ".ini", ".cfg",
+    ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".ico",
+    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+    ".zip", ".rar", ".7z", ".tar", ".gz",
+    ".mp3", ".wav", ".ogg", ".mp4", ".avi", ".mkv", ".mov",
+    ".html", ".htm", ".css", ".md"
+  ]);
+
+  for (const item of report.extensionMismatches || []) {
+    const candidatePath = String(item.path || item.name || "");
+    const extension = path.extname(candidatePath).toLowerCase();
+
+    if (!deceptiveExtensions.has(extension))
+      continue;
+
+    await insertReviewFinding(
+      analysisId,
+      "Executável disfarçado com extensão não executável",
+      "medium",
+      "extension_mismatch",
+      candidatePath || "arquivo",
+      {
+        ...item,
+        confidence: "medium",
+        note: "O arquivo possui cabeçalho PE/MZ, mas usa uma extensão normalmente associada a documento, mídia, arquivo compactado ou texto.",
+      }
+    );
+  }
+
+  // Spreadsheet/document downloads with preserved origin are reviewed by AI
+  // using metadata only. The server does not download, scrape or execute them.
+  for (const download of report.browserDownloads || []) {
+    const downloadName = String(
+      download.fileName ||
+      download.targetPath ||
+      download.currentPath ||
+      ""
+    );
+
+    const extension = path.extname(downloadName).toLowerCase();
+    if (![".xls", ".xlsx"].includes(extension))
+      continue;
+
+    const originUrls = [
+      download.sourceUrl,
+      download.finalUrl,
+      download.pageUrl,
+      download.siteUrl,
+      download.referrerUrl,
+      ...(Array.isArray(download.urlChain) ? download.urlChain : [])
+    ].filter(Boolean);
+
+    if (!originUrls.length)
+      continue;
+
+    await insertReviewFinding(
+      analysisId,
+      "Origem de planilha baixada para revisão",
+      "medium",
+      "browser_download",
+      download.targetPath || download.fileName || originUrls[0],
+      {
+        ...download,
+        extension,
+        originReviewRequested: true,
+        confidence: "medium",
+        note: "Planilha com origem de download preservada. A origem é avaliada pelos filtros locais de catálogo; a extensão .xls/.xlsx isoladamente não é evidência de cheat."
+      }
+    );
+  }
+
+  // Browser download history is inventory by default. It becomes an
+  // automatic finding only when a missing executable can be correlated with
+  // actual execution evidence collected from Windows.
+  const executionEvidence = [];
+
+  for (const execution of report.prefetchExecutions || []) {
+    executionEvidence.push({
+      source: "Prefetch",
+      name: String(execution.executableName || "").toLowerCase(),
+      path: normalizePath(
+        execution.resolvedExecutablePath ||
+        execution.nativeExecutablePath ||
+        ""),
+      time: execution.lastRunUtc || null,
+      evidence: execution,
+    });
+  }
+
+  for (const item of report.bam || []) {
+    executionEvidence.push({
+      source: "BAM",
+      name: fileName(item.path || "").toLowerCase(),
+      path: normalizePath(item.path || ""),
+      time: item.lastExecutionUtc || null,
+      evidence: item,
+    });
+  }
+
+  for (const item of report.processCreationEvents || []) {
+    executionEvidence.push({
+      source: "Event 4688",
+      name: String(item.processName || "").toLowerCase(),
+      path: normalizePath(item.processPath || ""),
+      time: item.timeCreatedUtc || null,
+      evidence: item,
+    });
+  }
+
+  for (const download of report.browserDownloads || []) {
+    if (download.fileMissing !== true)
+      continue;
+
+    const downloadedName = String(download.fileName || "").toLowerCase();
+    if (!downloadedName)
+      continue;
+
+    const ext = path.extname(downloadedName).toLowerCase();
+    const executableLike = new Set([
+      ".exe", ".com", ".scr", ".dll", ".bat", ".cmd", ".ps1", ".msi"
+    ]).has(ext);
+
+    if (!executableLike)
+      continue;
+
+    const downloadTime = download.startTimeUtc
+      ? new Date(download.startTimeUtc).getTime()
+      : 0;
+
+    const matches = executionEvidence
+      .filter((candidate) => {
+        if (!candidate.name ||
+            candidate.name !== downloadedName)
+          return false;
+
+        if (!candidate.time || !downloadTime)
+          return true;
+
+        const executionTime = new Date(candidate.time).getTime();
+        if (!Number.isFinite(executionTime))
+          return true;
+
+        // Allow small timestamp drift, but execution should normally occur
+        // after the download and within 30 days.
+        return executionTime >= downloadTime - 5 * 60 * 1000 &&
+          executionTime <= downloadTime + 30 * 86400000;
+      })
+      .slice(0, 5);
+
+    if (!matches.length)
+      continue;
+
+    await insertReviewFinding(
+      analysisId,
+      "Arquivo baixado, executado e depois não localizado",
+      "high",
+      "browser_download",
+      download.targetPath || download.fileName || "download",
+      {
+        ...download,
+        confidence: "high",
+        executionEvidence: matches,
+        note: "O histórico do navegador preserva a origem do download; o arquivo não está mais no caminho de destino e há evidência separada de execução pelo Windows.",
+      }
+    );
+  }
+
+  // Recycle Bin is inventory by default. Only escalate when the same
+  // executable also has independent execution evidence.
+  for (const deleted of report.recycleBin || []) {
+    const deletedName = String(deleted.fileName || "").toLowerCase();
+    if (!deletedName)
+      continue;
+
+    const ext = path.extname(deletedName).toLowerCase();
+    const executableLike = new Set([
+      ".exe", ".com", ".scr", ".dll", ".bat", ".cmd", ".ps1", ".msi"
+    ]).has(ext);
+
+    if (!executableLike)
+      continue;
+
+    const deletionTime = deleted.deletedAtUtc
+      ? new Date(deleted.deletedAtUtc).getTime()
+      : 0;
+
+    const strangeDeletedExe =
+      ext === ".exe" &&
+      isStrangeDeletedExecutableName(
+        deleted.originalPath ||
+        deleted.fileName
+      );
+
+    if (strangeDeletedExe) {
+      await insertReviewFinding(
+        analysisId,
+        "PRIORIDADE MÁXIMA: EXE suspeito enviado para a Lixeira",
+        "critical",
+        "recycle_bin",
+        deleted.originalPath || deleted.fileName || "Lixeira",
+        {
+          ...deleted,
+          priorityMaximum: true,
+          protectedByTechnicalEngine: true,
+          deletedSuspiciousExecutable: true,
+          executionConfirmed: false,
+          confidence: "high",
+          note:
+            "A Lixeira confirma a remoção de um EXE suspeito. Não é necessário haver evidência de execução para mantê-lo no topo.",
+        }
+      );
+
+      continue;
+    }
+
+    const matches = executionEvidence
+      .filter((candidate) => {
+        if (!candidate.name || candidate.name !== deletedName)
+          return false;
+
+        if (!candidate.time || !deletionTime)
+          return true;
+
+        const executionTime = new Date(candidate.time).getTime();
+        if (!Number.isFinite(executionTime))
+          return true;
+
+        return executionTime <= deletionTime + 5 * 60 * 1000 &&
+          executionTime >= deletionTime - 30 * 86400000;
+      })
+      .slice(0, 5);
+
+    if (!matches.length)
+      continue;
+
+    const trustedDeletedExe =
+      ext === ".exe" &&
+      (
+        isAbsoluteTrustedCatalogArtifact(
+          "recycle_bin",
+          deleted.originalPath || deleted.fileName || "",
+          deleted
+        ) ||
+        isTrustedCommonAppArtifact(
+          deleted.originalPath || deleted.fileName || "",
+          deleted
+        )
+      );
+
+    await insertReviewFinding(
+      analysisId,
+      ext === ".exe" && !trustedDeletedExe
+        ? "PRIORIDADE MÁXIMA: EXE executado e depois apagado"
+        : "Executável executado e depois enviado para a Lixeira",
+      ext === ".exe" && !trustedDeletedExe
+        ? "critical"
+        : "high",
+      "recycle_bin",
+      deleted.originalPath || deleted.fileName || "Lixeira",
+      {
+        ...deleted,
+        priorityMaximum:
+          ext === ".exe" && !trustedDeletedExe,
+        protectedByTechnicalEngine:
+          ext === ".exe" && !trustedDeletedExe,
+        deletedExecutedExecutable:
+          ext === ".exe" && !trustedDeletedExe,
+        executionConfirmed: true,
+        confidence: "high",
+        executionEvidence: matches,
+        note:
+          ext === ".exe" && !trustedDeletedExe
+            ? "A Lixeira confirma a exclusão do .exe e existe evidência independente de execução. Como o arquivo não pertence ao catálogo confiável, o Vorken classifica o achado como crítico."
+            : "A Lixeira preserva o caminho original e horário de exclusão; o mesmo nome possui evidência separada de execução.",
+      }
+    );
+  }
+
+  // The agent only sends browser-history rows that matched the
+  // anti-cheat vocabulary. Keep low-score rows as context and create
+  // automatic findings only for medium/high confidence matches.
+  const browserHistoryFindingKeys = new Set();
+
+  for (const item of report.browserHistorySignals || []) {
+    const risk = String(item.riskLevel || "").toLowerCase();
+    if (!["medium", "high"].includes(risk))
+      continue;
+
+    const isSearch = Boolean(String(item.searchQuery || "").trim());
+
+    const historyKey = isSearch
+      ? "search|" + String(item.searchQuery || "").trim().toLowerCase()
+      : "url|" + String(item.url || item.host || "").trim().toLowerCase();
+
+    if (historyKey.endsWith("|") || browserHistoryFindingKeys.has(historyKey))
+      continue;
+
+    browserHistoryFindingKeys.add(historyKey);
+
+    const directKnownSite =
+      !isSearch &&
+      !isSearchEngineUrl(item.url) &&
+      findRustCatalogMatches(item.url, item.host)
+        .some((match) => isDirectCatalogWebMatch(match, item));
+
+    await insertReviewFinding(
+      analysisId,
+      isSearch
+        ? "Pesquisa no navegador relacionada a cheat/script/hack"
+        : directKnownSite
+          ? "Site suspeito acessado (catálogo)"
+          : "Site relacionado a cheat/script/hack",
+      isSearch
+        ? "medium"
+        : directKnownSite
+          ? "critical"
+          : "medium",
+      "browser_history",
+      item.searchQuery || item.url || item.host || "Histórico do navegador",
+      {
+        ...item,
+        priorityMaximum: directKnownSite,
+        confidence: isSearch ? "medium" : directKnownSite ? "high" : "medium",
+        note: isSearch
+          ? "Pesquisa em mecanismo de busca: ocorrência amarela/média. Pesquisa não equivale a acesso direto ao site."
+          : directKnownSite
+            ? "A URL visitada corresponde diretamente a domínio/convite do catálogo Rust."
+            : "A página contém termos relevantes, mas não corresponde diretamente a um domínio conhecido; mantida como média para revisão.",
+      }
+    );
+  }
+
+  // Defender history is useful evidence, but still requires human review.
+  for (const item of report.defenderDetections || []) {
+    if (!item.threatName && !item.path) continue;
+
+    await insertReviewFinding(
+      analysisId,
+      "Histórico de detecção do Microsoft Defender",
+      "medium",
+      "defender_detection",
+      item.threatName || item.path || "Defender",
+      {
+        ...item,
+        confidence: "medium",
+        note: "Registro do Microsoft Defender. Confirme nome, caminho e horário; não é ban automático.",
+      }
+    );
+  }
+
+  const knownOverlayTokens = [
+    "discord",
+    "steam",
+    "gameoverlayrenderer",
+    "nvidia",
+    "nvspcap",
+    "amd",
+    "radeon",
+    "obs",
+    "overwolf",
+    "medal",
+    "steelseries",
+    "logitech",
+    "razer",
+    "microsoft"
+  ];
+
+  // Loaded modules become findings only when they are external, unsigned and
+  // not a known overlay/vendor module.
+  for (const item of report.rustModules || []) {
+    const haystack = [
+      item.path,
+      item.moduleName,
+      item.companyName,
+      item.signerSubject
+    ].join(" ").toLowerCase();
+
+    const knownOverlay =
+      knownOverlayTokens.some((token) => haystack.includes(token));
+
+    const suspiciousExternal =
+      !knownOverlay &&
+      item.signed === false &&
+      item.underGameDirectory === false &&
+      item.underWindows === false &&
+      (
+        item.underTemp === true ||
+        (
+          item.underUserProfile === true &&
+          !item.underProgramFiles &&
+          !item.companyName
+        )
+      );
+
+    if (!suspiciousExternal)
+      continue;
+
+    await insertReviewFinding(
+      analysisId,
+      "Módulo externo não assinado carregado no Rust",
+      "critical",
+      "rust_module",
+      item.path || item.moduleName || "DLL",
+      {
+        ...item,
+        priorityMaximum: true,
+        protectedByTechnicalEngine: true,
+        injectionIntoRust: true,
+        confidence: "high",
+        note: "Módulos conhecidos de Steam/Discord/GPU/overlays são filtrados. Este módulo externo não assinado foi carregado dentro do Rust e é tratado como crítico.",
+      }
+    );
+  }
+
+  // Boot integrity changes are kept because they materially alter Windows
+  // integrity guarantees, but they are not classified as cheat by themselves.
+  for (const item of report.bootIntegrity || []) {
+    const raw = String(item.raw || "").toLowerCase();
+    const enabled =
+      /\b(yes|sim|on|true|1)\b/.test(raw) &&
+      !/\b(no|não|off|false|0)\b/.test(raw);
+
+    if (!enabled) continue;
+
+    await insertReviewFinding(
+      analysisId,
+      "Configuração de integridade de boot alterada",
+      "medium",
+      "boot_integrity",
+      item.raw || item.setting || "BCD",
+      {
+        ...item,
+        confidence: "context",
+        note: "Test mode, debug ou nointegritychecks alteram garantias do Windows. É contexto técnico, não prova isolada de cheat.",
+      }
+    );
+  }
+
+  // Deliberately NOT added to 'findings' automatically:
+  // - generic missing Amcache/ShimCache entries
+  // - unresolved Prefetch volumes by themselves
+  // - virtual disks
+  // - Activity History policy
+  // - USN Journal availability
+  // - volumes without drive letters
+  // - generic system time changes
+  // These stay in the report as technical context without inflating detections.
+}
+
+app.get("/health", (_req, res) => {
+  res.json({ ok: true, service: "vorken-anticheat" });
+});
+
+app.post("/api/admin/login", (req, res) => {
+  const configured = String(process.env.ADMIN_PASSWORD || "");
+  if (!configured || !sessionSecret()) {
+    return res.status(503).json({
+      error: "admin_not_configured",
+      message: "Configure ADMIN_PASSWORD e SESSION_SECRET.",
+    });
+  }
+
+  if (!safeEqual(req.body?.password, configured)) {
+    return res.status(401).json({ error: "invalid_credentials", message: "Senha incorreta." });
+  }
+
+  const token = signSession({
+    admin: true,
+    exp: Date.now() + ADMIN_SESSION_MS,
+  });
+
+  res.cookie(ADMIN_COOKIE, token, {
+    httpOnly: true,
+    sameSite: "strict",
+    secure: process.env.NODE_ENV === "production",
+    maxAge: ADMIN_SESSION_MS,
+  });
+
+  res.json({ ok: true });
+});
+
+app.post("/api/admin/logout", (_req, res) => {
+  res.clearCookie(ADMIN_COOKIE);
+  res.json({ ok: true });
+});
+
+app.get("/api/admin/me", requireAdmin, (_req, res) => {
+  res.json({ authenticated: true });
+});
+
+
+
+function integrationSecretMatches(req) {
+  const configured =
+    String(process.env.VORKEN_GF_INTEGRATION_KEY || "").trim();
+
+  const supplied =
+    String(req.get("x-vorken-integration-key") || "").trim();
+
+  if (!configured || !supplied)
+    return false;
+
+  const left = Buffer.from(configured);
+  const right = Buffer.from(supplied);
+
+  return left.length === right.length &&
+    crypto.timingSafeEqual(left, right);
+}
+
+function requireGuerraFriaIntegration(req, res, next) {
+  if (!String(process.env.VORKEN_GF_INTEGRATION_KEY || "").trim()) {
+    return res.status(503).json({
+      error: "integration_not_configured",
+      message: "Integração Guerra Fria não configurada."
+    });
+  }
+
+  if (!integrationSecretMatches(req)) {
+    return res.status(401).json({
+      error: "invalid_integration_key"
+    });
+  }
+
+  next();
+}
+
+function normalizeVerificationCode(value) {
+  return String(value || "")
+    .replace(/\D/g, "")
+    .slice(0, 4);
+}
+
+app.post(
+  "/api/integrations/guerra-fria/session",
+  requireGuerraFriaIntegration,
+  async (req, res) => {
+    const code = normalizeVerificationCode(req.body?.code);
+    const steamId = cleanText(req.body?.steamId, 32);
+    const playerName = cleanText(req.body?.playerName, 100) || steamId;
+    const administratorId = cleanText(req.body?.administratorId, 40) || null;
+    const ttlSeconds = Math.max(
+      120,
+      Math.min(3600, Math.trunc(Number(req.body?.ttlSeconds || 600)))
+    );
+
+    if (!/^\d{4}$/.test(code))
+      return res.status(400).json({ error: "invalid_verification_code" });
+
+    if (!/^7656119\d{10}$/.test(steamId))
+      return res.status(400).json({ error: "invalid_steam_id" });
+
+    await pool.query(
+      `UPDATE guerra_fria_verifications
+       SET status='superseded', updated_at=NOW()
+       WHERE steam_id=$1
+         AND status='pending'
+         AND verification_code<>$2`,
+      [steamId, code]
+    );
+
+    const result = await pool.query(
+      `INSERT INTO guerra_fria_verifications(
+         verification_code,
+         steam_id,
+         player_name,
+         administrator_id,
+         expires_at
+       )
+       VALUES ($1,$2,$3,$4,NOW() + ($5 || ' seconds')::interval)
+       ON CONFLICT (verification_code)
+       DO UPDATE SET
+         steam_id=EXCLUDED.steam_id,
+         player_name=EXCLUDED.player_name,
+         administrator_id=EXCLUDED.administrator_id,
+         discord_user_id=NULL,
+         ticket_channel_id=NULL,
+         analysis_id=NULL,
+         status='pending',
+         expires_at=EXCLUDED.expires_at,
+         redeemed_at=NULL,
+         updated_at=NOW()
+       RETURNING verification_code, steam_id, player_name, status, expires_at`,
+      [code, steamId, playerName, administratorId, String(ttlSeconds)]
+    );
+
+    res.json({ ok: true, session: result.rows[0] });
+  }
+);
+
+app.post(
+  "/api/integrations/guerra-fria/session/redeem",
+  requireGuerraFriaIntegration,
+  async (req, res) => {
+    const code = normalizeVerificationCode(req.body?.code);
+    const discordUserId = cleanText(req.body?.discordUserId, 40);
+
+    if (!/^\d{4}$/.test(code))
+      return res.status(400).json({ error: "invalid_verification_code", message: "Código inválido." });
+
+    if (!/^\d{16,20}$/.test(discordUserId))
+      return res.status(400).json({ error: "invalid_discord_user" });
+
+    const client = await pool.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      const sessionResult = await client.query(
+        `SELECT *
+         FROM guerra_fria_verifications
+         WHERE verification_code=$1
+         LIMIT 1
+         FOR UPDATE`,
+        [code]
+      );
+
+      const session = sessionResult.rows[0];
+
+      if (!session) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({
+          error: "verification_code_not_found",
+          message: "Código não encontrado."
+        });
+      }
+
+      if (session.expires_at &&
+          new Date(session.expires_at).getTime() < Date.now()) {
+        await client.query(
+          `UPDATE guerra_fria_verifications
+           SET status='expired', updated_at=NOW()
+           WHERE id=$1`,
+          [session.id]
+        );
+        await client.query("COMMIT");
+        return res.status(410).json({
+          error: "verification_code_expired",
+          message: "Esse código expirou."
+        });
+      }
+
+      if (session.status === "redeemed") {
+        if (String(session.discord_user_id || "") !== discordUserId ||
+            !session.analysis_id) {
+          await client.query("ROLLBACK");
+          return res.status(409).json({
+            error: "verification_code_used",
+            message: "Esse código já foi utilizado."
+          });
+        }
+
+        const existing = await client.query(
+          `SELECT id, public_token, label
+           FROM analyses
+           WHERE id=$1
+           LIMIT 1`,
+          [session.analysis_id]
+        );
+
+        await client.query("COMMIT");
+
+        const analysis = existing.rows[0];
+
+        return res.json({
+          ok: true,
+          alreadyRedeemed: true,
+          analysisId: Number(analysis.id),
+          publicLink: publicUrl + "/a/" + analysis.public_token,
+          steamId: session.steam_id,
+          playerName: session.player_name,
+          administratorId: session.administrator_id
+        });
+      }
+
+      if (session.status !== "pending") {
+        await client.query("ROLLBACK");
+        return res.status(409).json({
+          error: "verification_code_inactive",
+          message: "Esse código não está mais ativo."
+        });
+      }
+
+      const token = analysisToken();
+
+      const analysisResult = await client.query(
+        `INSERT INTO analyses(
+           public_token,
+           label,
+           expires_at,
+           external_source,
+           external_player_id,
+           external_discord_user_id,
+           external_verification_code
+         )
+         VALUES (
+           $1,$2,
+           NOW() + interval '8 hours',
+           'guerra_fria',
+           $3,$4,$5
+         )
+         RETURNING id, public_token, label`,
+        [
+          token,
+          `Guerra Fria · ${session.player_name} · ${session.steam_id}`,
+          session.steam_id,
+          discordUserId,
+          code
+        ]
+      );
+
+      const analysis = analysisResult.rows[0];
+
+      await client.query(
+        `UPDATE guerra_fria_verifications
+         SET status='redeemed',
+             discord_user_id=$2,
+             analysis_id=$3,
+             redeemed_at=NOW(),
+             updated_at=NOW()
+         WHERE id=$1`,
+        [session.id, discordUserId, analysis.id]
+      );
+
+      await client.query("COMMIT");
+
+      res.json({
+        ok: true,
+        analysisId: Number(analysis.id),
+        publicLink: publicUrl + "/a/" + analysis.public_token,
+        steamId: session.steam_id,
+        playerName: session.player_name,
+        administratorId: session.administrator_id
+      });
+    } catch (error) {
+      try { await client.query("ROLLBACK"); } catch {}
+      console.error("Falha ao resgatar código Guerra Fria:", error);
+      res.status(500).json({
+        error: "verification_redeem_failed",
+        message: "Não foi possível criar a análise."
+      });
+    } finally {
+      client.release();
+    }
+  }
+);
+
+app.post(
+  "/api/integrations/guerra-fria/session/:code/ticket",
+  requireGuerraFriaIntegration,
+  async (req, res) => {
+    const code = normalizeVerificationCode(req.params.code);
+    const ticketChannelId = cleanText(req.body?.ticketChannelId, 40);
+
+    if (!/^\d{16,20}$/.test(ticketChannelId))
+      return res.status(400).json({ error: "invalid_ticket_channel" });
+
+    const result = await pool.query(
+      `UPDATE guerra_fria_verifications
+       SET ticket_channel_id=$2, updated_at=NOW()
+       WHERE verification_code=$1
+         AND status='redeemed'
+       RETURNING analysis_id`,
+      [code, ticketChannelId]
+    );
+
+    if (!result.rows[0])
+      return res.status(404).json({ error: "verification_session_not_found" });
+
+    await pool.query(
+      `UPDATE analyses
+       SET external_ticket_channel_id=$2
+       WHERE id=$1`,
+      [result.rows[0].analysis_id, ticketChannelId]
+    );
+
+    res.json({ ok: true });
+  }
+);
+
+app.post(
+  "/api/integrations/guerra-fria/session/:code/cancel",
+  requireGuerraFriaIntegration,
+  async (req, res) => {
+    const code = normalizeVerificationCode(req.params.code);
+
+    await pool.query(
+      `UPDATE guerra_fria_verifications
+       SET status='cancelled', updated_at=NOW()
+       WHERE verification_code=$1
+         AND status='pending'`,
+      [code]
+    );
+
+    res.json({ ok: true });
+  }
+);
+
+app.get("/api/admin/analyses", requireAdmin, async (_req, res) => {
+  const result = await pool.query(`
+    SELECT
+      a.id,
+      a.label,
+      a.status,
+      a.created_at,
+      a.expires_at,
+      a.started_at,
+      a.finished_at,
+      a.machine_name,
+      a.os_version,
+      a.agent_version,
+      a.machine_fingerprint,
+      a.processing_stage,
+      a.processing_message,
+      a.client_report_released,
+      a.external_source,
+      a.external_player_id,
+      a.external_discord_user_id,
+      a.external_ticket_channel_id,
+      a.external_verification_code,
+      a.external_decision,
+      a.external_decision_at,
+      a.external_decision_result,
+      a.external_evidence_url,
+      COALESCE(f.total_findings, 0)::int AS total_findings,
+      COALESCE(f.critical_findings, 0)::int AS critical_findings,
+      COALESCE(f.review_findings, 0)::int AS review_findings,
+      COALESCE(f.high_findings, 0)::int AS high_findings
+    FROM analyses a
+    LEFT JOIN (
+      SELECT
+        sf.analysis_id,
+        COUNT(DISTINCT LOWER(sf.artifact_type) || '|' || LOWER(TRIM(sf.artifact_value)))
+          FILTER (
+            WHERE sf.severity IN ('medium','high','critical')
+              AND LOWER(COALESCE(sf.artifact_value,'')) NOT LIKE '%vorken%'
+              AND LOWER(COALESCE(sf.evidence::text,'')) NOT LIKE '%vorken%'
+          ) AS total_findings,
+        COUNT(DISTINCT LOWER(sf.artifact_type) || '|' || LOWER(TRIM(sf.artifact_value)))
+          FILTER (
+            WHERE sf.severity='critical'
+              AND LOWER(COALESCE(sf.artifact_value,'')) NOT LIKE '%vorken%'
+              AND LOWER(COALESCE(sf.evidence::text,'')) NOT LIKE '%vorken%'
+          ) AS critical_findings,
+        COUNT(DISTINCT LOWER(sf.artifact_type) || '|' || LOWER(TRIM(sf.artifact_value)))
+          FILTER (
+            WHERE sf.severity IN ('high','medium')
+              AND LOWER(COALESCE(sf.artifact_value,'')) NOT LIKE '%vorken%'
+              AND LOWER(COALESCE(sf.evidence::text,'')) NOT LIKE '%vorken%'
+          ) AS review_findings,
+        COUNT(DISTINCT LOWER(sf.artifact_type) || '|' || LOWER(TRIM(sf.artifact_value)))
+          FILTER (
+            WHERE sf.severity IN ('high','critical')
+              AND LOWER(COALESCE(sf.artifact_value,'')) NOT LIKE '%vorken%'
+              AND LOWER(COALESCE(sf.evidence::text,'')) NOT LIKE '%vorken%'
+          ) AS high_findings
+      FROM scan_findings sf
+      WHERE sf.analysis_id IN (
+        SELECT id
+        FROM analyses
+        ORDER BY id DESC
+        LIMIT 500
+      )
+      GROUP BY sf.analysis_id
+    ) f ON f.analysis_id = a.id
+    ORDER BY a.id DESC
+    LIMIT 500
+  `);
+
+  res.json({
+    analyses: result.rows.map((item) => ({
+      ...item,
+      processing_stage:
+        publicProcessingStage(item.processing_stage),
+    })),
+  });
+});
+
+app.post("/api/admin/analyses", requireAdmin, async (req, res) => {
+  const label = cleanText(req.body?.label, 140);
+  const ttlHours = Math.max(1, Math.min(168, Math.trunc(Number(req.body?.ttlHours || 24))));
+
+  if (label.length < 2) {
+    return res.status(400).json({ error: "invalid_label", message: "Informe um nome para a análise." });
+  }
+
+  const serverId = req.body?.serverId == null || req.body.serverId === '' ? null : Number(req.body.serverId);
+  if (serverId !== null && (!Number.isSafeInteger(serverId) || serverId <= 0))
+    return res.status(400).json({message: "Servidor inválido."});
+  if (serverId !== null && !(await pool.query('SELECT id FROM fleet_servers WHERE id=$1', [serverId])).rows.length)
+    return res.status(400).json({message: "Servidor não encontrado."});
+  const token = analysisToken();
+  const result = await pool.query(
+    `INSERT INTO analyses(public_token, label, expires_at, fleet_server_id)
+     VALUES ($1,$2,NOW() + ($3 || ' hours')::interval,$4)
+     RETURNING *`,
+    [token, label, String(ttlHours), serverId]
+  );
+
+  const analysis = result.rows[0];
+  res.status(201).json({
+    analysis,
+    publicLink: publicUrl + "/a/" + token,
+  });
+});
+
+function compactAdminUiValue(value, depth = 0) {
+  if (value == null) return value;
+
+  if (typeof value === "string")
+    return value.length > 4000 ? value.slice(0, 4000) + "…" : value;
+
+  if (typeof value !== "object")
+    return value;
+
+  if (depth >= 4)
+    return Array.isArray(value) ? [] : {};
+
+  if (Array.isArray(value))
+    return value.slice(0, 50).map((item) => compactAdminUiValue(item, depth + 1));
+
+  const out = {};
+  for (const [key, item] of Object.entries(value).slice(0, 40))
+    out[key] = compactAdminUiValue(item, depth + 1);
+
+  return out;
+}
+
+function compactAdminUiList(value, limit) {
+  return Array.isArray(value)
+    ? value.slice(0, limit).map((item) => compactAdminUiValue(item))
+    : [];
+}
+
+function compactAdminCatalogMatch(value) {
+  if (!value || typeof value !== "object")
+    return value || null;
+
+  const out = {};
+  for (const key of [
+    "name",
+    "title",
+    "domain",
+    "url",
+    "source",
+    "category",
+    "kind",
+    "confidence",
+  ]) {
+    if (value[key] != null)
+      out[key] = compactAdminUiValue(value[key], 1);
+  }
+  return out;
+}
+
+function compactAdminFindingEvidence(evidence) {
+  if (!evidence || typeof evidence !== "object")
+    return {};
+
+  const out = {};
+  for (const key of [
+    "note",
+    "priorityMaximum",
+    "protectedByTechnicalEngine",
+    "usbExecution",
+    "knownCheatDomain",
+    "directCatalogMatch",
+    "executionConfirmed",
+    "fileName",
+    "name",
+    "path",
+    "fullPath",
+    "currentPath",
+    "originalPath",
+    "targetPath",
+    "url",
+    "sourceUrl",
+    "finalUrl",
+    "referrerUrl",
+    "siteUrl",
+    "pageUrl",
+    "browser",
+    "profile",
+    "visitTimeUtc",
+    "recoveredAtUtc",
+    "recoveredUrl",
+  ]) {
+    if (evidence[key] != null)
+      out[key] = compactAdminUiValue(evidence[key], 1);
+  }
+
+  if (evidence.catalogMatch)
+    out.catalogMatch = compactAdminCatalogMatch(evidence.catalogMatch);
+
+  if (Array.isArray(evidence.catalogMatches)) {
+    out.catalogMatches = evidence.catalogMatches
+      .slice(0, 3)
+      .map(compactAdminCatalogMatch)
+      .filter(Boolean);
+  }
+
+  return out;
+}
+
+function compactUsbExecutionEvidence(payload) {
+  const rows = [];
+  const seen = new Set();
+
+  const removableDrives = new Set(
+    (Array.isArray(payload?.usbFiles) ? payload.usbFiles : [])
+      .map((item) => String(item?.drive || "").trim().replace(/[\\/]+$/, "").toLowerCase())
+      .filter(Boolean)
+  );
+
+  const pathOnCurrentRemovableDrive = (value) => {
+    const normalized = String(value || "")
+      .trim()
+      .replaceAll("/", "\\")
+      .toLowerCase();
+
+    if (!normalized)
+      return false;
+
+    for (const drive of removableDrives) {
+      const prefix = drive.endsWith(":") ? drive + "\\" : drive + "\\";
+      if (normalized === drive || normalized.startsWith(prefix))
+        return true;
+    }
+
+    return false;
+  };
+
+  const isExePath = (...values) =>
+    values.some((value) => /\.exe(?:$|[?#])/i.test(String(value || "").trim()));
+
+  const isSignMediaPath = (value) =>
+    /(^|[\\/])?sign\.media=[a-f0-9]+\s+.+\.exe(?:$|[?#])/i
+      .test(String(value || "").trim());
+
+  const add = (row) => {
+    const path = String(row.path || row.name || "").trim();
+    if (!path)
+      return;
+
+    const key = [
+      String(row.source || "").toLowerCase(),
+      path.toLowerCase(),
+      String(row.timeUtc || "")
+    ].join("|");
+
+    if (seen.has(key))
+      return;
+
+    seen.add(key);
+    rows.push({
+      source: String(row.source || "Evidência"),
+      name: String(row.name || path.split(/[\\/]/).pop() || "Arquivo"),
+      path,
+      timeUtc: row.timeUtc || null,
+      executionTimesUtc: Array.isArray(row.executionTimesUtc)
+        ? row.executionTimesUtc.slice(0, 12)
+        : [],
+      runCount: Number(row.runCount || 0),
+      removableConfirmed: row.removableConfirmed === true,
+      detachedRemovable: row.detachedRemovable === true,
+      isExe: row.isExe === true,
+      critical: row.isExe === true && row.removableConfirmed === true,
+      detail: String(row.detail || "")
+    });
+  };
+
+  for (const item of Array.isArray(payload?.prefetchExecutions) ? payload.prefetchExecutions : []) {
+    const path =
+      item?.resolvedExecutablePath ||
+      item?.nativeExecutablePath ||
+      item?.executableName ||
+      item?.prefetchFile ||
+      "";
+
+    const removableConfirmed =
+      item?.currentRemovable === true ||
+      pathOnCurrentRemovableDrive(path);
+
+    if (!removableConfirmed)
+      continue;
+
+    add({
+      source: "Prefetch",
+      name: item?.executableName || item?.prefetchFile || "",
+      path,
+      timeUtc: item?.lastRunUtc || null,
+      executionTimesUtc: item?.lastRunTimesUtc,
+      runCount: item?.runCount,
+      removableConfirmed,
+      detachedRemovable: false,
+      isExe: isExePath(item?.executableName, path, item?.prefetchFile),
+      detail: "Execução registrada em unidade removível confirmada pelo Windows."
+    });
+  }
+
+  for (const item of Array.isArray(payload?.processCreationEvents) ? payload.processCreationEvents : []) {
+    const path = item?.processPath || item?.processName || "";
+    const removable =
+      String(item?.driveType || "").toLowerCase() === "removable" ||
+      pathOnCurrentRemovableDrive(path) ||
+      isSignMediaPath(path);
+
+    if (!removable)
+      continue;
+
+    add({
+      source: "Windows Security 4688",
+      name: item?.processName || "",
+      path,
+      timeUtc: item?.timeCreatedUtc || null,
+      removableConfirmed: true,
+      isExe: isExePath(item?.processName, path),
+      detail: "Evento 4688 confirma criação/execução do processo em unidade removível."
+    });
+  }
+
+  for (const item of Array.isArray(payload?.bam) ? payload.bam : []) {
+    const path = item?.path || "";
+    if (!pathOnCurrentRemovableDrive(path))
+      continue;
+
+    add({
+      source: "BAM",
+      name: path.split(/[\\/]/).pop() || path,
+      path,
+      timeUtc: item?.lastExecutionUtc || null,
+      removableConfirmed: true,
+      isExe: isExePath(path),
+      detail: "BAM registra execução no caminho de um pendrive atualmente identificado como removível."
+    });
+  }
+
+  for (const item of Array.isArray(payload?.shimCache) ? payload.shimCache : []) {
+    const path = item?.path || "";
+    const executed =
+      item?.executed === true ||
+      ["true", "yes"].includes(String(item?.executed || "").toLowerCase());
+
+    const removable =
+      String(item?.driveType || "").toLowerCase() === "removable" ||
+      pathOnCurrentRemovableDrive(path);
+
+    if (!executed || !removable)
+      continue;
+
+    add({
+      source: "ShimCache",
+      name: path.split(/[\\/]/).pop() || path,
+      path,
+      timeUtc: item?.lastModifiedUtc || null,
+      removableConfirmed: true,
+      isExe: isExePath(path),
+      detail: isSignMediaPath(path)
+        ? "O marcador SIGN.MEDIA do Windows confirma execução a partir de mídia externa/removível."
+        : "ShimCache marca o arquivo como executado em unidade removível."
+    });
+  }
+
+  for (const item of Array.isArray(payload?.processes) ? payload.processes : []) {
+    const path = item?.path || item?.name || "";
+    if (!pathOnCurrentRemovableDrive(path))
+      continue;
+
+    add({
+      source: "Processo em execução",
+      name: item?.name || "",
+      path,
+      timeUtc: item?.startTimeUtc || null,
+      removableConfirmed: true,
+      isExe: isExePath(item?.name, path),
+      detail: "O processo estava ativo durante a coleta e seu executável está em pendrive/removível."
+    });
+  }
+
+  return rows
+    .sort((a, b) =>
+      Number(b.critical) - Number(a.critical) ||
+      new Date(b.timeUtc || 0) - new Date(a.timeUtc || 0))
+    .slice(0, 1200);
+}
+
+function compactAdminReportPayload(report) {
+  const payload =
+    report && typeof report === "object"
+      ? report
+      : {};
+
+  const count = (key) =>
+    Array.isArray(payload[key])
+      ? payload[key].length
+      : 0;
+
+  const suspiciousCount = (key) =>
+    Array.isArray(payload[key])
+      ? payload[key].filter((item) => item?.suspicious === true).length
+      : 0;
+
+  const countKeys = [
+    "steamAccounts",
+    "usbCurrent",
+    "usbHistory",
+    "usbTimeline",
+    "usbFiles",
+    "serialDevices",
+    "processes",
+    "prefetch",
+    "prefetchExecutions",
+    "services",
+    "drivers",
+    "startup",
+    "files",
+    "peInspections",
+    "zoneIdentifiers",
+    "alternateDataStreams",
+    "autorunIntegrity",
+    "processModuleIntegrity",
+    "processMemoryIntegrity",
+    "protectedWindows",
+    "bam",
+    "userAssist",
+    "muiCache",
+    "pca",
+    "amcache",
+    "shimCache",
+    "setupApiUsb",
+    "powerShellHits",
+    "powerShellArtifacts",
+    "prefetchIntegrity",
+    "hiddenVolumes",
+    "logClearSignals",
+    "processCreationEvents",
+    "defenderDetections",
+    "recentShortcuts",
+    "crashArtifacts",
+    "securityProducts",
+    "recycleBin",
+    "browserDownloads",
+    "browserHistorySignals",
+    "browserRecoveredArtifacts",
+    "networkIndicators",
+    "deletedUsnRecords",
+    "extensionMismatches",
+    "defenderExclusions",
+    "bootIntegrity",
+    "systemTimeChanges",
+    "virtualDisks",
+    "rustModules",
+    "usnJournalState",
+    "usnActivity",
+    "systemIntegrityExpansion",
+  ];
+
+  const uiCounts = {};
+  for (const key of countKeys)
+    uiCounts[key] = count(key);
+
+  const disconnectedUsb =
+    Array.isArray(payload.usbHistory)
+      ? payload.usbHistory.filter((item) => item?.present === false).length
+      : 0;
+
+  const advancedForensicsCount =
+    count("peInspections") +
+    count("zoneIdentifiers") +
+    count("alternateDataStreams") +
+    suspiciousCount("autorunIntegrity") +
+    suspiciousCount("processModuleIntegrity") +
+    count("processMemoryIntegrity") +
+    count("protectedWindows") +
+    count("powerShellArtifacts") +
+    count("crashArtifacts") +
+    count("securityProducts") +
+    count("networkIndicators") +
+    count("usnActivity") +
+    count("systemIntegrityExpansion");
+
+  const informationalInventoryCount =
+    count("files") +
+    count("browserDownloads") +
+    count("recycleBin") +
+    count("browserRecoveredArtifacts") +
+    count("deletedUsnRecords");
+
+  const hardwareTotal =
+    Number(payload.hardwareSummary?.totalRelevantDevices || count("serialDevices"));
+
+  return {
+    uiProjection: true,
+    uiCounts,
+    uiSummary: {
+      disconnectedUsb,
+      hardwareCount: disconnectedUsb + hardwareTotal,
+      advancedForensicsCount,
+      informationalInventoryCount,
+    },
+
+    // Only the categories that the first report screen can actually use are
+    // transferred. Large PE/process/file/USN inventories remain server-side.
+    steamAccounts: compactAdminUiList(payload.steamAccounts, 100),
+    steamAccountCorrelation: compactAdminUiValue(payload.steamAccountCorrelation || {}),
+    battleMetrics: payload.battleMetrics || null,
+    usbCurrent: compactAdminUiList(payload.usbCurrent, 150),
+    usbHistory: compactAdminUiList(payload.usbHistory, 400),
+    usbTimeline: compactAdminUiList(payload.usbTimeline, 400),
+    usbFiles: compactAdminUiList(payload.usbFiles, 300),
+    usbExecutionEvidence: compactAdminUiList(
+      compactUsbExecutionEvidence(payload),
+      1200
+    ),
+    serialDevices: compactAdminUiList(payload.serialDevices, 250),
+    browserHistorySignals: compactAdminUiList(payload.browserHistorySignals, 500),
+    browserDownloads: compactAdminUiList(payload.browserDownloads, 300),
+    browserRecoveredArtifacts: compactAdminUiList(payload.browserRecoveredArtifacts, 300),
+
+    hardwareSummary: compactAdminUiValue(payload.hardwareSummary || {}),
+    vmEnvironment: compactAdminUiValue(payload.vmEnvironment || {}),
+    systemArtifacts: compactAdminUiValue(payload.systemArtifacts || {}),
+    errors: compactAdminUiList(payload.errors, 20),
+  };
+}
+
+async function loadRawAnalysisReport(id){
+ const result=await pool.query('SELECT payload,payload_raw,payload_encoding FROM scan_reports WHERE analysis_id=$1 ORDER BY id DESC LIMIT 1',[id]);
+ return result.rows[0]?decodeStoredRawReport(result.rows[0]):null;
+}
+
+async function loadSharedAnalysisReport(id, serverId = null) {
+
+  const analysisResult = await pool.query(
+    `SELECT
+       id,
+       label,
+       status,
+       created_at,
+       expires_at,
+       started_at,
+       finished_at,
+       machine_name,
+       os_version,
+       agent_version,
+       machine_fingerprint,
+       processing_stage,
+       processing_message,
+       client_report_released,
+       fleet_server_id,
+       external_source,
+       external_player_id,
+       external_discord_user_id,
+       external_ticket_channel_id,
+       external_verification_code,
+       external_decision,
+       external_decision_at,
+       external_decision_result,
+       external_evidence_url
+     FROM analyses
+     WHERE id = $1
+     LIMIT 1`,
+    [id]
+  );
+  const analysis = analysisResult.rows[0];
+  if (!analysis) return null;
+
+  const reportResult = await pool.query(
+    `SELECT
+       payload,
+       CASE
+         WHEN payload->>'storageFallback' = 'true' THEN payload_raw
+         ELSE NULL
+       END AS payload_raw,
+       payload_encoding,
+       created_at
+     FROM scan_reports
+     WHERE analysis_id = $1
+     ORDER BY id DESC
+     LIMIT 1`,
+    [id]
+  );
+
+  let rawAdminReport = {};
+  if (reportResult.rows[0]) {
+    rawAdminReport = decodeStoredRawReport(reportResult.rows[0]);
+
+
+
+    delete reportResult.rows[0].payload_raw;
+    delete reportResult.rows[0].payload_encoding;
+  }
+
+  const findingsResult = await pool.query(
+    `SELECT
+       sf.id,
+       sf.rule_id,
+       sf.title,
+       sf.severity,
+       sf.artifact_type,
+       sf.artifact_value,
+       sf.evidence,
+       sf.created_at,
+       NULL::json AS review_layer
+     FROM scan_findings sf
+     WHERE sf.analysis_id = $1
+       AND LOWER(COALESCE(sf.artifact_value,'')) NOT LIKE '%vorken%'
+       AND LOWER(COALESCE(sf.evidence::text,'')) NOT LIKE '%vorken%'
+     ORDER BY
+       CASE WHEN sf.evidence->>'priorityMaximum' = 'true' THEN 100 ELSE 0 END DESC,
+       CASE sf.severity
+         WHEN 'critical' THEN 5
+         WHEN 'high' THEN 4
+         WHEN 'medium' THEN 3
+         WHEN 'low' THEN 2
+         ELSE 1
+       END DESC,
+       sf.id ASC`,
+    [id]
+  );
+
+  if (reportResult.rows[0]) {
+    reportResult.rows[0].payload = projectReportPayloadForAdmin({
+      ...rawAdminReport, usbExecutionEvidence: compactUsbExecutionEvidence(rawAdminReport),
+    }, findingsResult.rows);
+  }
+
+  const aiFilteredResult = {
+    rows: [],
+  };
+
+  let relatedAnalyses = [];
+
+  if (analysis.machine_fingerprint) {
+    const relatedResult = await pool.query(
+      `SELECT
+         id,
+         label,
+         status,
+         created_at,
+         started_at,
+         finished_at,
+         machine_name,
+         agent_version
+       FROM analyses
+       WHERE machine_fingerprint = $1
+         AND id <> $2
+         AND ($3::uuid IS NULL OR EXISTS (SELECT 1 FROM vorken_sessions vs WHERE vs.analysis_id=analyses.id AND vs.server_id=$3))
+       ORDER BY id DESC
+       LIMIT 20`,
+      [analysis.machine_fingerprint, id, serverId]
+    );
+
+    relatedAnalyses = relatedResult.rows;
+  }
+
+  const internalDetailStage =
+    analysis.processing_stage;
+
+  analysis.processing_stage =
+    publicProcessingStage(
+      internalDetailStage);
+
+  analysis.processing_message =
+    publicAgentProcessingMessage(
+      internalDetailStage,
+      analysis.status);
+
+  const visibility = await clientReportVisibility(pool, analysis);
+  analysis.client_report_automatic = visibility.automatic;
+
+  const analysisInternal = {
+    filter_status: "local_filters",
+  };
+
+  return {
+    analysis,
+    report: reportResult.rows[0] || null,
+    findings: findingsResult.rows.map((finding) => ({
+      ...finding,
+      evidence: projectFindingEvidenceForAdmin(withDownloadOrigins(finding,rawAdminReport)),
+    })),
+    filteredFindings: aiFilteredResult.rows,
+    reviewState: {
+      status: analysisInternal.filter_status || "local_filters",
+      error: null,
+      reviewedAt: null,
+    },
+    relatedAnalyses,
+    commonApps: commonAppCatalog,
+  };
+}
+
+app.get("/api/admin/analyses/:id", requireAdmin, async (req,res)=>{
+ const id=Number(req.params.id);
+ if(!Number.isInteger(id)||id<=0)return res.status(400).json({error:'invalid_id'});
+ const report=await loadSharedAnalysisReport(id);
+ if(!report)return res.status(404).json({error:'analysis_not_found'});
+ res.json(report);
+});
+
+const activeBattleMetricsChecks = new Map();
+async function refreshBattleMetrics(analysisId) {
+  if (activeBattleMetricsChecks.has(analysisId)) return activeBattleMetricsChecks.get(analysisId);
+  const work = (async () => {
+    const result = await pool.query(`SELECT a.external_player_id, r.id AS report_id, r.payload, r.payload_raw, r.payload_encoding
+      FROM analyses a JOIN LATERAL (SELECT * FROM scan_reports WHERE analysis_id=a.id ORDER BY id DESC LIMIT 1) r ON TRUE
+      WHERE a.id=$1 AND a.status='completed'`, [analysisId]);
+    const row = result.rows[0];
+    if (!row) throw new Error("Aguarde uma análise concluída com relatório para consultar o BattleMetrics.");
+    const payload = decodeStoredRawReport(row);
+    const value = await battleMetricsClient.analyze(payload, row.external_player_id);
+    // Patch only external context; preserve concurrent local reprocessing.
+    await pool.query("UPDATE scan_reports SET payload=jsonb_set(payload,'{battleMetrics}',$2::jsonb) WHERE id=$1", [row.report_id, JSON.stringify(value)]);
+    return value;
+  })();
+  activeBattleMetricsChecks.set(analysisId, work);
+  try { return await work; } finally { activeBattleMetricsChecks.delete(analysisId); }
+}
+app.post("/api/admin/analyses/:id/battlemetrics", requireAdmin, async (req,res) => {
+  if (req.get("X-Vorken-Request") !== "portal") return res.status(403).json({message:"Origem da solicitação inválida."});
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id) || id <= 0) return res.status(400).json({message:"Análise inválida."});
+  try { res.json({battleMetrics:await refreshBattleMetrics(id)}); }
+  catch { res.status(409).json({message:"Não foi possível consultar. Verifique se a análise foi concluída."}); }
+});
+
+app.get("/api/admin/analyses/:id/raw-hash", requireAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0)
+    return res.status(400).json({ error: "invalid_id" });
+
+  const result = await pool.query(
+    `SELECT payload, payload_raw, payload_encoding
+     FROM scan_reports
+     WHERE analysis_id = $1
+     ORDER BY id DESC
+     LIMIT 1`,
+    [id]
+  );
+
+  if (!result.rows[0])
+    return res.status(404).json({ error: "report_not_found" });
+
+  const payload = decodeStoredRawReport(result.rows[0]);
+  const raw = JSON.stringify(payload ?? {});
+  const sha256 = crypto
+    .createHash("sha256")
+    .update(raw, "utf8")
+    .digest("hex");
+
+  res.json({ sha256, sizeBytes: Buffer.byteLength(raw, "utf8") });
+});
+
+app.get("/api/admin/analyses/:id/raw", requireAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0)
+    return res.status(400).json({ error: "invalid_id" });
+
+  const result = await pool.query(
+    `SELECT payload, payload_raw, payload_encoding
+     FROM scan_reports
+     WHERE analysis_id = $1
+     ORDER BY id DESC
+     LIMIT 1`,
+    [id]
+  );
+
+  if (!result.rows[0])
+    return res.status(404).json({ error: "report_not_found" });
+
+  const payload = decodeStoredRawReport(result.rows[0]);
+  const raw = JSON.stringify(payload ?? {}, null, 2);
+
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="vorken-analysis-${id}-raw.json"`
+  );
+  res.send(raw);
+});
+
+
+app.post(
+  "/api/admin/analyses/:id/guerra-fria-decision",
+  requireAdmin,
+  async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0)
+      return res.status(400).json({ error: "invalid_id" });
+
+    const decision =
+      String(req.body?.decision || "")
+        .trim()
+        .toLowerCase();
+
+    if (!["approve", "deny"].includes(decision))
+      return res.status(400).json({ error: "invalid_decision" });
+
+    const reason =
+      cleanText(req.body?.reason, 500) ||
+      (decision === "deny"
+        ? "Resultado da verificação reprovado."
+        : "Resultado da verificação aprovado.");
+
+    const evidenceIds = [
+      ...new Set(
+        (Array.isArray(req.body?.evidenceIds)
+          ? req.body.evidenceIds
+          : [])
+          .map(Number)
+          .filter(value => Number.isInteger(value) && value > 0)
+      )
+    ].slice(0, 80);
+
+    const trustedEvidenceIds = [
+      ...new Set(
+        (Array.isArray(req.body?.trustedEvidenceIds)
+          ? req.body.trustedEvidenceIds
+          : [])
+          .map(Number)
+          .filter(value => Number.isInteger(value) && value > 0)
+      )
+    ].slice(0, 500);
+
+    const submittedManualPlayer =
+      req.body?.manualPlayer && typeof req.body.manualPlayer === "object"
+        ? req.body.manualPlayer
+        : {};
+    const manualSteamId = normalizeSteamId64Input(submittedManualPlayer.steamId);
+    const manualDiscordUserId = cleanText(submittedManualPlayer.discordUserId, 20);
+    const manualTicketChannelId = cleanText(submittedManualPlayer.ticketChannelId, 20);
+
+    if (manualDiscordUserId && !/^\d{16,20}$/.test(manualDiscordUserId))
+      return res.status(400).json({ error: "invalid_discord_user_id", message: "Discord User ID inválido." });
+
+    if (manualTicketChannelId && !/^\d{16,20}$/.test(manualTicketChannelId))
+      return res.status(400).json({ error: "invalid_ticket_channel_id", message: "Ticket / Channel ID inválido." });
+
+    if (decision === "deny" && evidenceIds.length === 0) {
+      return res.status(400).json({
+        error: "evidence_required",
+        message: "Selecione pelo menos uma evidência que justifique o banimento."
+      });
+    }
+
+    const analysisResult = await pool.query(
+      `SELECT
+         id,
+         label,
+         status,
+         external_source,
+         external_player_id,
+         external_discord_user_id,
+         external_ticket_channel_id,
+         external_decision
+       FROM analyses
+       WHERE id=$1
+       LIMIT 1`,
+      [id]
+    );
+
+    const analysis = analysisResult.rows[0];
+
+    if (!analysis)
+      return res.status(404).json({ error: "analysis_not_found" });
+
+    const linkedSteamId =
+      ["guerra_fria", "guerra_fria_manual"].includes(analysis.external_source) &&
+      /^7656119\d{10}$/.test(String(analysis.external_player_id || ""))
+        ? String(analysis.external_player_id)
+        : "";
+    const isManualDecision = !linkedSteamId;
+    const decisionSteamId = linkedSteamId || manualSteamId;
+
+    if (!/^7656119\d{10}$/.test(decisionSteamId)) {
+      return res.status(409).json({
+        error: "analysis_not_linked",
+        message: "Informe o SteamID64 do jogador para aplicar o banimento desta análise manual."
+      });
+    }
+
+    if (isManualDecision && decision !== "deny") {
+      return res.status(409).json({
+        error: "manual_release_not_supported",
+        message: "A decisão manual sem vínculo está disponível apenas para banimento."
+      });
+    }
+
+    if (analysis.status !== "completed") {
+      return res.status(409).json({
+        error: "analysis_not_completed",
+        message: "Aguarde a análise Vorken concluir antes de aplicar a decisão."
+      });
+    }
+
+    if (analysis.external_decision) {
+      return res.status(409).json({
+        error: "decision_already_applied",
+        message: "Esta análise já possui uma decisão registrada."
+      });
+    }
+
+    let evidenceUrl = "";
+    let packageToken = "";
+
+    if (decision === "deny") {
+      const evidenceResult = await pool.query(
+        `SELECT
+           id,
+           title,
+           severity,
+           artifact_type,
+           artifact_value,
+           evidence
+         FROM scan_findings
+         WHERE analysis_id=$1
+           AND id = ANY($2::bigint[])
+         ORDER BY
+           CASE severity
+             WHEN 'critical' THEN 5
+             WHEN 'high' THEN 4
+             WHEN 'medium' THEN 3
+             WHEN 'low' THEN 2
+             ELSE 1
+           END DESC,
+           id ASC`,
+        [id, evidenceIds]
+      );
+
+      if (evidenceResult.rows.length !== evidenceIds.length) {
+        return res.status(400).json({
+          error: "invalid_evidence_selection",
+          message: "Uma ou mais evidências selecionadas não pertencem a esta análise."
+        });
+      }
+
+      const snapshot =
+        evidenceResult.rows.map(item => ({
+          id: Number(item.id),
+          title: item.title || "Evidência",
+          severity: item.severity || "info",
+          artifactType: item.artifact_type || "",
+          artifactValue: item.artifact_value || "",
+          evidence: safePublicEvidence(item.evidence || {})
+        }));
+
+      packageToken =
+        crypto.randomBytes(24).toString("hex");
+
+      await pool.query(
+        `INSERT INTO evidence_packages(
+           analysis_id,
+           public_token,
+           reason,
+           findings
+         )
+         VALUES ($1,$2,$3,$4::jsonb)`,
+        [
+          id,
+          packageToken,
+          reason,
+          JSON.stringify(snapshot)
+        ]
+      );
+
+      evidenceUrl =
+        publicUrl +
+        "/resultados/" +
+        packageToken;
+    }
+
+    const baseUrl =
+      String(process.env.GUERRA_FRIA_INTEGRATION_URL || "")
+        .trim()
+        .replace(/\/$/, "");
+
+    const key =
+      String(process.env.VORKEN_GF_INTEGRATION_KEY || "").trim();
+
+    if (!baseUrl || !key) {
+      if (packageToken) {
+        await pool.query(
+          "DELETE FROM evidence_packages WHERE public_token=$1",
+          [packageToken]
+        ).catch(() => {});
+      }
+
+      return res.status(503).json({
+        error: "guerra_fria_integration_not_configured",
+        message: "Integração com o Guerra Fria não configurada."
+      });
+    }
+
+    const playerNameResult = await pool.query(
+      `SELECT player_name
+       FROM guerra_fria_verifications
+       WHERE analysis_id=$1
+       ORDER BY id DESC
+       LIMIT 1`,
+      [id]
+    );
+
+    const playerName =
+      cleanText(
+        playerNameResult.rows[0]?.player_name,
+        100
+      ) ||
+      cleanText(analysis.label, 100);
+
+    const response = await fetch(
+      baseUrl + "/api/integrations/vorken/decision",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-vorken-integration-key": key
+        },
+        body: JSON.stringify({
+          analysisId: id,
+          decision,
+          reason,
+          evidenceUrl: evidenceUrl || null,
+          evidenceCount: evidenceIds.length,
+          steamId: decisionSteamId,
+          discordUserId: analysis.external_discord_user_id || manualDiscordUserId || null,
+          ticketChannelId: analysis.external_ticket_channel_id || manualTicketChannelId || null
+        })
+      }
+    );
+
+    const body =
+      await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      if (packageToken) {
+        await pool.query(
+          "DELETE FROM evidence_packages WHERE public_token=$1",
+          [packageToken]
+        ).catch(() => {});
+      }
+
+      return res.status(502).json({
+        error: "guerra_fria_decision_failed",
+        message:
+          body?.message ||
+          body?.error ||
+          "O Guerra Fria não confirmou a decisão."
+      });
+    }
+
+    await pool.query(
+      `UPDATE analyses
+       SET external_decision=$2,
+           external_decision_at=NOW(),
+           external_decision_result=$3,
+           external_evidence_url=$4,
+           external_source=CASE WHEN $5 THEN 'guerra_fria_manual' ELSE external_source END,
+           external_player_id=CASE WHEN $5 THEN $6 ELSE external_player_id END,
+           external_discord_user_id=CASE WHEN $5 THEN NULLIF($7, '') ELSE external_discord_user_id END,
+           external_ticket_channel_id=CASE WHEN $5 THEN NULLIF($8, '') ELSE external_ticket_channel_id END
+       WHERE id=$1`,
+      [
+        id,
+        decision,
+        cleanText(body?.result, 900) || "Decisão confirmada.",
+        evidenceUrl || null,
+        isManualDecision,
+        decisionSteamId,
+        manualDiscordUserId,
+        manualTicketChannelId
+      ]
+    );
+
+    let learnedArtifacts = 0;
+    let revokedArtifacts = 0;
+
+    if (decision === "approve") {
+      try {
+        learnedArtifacts =
+          await learnAnalysisArtifacts(
+            id,
+            reason,
+            { includeIds: trustedEvidenceIds }
+          );
+      } catch (learnError) {
+        console.error(
+          "Falha ao aprender falsos positivos da análise liberada:",
+          {
+            analysisId: id,
+            message: learnError?.message,
+            code: learnError?.code,
+          }
+        );
+      }
+    } else {
+      try {
+        revokedArtifacts =
+          await revokeLearnedTrustForFindings(
+            id,
+            evidenceIds
+          );
+        learnedArtifacts =
+          await learnAnalysisArtifacts(
+            id,
+            "Não selecionado como prova no banimento: " + reason,
+            { excludeIds: evidenceIds }
+          );
+      } catch (learnError) {
+        console.error(
+          "Falha ao aprender itens não usados como prova do banimento:",
+          {
+            analysisId: id,
+            message: learnError?.message,
+            code: learnError?.code,
+          }
+        );
+      }
+    }
+
+    res.json({
+      ok: true,
+      decision,
+      result: body?.result || "Decisão confirmada.",
+      evidenceUrl: evidenceUrl || null,
+      learnedArtifacts,
+      revokedArtifacts
+    });
+  }
+);
+
+app.post("/api/admin/analyses/:id/client-report", requireAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: "invalid_id" });
+  }
+
+  const released = req.body?.released === true;
+
+  const result = await pool.query(
+    `UPDATE analyses
+     SET client_report_released=$2
+     WHERE id=$1
+     RETURNING id, client_report_released`,
+    [id, released]
+  );
+
+  if (!result.rows[0]) {
+    return res.status(404).json({ error: "analysis_not_found" });
+  }
+
+  res.json({
+    ok: true,
+    analysisId: Number(result.rows[0].id),
+    released: result.rows[0].client_report_released === true,
+  });
+});
+
+app.get("/api/admin/analyses/:id/rebuild-status", requireAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: "invalid_id" });
+  }
+
+  const result = await pool.query(
+    `SELECT
+       status,
+       processing_stage,
+       processing_message
+     FROM analyses
+     WHERE id=$1
+     LIMIT 1`,
+    [id]
+  );
+
+  if (!result.rows[0]) {
+    return res.status(404).json({ error: "analysis_not_found" });
+  }
+
+  const row = result.rows[0];
+  const internalStage =
+    row.processing_stage || "waiting";
+
+  res.json({
+    processing:
+      activeRebuilds.has(id) ||
+      [
+        "collecting",
+        "preparing",
+        "normal_filter",
+        "finalizing",
+        "finalizing",
+      ].includes(internalStage),
+    status: row.status || "waiting",
+    processingStage:
+      publicProcessingStage(internalStage),
+    processingMessage:
+      publicAgentProcessingMessage(
+        internalStage,
+        row.status),
+    reviewStatus: "local_filters",
+    reviewError: null,
+    reviewedAt: null,
+  });
+});
+
+app.post("/api/admin/analyses/:id/rebuild", requireAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: "invalid_id" });
+  }
+
+  if (activeRebuilds.has(id)) {
+    return res.status(202).json({
+      ok: true,
+      processing: true,
+      alreadyRunning: true,
+    });
+  }
+
+  const analysisResult = await pool.query(
+    "SELECT id FROM analyses WHERE id=$1 LIMIT 1",
+    [id]
+  );
+
+  if (!analysisResult.rows[0]) {
+    return res.status(404).json({ error: "analysis_not_found" });
+  }
+
+  const reportResult = await pool.query(
+    "SELECT payload, payload_raw, payload_encoding FROM scan_reports WHERE analysis_id=$1 ORDER BY id DESC LIMIT 1",
+    [id]
+  );
+
+  const report =
+    decodeStoredRawReport(
+      reportResult.rows[0]);
+
+  if (!report) {
+    return res.status(404).json({
+      error: "report_not_found",
+      message: "Esta análise ainda não possui relatório."
+    });
+  }
+
+  activeRebuilds.add(id);
+
+  await pool.query(
+    `UPDATE analyses
+     SET processing_stage='preparing',
+         processing_message='Preparando recálculo dos filtros locais...'
+     WHERE id=$1`,
+    [id]
+  );
+
+  res.status(202).json({
+    ok: true,
+    processing: true,
+  });
+
+  setImmediate(async () => {
+    try {
+      await rebuildFindings(id, report);
+
+      await pool.query(
+        `UPDATE analyses
+         SET processing_stage='completed',
+             processing_message='Recálculo concluído e resultado final preparado.'
+         WHERE id=$1`,
+        [id]
+      );
+
+      const autoDecision =
+        await tryAutoApproveCleanGuerraFriaAnalysis(
+          id
+        );
+
+      if (autoDecision.approved) {
+        await notifyGuerraFriaProgress(
+          id,
+          "completed",
+          "Verificação limpa. O jogador foi aprovado automaticamente."
+        );
+      }
+    } catch (error) {
+      console.error(
+        "Falha ao recalcular filtros locais:",
+        {
+          analysisId: id,
+          message: error?.message,
+          code: error?.code,
+          detail: error?.detail,
+          hint: error?.hint,
+          where: error?.where,
+          stack: error?.stack,
+        }
+      );
+
+      try {
+        await pool.query(
+          `UPDATE analyses
+           SET processing_stage='filter_error',
+               processing_message='Falha parcial ao recalcular os filtros locais. O relatório bruto foi preservado.'
+           WHERE id=$1`,
+          [id]
+        );
+      } catch (statusError) {
+        console.error(
+          "Falha ao registrar erro do recálculo:",
+          statusError
+        );
+      }
+    } finally {
+      activeRebuilds.delete(id);
+    }
+  });
+});
+
+app.get("/api/admin/rules", requireAdmin, async (_req, res) => {
+  const result = await pool.query(
+    "SELECT * FROM detection_rules ORDER BY enabled DESC, id DESC"
+  );
+  res.json({ rules: result.rows });
+});
+
+app.post("/api/admin/rules", requireAdmin, async (req, res) => {
+  const allowedTypes = new Set([
+    "filename_contains",
+    "path_contains",
+    "sha256",
+    "process_name",
+    "service_name",
+    "driver_name",
+    "device_keyword",
+    "prefetch_contains",
+    "bam_contains",
+    "userassist_contains",
+    "muicache_contains",
+    "pca_contains",
+    "amcache_contains",
+    "shimcache_contains",
+    "setupapi_contains",
+    "powershell_contains",
+    "signer_contains",
+    "prefetch_integrity",
+    "volume_keyword",
+    "log_clear_signal",
+    "execution_name",
+    "usb_event_keyword",
+    "process_history_contains",
+    "recent_link_contains",
+    "download_url_contains",
+    "download_name_contains",
+    "browser_history_contains",
+    "browser_recovery_contains",
+    "deleted_name_contains",
+    "recycle_name_contains",
+    "rust_module_contains",
+    "defender_history_contains",
+    "defender_exclusion_contains",
+    "pe_indicator_contains",
+    "zone_url_contains",
+    "ads_contains",
+    "autorun_contains",
+    "powershell_artifact_contains",
+    "network_indicator_contains",
+    "usn_activity_contains",
+    "system_integrity_contains",
+    "module_integrity_contains",
+    "memory_integrity_contains",
+    "crash_contains",
+  ]);
+
+  const name = cleanText(req.body?.name, 120);
+  const type = cleanText(req.body?.type, 60);
+  const pattern = cleanText(req.body?.pattern, 500);
+  const description = cleanText(req.body?.description, 600);
+  const severity = normalizeSeverity(req.body?.severity);
+
+  if (!name || !allowedTypes.has(type) || !pattern) {
+    return res.status(400).json({ error: "invalid_rule", message: "Regra inválida." });
+  }
+
+  const result = await pool.query(
+    `INSERT INTO detection_rules(name, type, pattern, severity, description)
+     VALUES ($1,$2,$3,$4,$5)
+     RETURNING *`,
+    [name, type, pattern, severity, description]
+  );
+
+  res.status(201).json({ rule: result.rows[0] });
+});
+
+app.post("/api/admin/rules/:id/toggle", requireAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  const result = await pool.query(
+    `UPDATE detection_rules
+     SET enabled = NOT enabled
+     WHERE id = $1
+     RETURNING *`,
+    [id]
+  );
+
+  if (!result.rows[0]) return res.status(404).json({ error: "rule_not_found" });
+  res.json({ rule: result.rows[0] });
+});
+
+app.get("/api/public/analyses/:token", async (req, res) => {
+  const token = String(req.params.token || "");
+  if (!validToken(token)) return res.status(404).json({ error: "analysis_not_found" });
+
+  const analysis = await getAnalysisByToken(token);
+  if (!ensureAnalysisUsable(analysis, res)) return;
+
+  res.json({
+    analysis: {
+      label: analysis.label,
+      status: analysis.status,
+      createdAt: analysis.created_at,
+      expiresAt: analysis.expires_at,
+      startedAt: analysis.started_at,
+      finishedAt: analysis.finished_at,
+    },
+    downloadUrl: "/api/public/analyses/" + token + "/download",
+    packageUrl: "/api/public/analyses/" + token + "/download",
+    agentVerification: await getAgentVerification(),
+  });
+});
+
+app.get("/api/public/analyses/:token/download", async (req, res) => {
+  const token = String(req.params.token || "");
+  if (!validToken(token)) return res.status(404).send("Análise não encontrada.");
+
+  const analysis = await getAnalysisByToken(token);
+  if (!ensureAnalysisUsable(analysis, res)) return;
+
+  const published =
+    await loadPublishedAgentBinary();
+
+  const binary =
+    published.binary;
+
+  if (!validateAgentBinary(binary)) {
+    return res.status(503).send(
+      "O executável oficial do Vorken Agent ainda não está disponível."
+    );
+  }
+
+  const sha256 = crypto
+    .createHash("sha256")
+    .update(binary)
+    .digest("hex");
+
+  const clientName =
+    await getAnalysisClientName(analysis);
+
+  // IMPORTANT: only the filename is personalized. The EXE bytes remain
+  // byte-for-byte identical to the GitHub build so Authenticode and SmartScreen
+  // reputation are preserved.
+  const fileName =
+    "Vorken AntiCheat - " +
+    clientName +
+    "--" +
+    token +
+    ".exe";
+
+  const asciiFileName =
+    fileName
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^\x20-\x7E]/g, "")
+      .replace(/["\\]/g, "")
+      .slice(0, 120) ||
+    "Vorken AntiCheat.exe";
+
+  res.setHeader(
+    "Content-Type",
+    "application/vnd.microsoft.portable-executable"
+  );
+  res.setHeader(
+    "Content-Disposition",
+    'attachment; filename="' +
+      asciiFileName +
+      '"; filename*=UTF-8\'\'' +
+      encodeURIComponent(fileName)
+  );
+  res.setHeader(
+    "Content-Length",
+    String(binary.length)
+  );
+  res.setHeader("Cache-Control", "private, no-store");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Vorken-SHA256", sha256);
+  res.end(binary);
+});
+
+app.get("/api/public/analyses/:token/package", (req, res) => {
+  const token = String(req.params.token || "");
+  if (!validToken(token)) return res.status(404).send("Análise não encontrada.");
+  res.redirect(302, "/api/public/analyses/" + token + "/download");
+});
+
+app.get("/api/agent/:token/rules", async (req, res) => {
+  const token = String(req.params.token || "");
+  const analysis = validToken(token) ? await getAnalysisByToken(token) : null;
+  if (!ensureAnalysisUsable(analysis, res)) return;
+
+  const result = await pool.query(
+    `SELECT id, name, type, pattern, severity, description
+     FROM detection_rules
+     WHERE enabled = TRUE
+     ORDER BY id ASC`
+  );
+
+  res.json({
+    analysisId: Number(analysis.id),
+    rules: result.rows,
+    threatCatalog: agentThreatCatalog,
+  });
+});
+
+app.post("/api/agent/:token/start", async (req, res) => {
+  const token = String(req.params.token || "");
+  const analysis = validToken(token) ? await getAnalysisByToken(token) : null;
+  if (!ensureAnalysisUsable(analysis, res)) return;
+
+  if (analysis.status === "completed") {
+    return res.status(409).json({
+      error: "analysis_completed",
+      message: "Esta análise já foi concluída.",
+    });
+  }
+
+  await pool.query(
+    `UPDATE analyses
+     SET status='running',
+         processing_stage='collecting',
+         processing_message='Cliente conectado. Coletando evidências no computador...',
+         started_at=COALESCE(started_at, NOW()),
+         machine_name=COALESCE($2, machine_name),
+         os_version=COALESCE($3, os_version),
+         agent_version=COALESCE($4, agent_version),
+         machine_fingerprint=COALESCE($5, machine_fingerprint)
+     WHERE id=$1`,
+    [
+      analysis.id,
+      cleanText(req.body?.machineName, 180) || null,
+      cleanText(req.body?.osVersion, 250) || null,
+      cleanText(req.body?.agentVersion, 80) || null,
+      cleanText(req.body?.machineFingerprint, 128) || null,
+    ]
+  );
+
+  res.json({ ok: true });
+
+  setImmediate(() =>
+    notifyGuerraFriaProgress(
+      analysis.id,
+      "started",
+      "O Vorken foi iniciado no computador do jogador e a coleta técnica começou."
+    )
+  );
+});
+
+app.post("/api/agent/:token/report", async (req, res) => {
+  try {
+    const token = String(req.params.token || "");
+    const analysis = validToken(token) ? await getAnalysisByToken(token) : null;
+    if (!ensureAnalysisUsable(analysis, res)) return;
+
+    if (!req.body || typeof req.body !== "object" || Array.isArray(req.body)) {
+      return res.status(400).json({ error: "invalid_report" });
+    }
+
+    // Never accept client-supplied public IP evidence or external provider results.
+    const originalReport = { ...req.body,
+      connectionEvidence: captureConnectionEvidence(req, process.env.BATTLEMETRICS_TRUST_PROXY_HOPS || 0),
+    };
+    delete originalReport.battleMetrics;
+    const report =
+      sanitizeJsonForPostgres(originalReport);
+
+    const rawPayload =
+      encodeRawReport(originalReport);
+
+    const safeJson =
+      JSON.stringify(report);
+
+    try {
+      await pool.query(
+        `INSERT INTO scan_reports(
+           analysis_id,
+           payload,
+           payload_raw,
+           payload_encoding
+         )
+         VALUES ($1,$2::jsonb,$3,$4)`,
+        [
+          analysis.id,
+          safeJson,
+          rawPayload,
+          "gzip-json",
+        ]
+      );
+    } catch (storeError) {
+      console.error(
+        "Falha no armazenamento JSONB completo; usando fallback bruto:",
+        {
+          analysisId: analysis.id,
+          message: storeError?.message,
+          code: storeError?.code,
+          detail: storeError?.detail,
+          hint: storeError?.hint,
+          where: storeError?.where,
+        }
+      );
+
+      await pool.query(
+        `INSERT INTO scan_reports(
+           analysis_id,
+           payload,
+           payload_raw,
+           payload_encoding
+         )
+         VALUES (
+           $1,
+           $2::jsonb,
+           $3,
+           $4
+         )`,
+        [
+          analysis.id,
+          JSON.stringify({
+            storageFallback: true,
+            agentVersion:
+              cleanText(report.agentVersion, 80),
+            collectedAtUtc:
+              report.collectedAtUtc || null,
+            machine:
+              report.machine || {},
+          }),
+          rawPayload,
+          "gzip-json",
+        ]
+      );
+    }
+
+    await pool.query(
+      `UPDATE analyses
+       SET status='running',
+           processing_stage='preparing',
+           processing_message='Relatório recebido. Preparando os dados para análise técnica e revisão final...',
+           machine_name=COALESCE($2, machine_name),
+           os_version=COALESCE($3, os_version),
+           agent_version=COALESCE($4, agent_version),
+           machine_fingerprint=COALESCE($5, machine_fingerprint)
+       WHERE id=$1`,
+      [
+        analysis.id,
+        cleanText(report.machine?.machineName, 180) || null,
+        cleanText(report.machine?.osVersion, 250) || null,
+        cleanText(report.agentVersion, 80) || null,
+        cleanText(report.machine?.fingerprint, 128) || null,
+      ]
+    );
+
+    res.status(202).json({
+      ok: true,
+      accepted: true,
+      processing: true,
+    });
+
+    setImmediate(() =>
+      notifyGuerraFriaProgress(
+        analysis.id,
+        "processing",
+        "A coleta do computador terminou. O relatório foi recebido e está sendo processado."
+      )
+    );
+
+    setImmediate(async () => {
+      try {
+        await processSubmittedReportWithRetry(
+          analysis,
+          report,
+          3
+        );
+
+        await pool.query(
+          `UPDATE analyses
+           SET status='completed',
+               processing_stage='completed',
+               processing_message='Análise concluída e resultado final preparado.',
+               finished_at=NOW()
+           WHERE id=$1`,
+          [analysis.id]
+        );
+
+        const autoDecision =
+          await tryAutoApproveCleanGuerraFriaAnalysis(
+            analysis.id
+          );
+
+        if (autoDecision.approved) {
+          await notifyGuerraFriaProgress(
+            analysis.id,
+            "completed",
+            "Verificação limpa. O jogador foi aprovado automaticamente."
+          );
+        } else {
+          await notifyGuerraFriaProgress(
+            analysis.id,
+            "completed",
+            autoDecision.eligible === false
+              ? (
+                  autoDecision.counts?.critical > 0
+                    ? "Possível trapaceiro detectado. Aguarde a análise administrativa."
+                    : "Itens suspeitos encontrados. Aguarde a verificação administrativa."
+                )
+              : "A verificação foi finalizada. Aguarde a decisão da administração."
+          );
+        }
+      } catch (error) {
+        console.error(
+          "Falha ao processar findings do relatório:",
+          {
+            analysisId: analysis.id,
+            message: error?.message,
+            code: error?.code,
+            detail: error?.detail,
+            hint: error?.hint,
+            where: error?.where,
+          }
+        );
+
+        try {
+          await pool.query(
+            `UPDATE analyses
+             SET status='completed',
+                 processing_stage='filter_error',
+                 processing_message='Falha ao concluir os filtros após novas tentativas. Revisão administrativa obrigatória; esta análise não pode ser liberada automaticamente.',
+                 finished_at=COALESCE(finished_at, NOW())
+             WHERE id=$1`,
+            [analysis.id]
+          );
+
+          await notifyGuerraFriaProgress(
+            analysis.id,
+            "completed",
+            "A análise teve erro parcial nos filtros e não foi liberada automaticamente. Aguarde a verificação administrativa."
+          );
+        } catch (statusError) {
+          console.error(
+            "Falha ao finalizar status da análise:",
+            {
+              analysisId: analysis.id,
+              message: statusError?.message,
+              code: statusError?.code,
+            }
+          );
+        }
+      }
+    });
+  } catch (error) {
+    console.error(
+      "Falha ao aceitar/armazenar relatório do agente:",
+      {
+        message: error?.message,
+        code: error?.code,
+        detail: error?.detail,
+        hint: error?.hint,
+        where: error?.where,
+        stack: error?.stack,
+      }
+    );
+
+    if (!res.headersSent) {
+      res.status(500).json({
+        error: "report_store_failed",
+        message: "Não foi possível armazenar o relatório.",
+      });
+    }
+  }
+});
+
+
+function publicProcessingStage(stage) {
+  return String(stage || "waiting");
+}
+
+function publicAgentProcessingMessage(stage, status) {
+  const map = {
+    waiting: "Aguardando início da análise.",
+    collecting: "Coletando evidências técnicas...",
+    preparing: "Preparando os dados coletados...",
+    external_checks: "Consultando histórico das contas Steam...",
+    normal_filter: "Classificando evidências...",
+    finalizing: "Aplicando filtros locais...",
+    completed: "Análise concluída.",
+    filter_error: "Análise concluída com erro parcial nos filtros.",
+    needs_review: "Resultado técnico preparado.",
+  };
+
+  return map[String(stage || "")] ||
+    (status === "completed"
+      ? "Análise concluída."
+      : "Processando análise...");
+}
+
+app.get("/api/agent/:token/result", async (req, res) => {
+  try {
+    const token = String(req.params.token || "");
+    const analysis =
+      validToken(token)
+        ? await getAnalysisByToken(token)
+        : null;
+
+    if (!ensureAnalysisUsable(analysis, res)) return;
+
+    const reportResult = await pool.query(
+      `SELECT payload, payload_raw, payload_encoding, created_at
+       FROM scan_reports
+       WHERE analysis_id = $1
+       ORDER BY id DESC
+       LIMIT 1`,
+      [analysis.id]
+    );
+
+    let payload = {};
+
+    if (reportResult.rows[0]) {
+      try {
+        payload =
+          decodeStoredRawReport(reportResult.rows[0]) || {};
+      } catch {
+        payload =
+          reportResult.rows[0].payload || {};
+      }
+    }
+
+    const findingsResult = await pool.query(
+      `SELECT
+         sf.id,
+         sf.title,
+         sf.severity,
+         sf.artifact_type,
+         sf.artifact_value,
+         sf.evidence
+       FROM scan_findings sf
+       WHERE sf.analysis_id = $1
+         AND LOWER(COALESCE(sf.artifact_value,'')) NOT LIKE '%vorken%'
+         AND LOWER(COALESCE(sf.evidence::text,'')) NOT LIKE '%vorken%'
+         AND sf.severity IN ('medium','high','critical')
+       ORDER BY
+         CASE WHEN sf.evidence->>'priorityMaximum' = 'true' THEN 100 ELSE 0 END DESC,
+         CASE sf.severity
+           WHEN 'critical' THEN 5
+           WHEN 'high' THEN 4
+           WHEN 'medium' THEN 3
+           ELSE 1
+         END DESC,
+         sf.id ASC
+       `,
+      [analysis.id]
+    );
+
+    const {released: detailsReleased} = await clientReportVisibility(pool, analysis);
+
+    const allFindings =
+      findingsResult.rows.map((item) => ({
+        id: Number(item.id),
+        title: item.title || "Evidência detectada",
+        severity: item.severity || "info",
+        artifactType: item.artifact_type || "",
+        artifactValue: item.artifact_value || "",
+        evidence: item.evidence || {},
+      }));
+
+    const findings =
+      detailsReleased
+        ? allFindings
+        : [];
+
+    const critical =
+      allFindings.filter((item) =>
+        item.severity === "critical"
+      ).length;
+
+    const review =
+      allFindings.filter((item) =>
+        item.severity === "high" ||
+        item.severity === "medium"
+      ).length;
+
+    let inventory = 0;
+
+    try {
+      inventory =
+        flattenArtifacts(payload).length;
+    } catch {
+      inventory = 0;
+    }
+
+    res.json({
+      analysisId: Number(analysis.id),
+      label: analysis.label || "",
+      status: analysis.status || "pending",
+      processingStage:
+        publicProcessingStage(
+          analysis.processing_stage),
+      processingMessage:
+        publicAgentProcessingMessage(
+          analysis.processing_stage,
+          analysis.status),
+      detailsReleased,
+      startedAt: analysis.started_at || null,
+      finishedAt: analysis.finished_at || null,
+      summary: {
+        critical,
+        review,
+        inventory,
+      },
+      verificationState:
+        analysis.processing_stage === "filter_error"
+          ? "error"
+          : critical > 0
+            ? "critical"
+            : review > 0
+              ? "review"
+              : analysis.external_decision === "approve"
+                ? "approved"
+                : "clean",
+      verificationMessage:
+        analysis.processing_stage === "filter_error"
+          ? "Falha parcial nos filtros. Esta análise exige verificação administrativa e não pode ser liberada automaticamente."
+          : critical > 0
+            ? "Possível trapaceiro detectado. Aguarde a análise administrativa."
+            : review > 0
+              ? "Atividades incomuns localizadas. Revisão administrativa necessária."
+              : analysis.external_decision === "approve"
+                ? "Verificação aprovada automaticamente. Nenhum item suspeito foi encontrado."
+                : "Nenhum item suspeito foi encontrado.",
+      externalDecision:
+        analysis.external_decision || null,
+      externalDecisionResult:
+        analysis.external_decision_result || null,
+      findings,
+    });
+  } catch (error) {
+    console.error(
+      "Falha ao consultar resultado para o agente:",
+      {
+        message: error?.message,
+        code: error?.code,
+      }
+    );
+
+    if (!res.headersSent) {
+      res.status(500).json({
+        error: "agent_result_failed",
+        message: "Não foi possível consultar o resultado da análise.",
+      });
+    }
+  }
+});
+
+app.get("/resultados/:token", async (req, res) => {
+  const token =
+    String(req.params.token || "")
+      .trim()
+      .toLowerCase();
+
+  if (!/^[a-f0-9]{48}$/.test(token)) {
+    return res.status(404).send("Resultado não encontrado.");
+  }
+
+  const result = await pool.query(
+    `SELECT
+       ep.reason,
+       ep.findings,
+       ep.created_at,
+       a.id AS analysis_id,
+       a.label,
+       a.external_player_id
+     FROM evidence_packages ep
+     JOIN analyses a
+       ON a.id=ep.analysis_id
+     WHERE ep.public_token=$1
+     LIMIT 1`,
+    [token]
+  );
+
+  const row = result.rows[0];
+
+  if (!row)
+    return res.status(404).send("Resultado não encontrado.");
+
+  const findings =
+    Array.isArray(row.findings)
+      ? row.findings
+      : [];
+
+  const cards = findings.map(item => {
+    const evidence =
+      item?.evidence && typeof item.evidence === "object"
+        ? item.evidence
+        : {};
+
+    const meta = Object.entries(evidence)
+      .filter(([, value]) =>
+        value !== undefined &&
+        value !== null &&
+        value !== "" &&
+        typeof value !== "object"
+      )
+      .map(([key, value]) =>
+        `<div class="kv"><span>${htmlEscape(key)}</span><code>${htmlEscape(value)}</code></div>`
+      )
+      .join("");
+
+    const artifactType =
+      String(item?.artifactType || "");
+
+    const artifactValue =
+      String(item?.artifactValue || "");
+
+    const steamIds =
+      artifactValue
+        .split(",")
+        .map((value) => value.trim())
+        .filter((value) => /^7656119\d{10}$/.test(value));
+
+    const artifactDisplay =
+      ["steam_account_ban", "steam_ban_evasion_context"].includes(artifactType) &&
+      steamIds.length
+        ? (
+            '<div class="steam-links">' +
+            steamIds
+              .map((steamId) =>
+                '<a href="https://steamcommunity.com/profiles/' +
+                encodeURIComponent(steamId) +
+                '" target="_blank" rel="noopener noreferrer">Abrir perfil Steam</a>'
+              )
+              .join(" · ") +
+            '</div>'
+          )
+        : '<div class="path">' + htmlEscape(artifactValue || "—") + '</div>';
+
+    return `
+      <article class="finding ${htmlEscape(item.severity || "info")}">
+        <div class="head">
+          <h2>${htmlEscape(item.title || "Evidência")}</h2>
+          <b>${htmlEscape(String(item.severity || "info").toUpperCase())}</b>
+        </div>
+        ${artifactDisplay}
+        ${meta}
+      </article>
+    `;
+  }).join("");
+
+  res.type("html").send(`<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Vorken Anti-Cheat · Evidências</title>
+<link rel="icon" type="image/svg+xml" href="/vorken-logo.svg">
+<style>
+:root{color-scheme:dark;--bg:#050a0e;--panel:#09131a;--line:#17323b;--text:#eaf7f4;--muted:#89a1a5;--accent:#2bf0c9;--danger:#ff6173}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 50% -20%,#0d2d31 0,#050a0e 42%);color:var(--text);font:14px Inter,Segoe UI,Arial,sans-serif}
+main{width:min(1080px,calc(100% - 32px));margin:0 auto;padding:52px 0 80px}
+.brand{display:flex;align-items:center;gap:12px;margin-bottom:36px}.brand img{width:42px;height:42px;border-radius:10px}.brand strong{letter-spacing:.08em}.brand small{display:block;color:var(--accent);margin-top:3px}
+.hero{border:1px solid var(--line);background:rgba(9,19,26,.9);border-radius:18px;padding:28px;margin-bottom:18px}.hero h1{margin:0 0 10px;font-size:30px}.hero p{color:var(--muted);line-height:1.65}.pill{display:inline-flex;padding:6px 9px;border:1px solid #235f57;border-radius:999px;color:var(--accent);font:700 11px Consolas,monospace}
+.finding{border:1px solid var(--line);background:rgba(9,19,26,.9);border-radius:16px;padding:20px;margin-top:12px}.finding.critical,.finding.high{border-color:#6b2833}.finding.medium{border-color:#68541f}.head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start}.head h2{font-size:17px;margin:0}.head b{font:700 10px Consolas,monospace;color:var(--accent)}.path{margin:13px 0;padding:11px;border-radius:9px;background:#04090c;color:#b9d4d0;font-family:Consolas,monospace;word-break:break-all}.steam-links{margin:13px 0;padding:11px;border-radius:9px;background:#04090c}.steam-links a,.hero a{color:var(--accent);font-weight:700;text-decoration:none}.steam-links a:hover,.hero a:hover{text-decoration:underline}.kv{display:grid;grid-template-columns:180px 1fr;gap:10px;padding:8px 0;border-top:1px solid #12262d}.kv span{color:var(--muted)}.kv code{white-space:pre-wrap;word-break:break-word;color:#d7e9e5}
+.notice{margin-top:24px;color:#70898e;font-size:12px;line-height:1.6}
+</style>
+</head>
+<body><main>
+<div class="brand"><img src="/vorken-logo.svg" alt=""><div><strong>VORKEN ANTI-CHEAT</strong><small>REGISTRO DE EVIDÊNCIAS</small></div></div>
+<section class="hero">
+<span class="pill">ANÁLISE #${htmlEscape(row.analysis_id)}</span>
+<h1>Evidências selecionadas pela administração</h1>
+<p><strong>Perfil Steam:</strong> ${/^7656119\\d{10}$/.test(String(row.external_player_id || "")) ? '<a href="https://steamcommunity.com/profiles/' + encodeURIComponent(String(row.external_player_id)) + '" target="_blank" rel="noopener noreferrer">Abrir perfil do jogador</a>' : htmlEscape(row.external_player_id || "—")}<br>
+<strong>Motivo:</strong> ${htmlEscape(row.reason || "—")}<br>
+<strong>Gerado em:</strong> ${htmlEscape(new Date(row.created_at).toLocaleString("pt-BR"))}</p>
+</section>
+${cards || '<div class="finding">Nenhuma evidência publicada.</div>'}
+<p class="notice">Esta página contém somente metadados e registros técnicos selecionados pela administração. O Vorken não publica aqui cópias dos arquivos privados encontrados no computador.</p>
+</main></body></html>`);
+});
+
+app.use(["/api/remote", "/api/agent/:token/remote", "/api/admin/remote-admins", "/api/admin/remote-admin/download", "/ws/remote"], (_req, res) => res.status(410).json({ error: "remote_support_removed" }));
+
+installFleet(app, { pool, requireAdmin });
+
+app.get("/admin", (_req, res) => {
+  res.sendFile(path.join(__dirname, "public", "admin.html"));
+});
+
+app.get("/privacy", (_req, res) => {
+  res.sendFile(path.join(__dirname, "public", "privacy.html"));
+});
+
+app.get("/terms", (_req, res) => {
+  res.sendFile(path.join(__dirname, "public", "terms.html"));
+});
+
+app.get("/a/:token", (_req, res) => {
+  res.sendFile(path.join(__dirname, "public", "analysis.html"));
+});
+
+const vorkenPlatform = installVorkenPlatform(app, {
+  pool, publicUrl, requireAdmin, learnAnalysisArtifacts, revokeLearnedTrustForFindings, loadAnalysisReport: loadSharedAnalysisReport, loadPlayerProfiles: querySteamOfficialBatch, loadRawAnalysisReport, refreshBattleMetrics,
+});
+app.get("/relatorio", (_req,res)=>res.sendFile(path.join(__dirname,"public","admin.html")));
+app.get('/como-funciona',(_req,res)=>res.sendFile(path.join(__dirname,'public','como-funciona.html')));
+app.get('/robots.txt',(_req,res)=>res.type('text/plain').send('User-agent: *\nDisallow: /admin\nDisallow: /api/\nDisallow: /relatorio\nDisallow: /a/\nSitemap: https://vorken.xyz/sitemap.xml\n'));
+app.get('/sitemap.xml',(_req,res)=>res.type('application/xml').send('<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'+['/','/servidor','/como-funciona','/banimentos','/privacy','/terms'].map(p=>'<url><loc>https://vorken.xyz'+p+'</loc></url>').join('')+'</urlset>'));
+app.get("/servidor", (_req, res) => {
+  res.sendFile(path.join(__dirname, "public", "servidor.html"));
+});
+app.get("/", (req, res, next) => {
+  const host = new URL(publicUrl).hostname;
+  if (process.env.VORKEN_SUBDOMAINS === "true" && req.hostname.endsWith("." + host))
+    return res.redirect("/servidor");
+  next();
+});
+app.get("/admin/clientes", (_req, res) => {
+  res.sendFile(path.join(__dirname, "public", "clientes.html"));
+});
+app.get('/admin/banimentos', (_req,res)=>res.sendFile(path.join(__dirname,'public','banimentos.html')));
+app.use("/api/vorken", (_req, res) => res.status(404).json({ message: "Recurso não encontrado." }));
+
+app.get("*", (_req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
+});
+
+initDb()
+  .then(async () => {
+    await initFleetDb(pool);
+    await initVorkenPlatform(pool);
+    const importedBans=await backfillLegacyVorkenBans(pool);
+    console.log('Banimentos históricos Vorken importados:',importedBans);
+    await disableLearnedArtifactsNowInCatalog();
+    await backfillPreviouslyApprovedAnalyses();
+
+    const server = http.createServer(app);
+    server.listen(port, "0.0.0.0", () => {
+      console.log("Vorken web ouvindo na porta " + port);
+    });
+    startVorkenBot(vorkenPlatform).catch(error => {
+      console.error("Falha ao conectar bot Vorken:", error.code || error.name);
+    });
+  })
+  .catch((error) => {
+    console.error("Falha ao inicializar Vorken:", error);
+    process.exit(1);
+  });

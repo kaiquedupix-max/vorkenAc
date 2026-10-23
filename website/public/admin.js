@@ -1,0 +1,4426 @@
+const scopedReport=new URLSearchParams(location.search).get('session');
+const scopedServer=new URLSearchParams(location.search).get('server');
+const scopedOwner=new URLSearchParams(location.search).get('owner')==='1';
+let scopedSessionState=null;
+const scopedBase=()=>scopedServer?'/api/vorken/'+(scopedOwner?'admin/operations':'operations')+'/'+encodeURIComponent(scopedServer)+'/sessions/'+encodeURIComponent(scopedReport):'/api/vorken/sessions/'+encodeURIComponent(scopedReport);
+const loginView = document.getElementById("loginView");
+const dashboardView = document.getElementById("dashboardView");
+const logoutBtn = document.getElementById("logoutBtn");
+const analysesBody = document.getElementById("analysesBody");
+const rulesList = document.getElementById("rulesList");
+const reportCard = document.getElementById("reportCard");
+let currentReportId = null;
+let showTechnicalResult = false;
+let currentClientReportReleased = false;
+let currentGuerraFriaLinked = false;
+let currentDecisionSelectable = false;
+let currentIntegrationDecision = null;
+let currentDetectedSteamIds = [];
+let selectedBanEvidenceIds = new Set();
+let selectedTrustedEvidenceIds = new Set();
+let dashboardPollTimer = null;
+let lastOpenReportProcessing = null;
+let lastAnalysesRefreshAt = 0;
+let dashboardPollInFlight = false;
+let activeReportController = null;
+let reportLoadSequence = 0;
+let lastReportCache = null;
+
+function yieldToBrowser() {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => setTimeout(resolve, 0));
+  });
+}
+
+function requestGuerraFriaBanReason() {
+  return new Promise((resolve) => {
+    const dialog =
+      document.getElementById("banReasonDialog");
+    const select =
+      document.getElementById("banReasonSelect");
+    const customWrap =
+      document.getElementById("banReasonCustomWrap");
+    const custom =
+      document.getElementById("banReasonCustom");
+    const confirmBtn =
+      document.getElementById("banReasonConfirmBtn");
+    const cancelBtn =
+      document.getElementById("banReasonCancelBtn");
+
+    if (
+      !dialog ||
+      !select ||
+      !customWrap ||
+      !custom ||
+      !confirmBtn ||
+      !cancelBtn
+    ) {
+      resolve(
+        window.prompt(
+          "Motivo do banimento:",
+          "Cheat / Trapaça"
+        )
+      );
+      return;
+    }
+
+    select.value = "Cheat / Trapaça";
+    custom.value = "";
+    customWrap.classList.add("hidden");
+
+    const onSelect = () => {
+      customWrap.classList.toggle(
+        "hidden",
+        select.value !== "Outro"
+      );
+    };
+
+    const cleanup = () => {
+      select.removeEventListener("change", onSelect);
+      confirmBtn.removeEventListener("click", onConfirm);
+      cancelBtn.removeEventListener("click", onCancel);
+      dialog.removeEventListener("cancel", onDialogCancel);
+    };
+
+    const finish = (value) => {
+      cleanup();
+
+      if (dialog.open)
+        dialog.close();
+
+      resolve(value);
+    };
+
+    const onConfirm = () => {
+      const selected =
+        String(select.value || "").trim();
+
+      const reason =
+        selected === "Outro"
+          ? String(custom.value || "").trim()
+          : selected;
+
+      if (!reason) {
+        alert("Informe o motivo do banimento.");
+        return;
+      }
+
+      finish(reason);
+    };
+
+    const onCancel = () => finish(null);
+
+    const onDialogCancel = (event) => {
+      event.preventDefault();
+      finish(null);
+    };
+
+    select.addEventListener("change", onSelect);
+    confirmBtn.addEventListener("click", onConfirm);
+    cancelBtn.addEventListener("click", onCancel);
+    dialog.addEventListener("cancel", onDialogCancel);
+
+    dialog.showModal();
+  });
+}
+
+function requestManualBanPlayer() {
+  return new Promise((resolve) => {
+    const dialog = document.getElementById("manualBanPlayerDialog");
+    const steamIdInput = document.getElementById("manualBanSteamId");
+    const discordIdInput = document.getElementById("manualBanDiscordId");
+    const ticketIdInput = document.getElementById("manualBanTicketId");
+    const message = document.getElementById("manualBanPlayerMessage");
+    const suggestions = document.getElementById("manualBanSteamIdSuggestions");
+    const confirmBtn = document.getElementById("manualBanPlayerConfirmBtn");
+    const cancelBtn = document.getElementById("manualBanPlayerCancelBtn");
+
+    if (!dialog || !steamIdInput || !confirmBtn || !cancelBtn) {
+      const steamId = String(window.prompt("SteamID64 do jogador:", "") || "").trim();
+      resolve(steamId ? { steamId, discordUserId: "", ticketChannelId: "" } : null);
+      return;
+    }
+
+    steamIdInput.value =
+      currentDetectedSteamIds.length === 1
+        ? currentDetectedSteamIds[0]
+        : "";
+    if (suggestions) {
+      suggestions.innerHTML = currentDetectedSteamIds
+        .map((steamId) => '<option value="' + escapeHtml(steamId) + '"></option>')
+        .join("");
+    }
+    if (discordIdInput) discordIdInput.value = "";
+    if (ticketIdInput) ticketIdInput.value = "";
+    if (message) {
+      message.textContent = "";
+      message.className = "message hidden";
+    }
+
+    const cleanup = () => {
+      confirmBtn.removeEventListener("click", onConfirm);
+      cancelBtn.removeEventListener("click", onCancel);
+      dialog.removeEventListener("cancel", onDialogCancel);
+    };
+
+    const finish = (value) => {
+      cleanup();
+      if (dialog.open) dialog.close();
+      resolve(value);
+    };
+
+    const showError = (text) => {
+      if (!message) return;
+      message.textContent = text;
+      message.className = "message error";
+    };
+
+    const onConfirm = () => {
+      const steamId = normalizeSteamId64Input(steamIdInput.value);
+      const discordUserId = String(discordIdInput?.value || "").trim();
+      const ticketChannelId = String(ticketIdInput?.value || "").trim();
+
+      if (!/^7656119\d{10}$/.test(steamId)) {
+        showError("Steam inválido. Cole o link do perfil, SteamID64, SteamID2 ou SteamID3. Um SteamID64 possui 17 dígitos.");
+        steamIdInput.focus();
+        return;
+      }
+
+      if (discordUserId && !/^\d{16,20}$/.test(discordUserId)) {
+        showError("O Discord User ID deve conter entre 16 e 20 dígitos.");
+        discordIdInput?.focus();
+        return;
+      }
+
+      if (ticketChannelId && !/^\d{16,20}$/.test(ticketChannelId)) {
+        showError("O Ticket / Channel ID deve conter entre 16 e 20 dígitos.");
+        ticketIdInput?.focus();
+        return;
+      }
+
+      finish({ steamId, discordUserId, ticketChannelId });
+    };
+
+    const onCancel = () => finish(null);
+    const onDialogCancel = (event) => {
+      event.preventDefault();
+      finish(null);
+    };
+
+    confirmBtn.addEventListener("click", onConfirm);
+    cancelBtn.addEventListener("click", onCancel);
+    dialog.addEventListener("cancel", onDialogCancel);
+    dialog.showModal();
+    setTimeout(() => steamIdInput.focus(), 0);
+  });
+}
+
+function normalizeSteamId64Input(value) {
+  const raw = String(value || "").trim();
+  const direct = raw.match(/(?:^|\D)(7656119\d{10})(?!\d)/)?.[1] || "";
+  if (/^7656119\d{10}$/.test(direct)) return direct;
+
+  const steamId3 = raw.match(/^\[?U:1:(\d{1,10})\]?$/i);
+  const steamId2 = raw.match(/^STEAM_[0-5]:([01]):(\d{1,10})$/i);
+
+  try {
+    let accountId = null;
+    if (steamId3) accountId = BigInt(steamId3[1]);
+    if (steamId2) accountId = BigInt(steamId2[2]) * 2n + BigInt(steamId2[1]);
+    if (accountId === null) return "";
+
+    const steamId64 = String(76561197960265728n + accountId);
+    return /^7656119\d{10}$/.test(steamId64) ? steamId64 : "";
+  } catch {
+    return "";
+  }
+}
+
+async function api(url, options = {}) {
+ if(scopedReport){
+  if(url.endsWith('/battlemetrics')){
+   const response=await fetch(scopedBase()+'/battlemetrics',{...options,headers:{'Content-Type':'application/json','X-Vorken-Request':'portal'}});
+   const data=await response.json();if(!response.ok)throw new Error(data.message||'Consulta indisponível.');return data;
+  }
+  if(url==='/api/admin/analyses/'+encodeURIComponent(scopedReport)||url==='/api/admin/analyses/'+scopedSessionState?.analysis_id){
+   const response=await fetch(scopedBase()+'/report',{...options,credentials:'same-origin'});
+   const data=await response.json();if(!response.ok)throw new Error(data.message||'Relatório indisponível.');
+   scopedSessionState=data.session;return data;
+  }
+  if(url.endsWith('/guerra-fria-decision')){
+   const body=JSON.parse(options.body||'{}');body.trustedIds=body.trustedEvidenceIds||[];
+   const response=await fetch(scopedBase()+'/decision',{...options,headers:{'Content-Type':'application/json','X-Vorken-Request':'portal'},body:JSON.stringify(body)});
+   const data=await response.json();if(!response.ok)throw new Error(data.message||'Não foi possível decidir.');return data;
+  }
+  throw new Error('Esta ação está disponível somente na administração principal.');
+ }
+  const response = await fetch(url, {
+    headers: {
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+    },
+    ...options,
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(data.message || data.error || "Não foi possível concluir.");
+  }
+
+  return data;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function formatDate(value) {
+  if (!value) return "—";
+  return new Date(value).toLocaleString("pt-BR");
+}
+
+function safeExternalUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    return ["http:", "https:"].includes(url.protocol) ? url.href : "";
+  } catch {
+    return "";
+  }
+}
+
+function safeArray(value) {
+  return Array.isArray(value) ? value.filter(Boolean) : [];
+}
+
+function isUsbStorageDeviceClient(item) {
+  const text = [
+    item?.name,
+    item?.friendlyName,
+    item?.deviceDescription,
+    item?.deviceClass,
+    item?.deviceId,
+    item?.pnpDeviceId,
+    item?.instanceId,
+    item?.manufacturer,
+  ].filter(Boolean).join(" ").toLowerCase();
+  if (!text || /root hub|generic hub|host controller|dispositivo de entrada|input device|\bhid\b|keyboard|teclado|mouse|composite device|porta usb/.test(text)) {
+    return false;
+  }
+  return /usbstor|mass storage|flash (?:disk|drive)|usb (?:disk|drive)|pendrive|thumb drive|disk&ven_|diskdrive|physicaldrive/.test(text);
+}
+
+function uniqueUsbStorageDevices(items) {
+  const seen = new Set();
+  return safeArray(items).filter(isUsbStorageDeviceClient).filter((item) => {
+    const key = String(
+      item.instanceId || item.pnpDeviceId || item.deviceId ||
+      [item.friendlyName, item.name, item.manufacturer].filter(Boolean).join("|")
+    ).trim().toLowerCase();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function clientWindowsBaseName(value) {
+  return String(value || "")
+    .replaceAll("/", "\\")
+    .split("\\")
+    .filter(Boolean)
+    .at(-1)
+    ?.toLowerCase() || "";
+}
+
+function isVorkenArtifactClient(...values) {
+  return values
+    .flat(Infinity)
+    .filter(Boolean)
+    .some((value) =>
+      String(value)
+        .toLowerCase()
+        .includes("vorken")
+    );
+}
+
+function commonAppMatchClient(value, commonApps = []) {
+  const name =
+    clientWindowsBaseName(value);
+
+  if (!name)
+    return null;
+
+  for (const app of safeArray(commonApps)) {
+    const exact =
+      safeArray(app?.filenames)
+        .some((item) =>
+          String(item || "")
+            .toLowerCase() === name
+        );
+
+    if (exact)
+      return app;
+
+    const prefix =
+      safeArray(app?.filenamePrefixes)
+        .some((item) => {
+          const needle =
+            String(item || "")
+              .toLowerCase();
+
+          return (
+            needle &&
+            name.startsWith(needle)
+          );
+        });
+
+    if (prefix)
+      return app;
+  }
+
+  return null;
+}
+
+function shouldHideFindingClient(finding, commonApps = []) {
+  const evidence =
+    finding?.evidence &&
+    typeof finding.evidence === "object"
+      ? finding.evidence
+      : {};
+
+  if (
+    isVorkenArtifactClient(
+      finding?.artifact_value,
+      evidence
+    )
+  ) {
+    return true;
+  }
+
+  const strongIndependentSignal =
+    evidence.priorityMaximum === true ||
+    evidence.protectedByTechnicalEngine === true ||
+    evidence.usbExecution === true ||
+    evidence.knownCheatDomain === true ||
+    evidence.directCatalogMatch === true ||
+    (
+      evidence.executionConfirmed === true &&
+      (
+        evidence.catalogMatch ||
+        safeArray(evidence.catalogMatches).length > 0
+      )
+    );
+
+  if (strongIndependentSignal)
+    return false;
+
+  const value =
+    evidence.fileName ||
+    evidence.name ||
+    evidence.path ||
+    evidence.fullPath ||
+    evidence.targetPath ||
+    evidence.currentPath ||
+    evidence.originalPath ||
+    finding?.artifact_value;
+
+  return Boolean(
+    commonAppMatchClient(
+      value,
+      commonApps
+    )
+  );
+}
+
+
+function downloadUrlCandidatesClient(item) {
+  return [
+    item?.sourceUrl,
+    item?.finalUrl,
+    item?.referrerUrl,
+    item?.siteUrl,
+    item?.pageUrl,
+    ...safeArray(item?.urlChain)
+  ].filter(Boolean);
+}
+
+function isOfficialDiscordInstallerOrUpdateClient(item) {
+  const name = String(
+    item?.fileName ||
+    item?.targetPath ||
+    ""
+  ).split(/[\\/]/).at(-1)?.toLowerCase() || "";
+
+  const target = String(
+    item?.targetPath ||
+    item?.currentPath ||
+    ""
+  )
+    .replaceAll("/", "\\")
+    .toLowerCase();
+
+  if (
+    target.includes("\\appdata\\local\\discord\\") &&
+    ["update.exe", "discord.exe", "discordsetup.exe", "squirrel.exe"].includes(name)
+  ) {
+    return true;
+  }
+
+  return downloadUrlCandidatesClient(item).some((value) => {
+    try {
+      const url = new URL(String(value || ""));
+      const host = url.hostname.toLowerCase();
+      const pathname = url.pathname.toLowerCase();
+
+      const officialHost =
+        host === "discord.com" ||
+        host === "www.discord.com" ||
+        host === "discordapp.com" ||
+        host === "www.discordapp.com" ||
+        host === "dl.discordapp.net" ||
+        host === "stable.dl2.discordapp.net";
+
+      return officialHost && (
+        pathname.includes("/api/download") ||
+        pathname.includes("/apps/") ||
+        pathname.includes("/download")
+      );
+    } catch {
+      return false;
+    }
+  });
+}
+
+function isDiscordAttachmentDownloadClient(item) {
+  if (isOfficialDiscordInstallerOrUpdateClient(item))
+    return false;
+
+  return downloadUrlCandidatesClient(item).some((value) => {
+    try {
+      const url = new URL(String(value || ""));
+      const host = url.hostname.toLowerCase();
+      const pathname = url.pathname.toLowerCase();
+
+      return (
+        (
+          host === "cdn.discordapp.com" ||
+          host === "media.discordapp.net" ||
+          host.endsWith(".discordattachments.com")
+        ) &&
+        (
+          pathname.includes("/attachments/") ||
+          host.endsWith(".discordattachments.com")
+        )
+      );
+    } catch {
+      return false;
+    }
+  });
+}
+
+function downloadOriginKind(item) {
+  const urls = [
+    item?.sourceUrl,
+    item?.finalUrl,
+    item?.referrerUrl,
+    item?.siteUrl,
+    item?.pageUrl,
+    ...safeArray(item?.urlChain)
+  ].filter(Boolean).map((value) => String(value).toLowerCase());
+
+  const joined = urls.join(" ");
+
+  if (
+    joined.includes("discord.com/") ||
+    joined.includes("discord.gg/") ||
+    joined.includes("discordapp.com/") ||
+    joined.includes("cdn.discordapp.com/") ||
+    joined.includes("media.discordapp.net/") ||
+    joined.includes("discordattachments.com/")
+  ) {
+    return "Discord";
+  }
+
+  if (
+    joined.includes("t.me/") ||
+    joined.includes("telegram.me/") ||
+    joined.includes("telegram.org/") ||
+    joined.includes("web.telegram.org/") ||
+    joined.includes("telegram-cdn.org/") ||
+    joined.includes("cdn-telegram.org/")
+  ) {
+    return "Telegram";
+  }
+
+  return "";
+}
+
+function browserDangerInfo(value) {
+  const code = Number(value ?? 0);
+  const map = {
+    1: ["Arquivo perigoso", "high"],
+    2: ["URL perigosa", "high"],
+    3: ["Conteúdo perigoso", "high"],
+    4: ["Conteúdo possivelmente perigoso", "medium"],
+    5: ["Download incomum", "medium"],
+    6: ["Alerta validado/ignorado pelo usuário", "medium"],
+    7: ["Host perigoso", "high"],
+    8: ["Software potencialmente indesejado", "high"],
+    16: ["Deep Scan: perigoso", "high"],
+    19: ["Risco de comprometimento de conta", "high"],
+  };
+
+  const hit = map[code];
+  return hit
+    ? { code, label: hit[0], severity: hit[1], suspicious: true }
+    : { code, label: code ? "DangerType " + code : "Sem alerta", severity: "info", suspicious: false };
+}
+
+function isDeceptiveDoubleExtension(value) {
+  return /\.(zip|rar|7z|pdf|jpg|jpeg|png|gif|txt|doc|docx|xls|xlsx|ppt|pptx)\.exe$/i
+    .test(String(value || ""));
+}
+
+function isRiskyDownloadName(value) {
+  const name = String(value || "");
+  return /\.(exe|com|scr|dll|msi|bat|cmd|ps1|zip|rar|7z)$/i.test(name) ||
+    isDeceptiveDoubleExtension(name);
+}
+
+function looksRandomExecutableNameClient(value) {
+  const name = String(value || "").split(/[\\/]/).at(-1) || "";
+  if (!/\.exe$/i.test(name)) return false;
+
+  let stem = name.replace(/\.exe$/i, "");
+  stem = stem.replace(/\.(zip|rar|7z|pdf|jpg|jpeg|png|txt)$/i, "");
+
+  if (stem.length < 4 || stem.length > 28 || !/^[a-z0-9]+$/i.test(stem))
+    return false;
+
+  const chars = [...stem];
+  const letters = chars.filter((ch) => /[a-z]/i.test(ch));
+  const digits = chars.filter((ch) => /[0-9]/.test(ch));
+  const vowels = letters.filter((ch) => /[aeiou]/i.test(ch));
+  const distinct = new Set(stem.toUpperCase()).size;
+  const allUpperOrDigits = /^[A-Z0-9]+$/.test(stem);
+  const vowelRatio = letters.length ? vowels.length / letters.length : 0;
+
+  if (stem.length <= 5) {
+    return allUpperOrDigits &&
+      distinct >= Math.max(4, stem.length - 1) &&
+      (digits.length >= 1 || vowels.length === 0) &&
+      vowelRatio <= 0.25;
+  }
+
+  return (
+    (
+      allUpperOrDigits &&
+      distinct >= Math.min(6, stem.length - 1) &&
+      vowelRatio <= 0.35 &&
+      (digits.length >= 1 || letters.length >= 5)
+    ) ||
+    (
+      stem.length >= 8 &&
+      stem.length <= 18 &&
+      digits.length === 0 &&
+      letters.length === stem.length &&
+      distinct >= 7 &&
+      vowelRatio <= 0.22
+    ) ||
+    (
+      stem.length >= 10 &&
+      letters.length >= 6 &&
+      digits.length >= 2 &&
+      distinct >= 8
+    )
+  );
+}
+
+async function openReportSafe(id, options = {}) {
+  try {
+    if (options.resetAiView !== false)
+      showTechnicalResult = false;
+
+    reportCard.classList.remove("hidden");
+    reportCard.classList.add("report-is-loading");
+    reportCard.setAttribute("aria-busy", "true");
+    document.getElementById("reportEmptyState")?.classList.add("hidden");
+    reportCard.scrollIntoView({ behavior: "auto", block: "start" });
+
+    const banner = document.getElementById("analysisProcessingBanner");
+    if (banner) {
+      banner.textContent = "Carregando relatório da análise #" + id + "...";
+      banner.className = "message";
+    }
+
+    await openReport(id, options);
+  } catch (error) {
+    if (error?.name === "AbortError")
+      return;
+
+    console.error("Falha ao abrir relatório", error);
+
+    reportCard.classList.remove("hidden");
+    document.getElementById("reportEmptyState")?.classList.add("hidden");
+
+    const banner = document.getElementById("analysisProcessingBanner");
+    if (banner) {
+      banner.textContent =
+        "Não foi possível abrir o relatório: " +
+        (error?.message || "erro desconhecido");
+      banner.className = "message error";
+    }
+  } finally {
+    if (String(currentReportId || "") === String(id || "")) {
+      reportCard.classList.remove("report-is-loading");
+      reportCard.removeAttribute("aria-busy");
+    }
+  }
+}
+
+function processingStageLabel(stage, status) {
+  const map = {
+    waiting: "Aguardando cliente",
+    collecting: "Coletando evidências",
+    preparing: "Preparando análise",
+    external_checks: "Consultando contas Steam",
+    normal_filter: "Aplicando filtros locais",
+    finalizing: "Preparando resultado final",
+    completed: "Concluído",
+    needs_review: "Resultado técnico disponível",
+    filter_error: "Erro parcial nos filtros",
+  };
+
+  return map[stage] || statusLabel(status);
+}
+
+function processingStageTag(stage, status) {
+  if (stage === "completed") return "low";
+  if (stage === "filter_error") return "high";
+  if (stage === "needs_review") return "medium";
+
+  if (
+    ["collecting", "preparing", "external_checks", "normal_filter", "finalizing"]
+      .includes(stage)
+  ) {
+    return "info";
+  }
+
+  if (status === "completed") return "low";
+  if (status === "waiting") return "medium";
+  return "info";
+}
+
+function isProcessingStage(stage) {
+  return [
+    "collecting",
+    "preparing",
+    "external_checks",
+    "normal_filter",
+    "finalizing",
+  ].includes(String(stage || ""));
+}
+
+function updateAnalysisProcessingBanner(status) {
+  const banner = document.getElementById("analysisProcessingBanner");
+  if (!banner) return;
+
+  const stage = status?.processingStage || status?.processing_stage || "waiting";
+  const message =
+    status?.processingMessage ||
+    status?.processing_message ||
+    processingStageLabel(stage, status?.status);
+
+  if (isProcessingStage(stage)) {
+    banner.className = "message";
+    banner.textContent = message;
+    return;
+  }
+
+  if (stage === "filter_error") {
+    banner.className = "message error";
+    banner.textContent =
+      message ||
+      "A análise terminou com erro parcial em um dos filtros locais. O relatório bruto foi preservado.";
+    return;
+  }
+
+  if (stage === "completed") {
+    banner.className = "message ok";
+    banner.textContent =
+      message ||
+      "Análise concluída. O resultado final está pronto.";
+    return;
+  }
+
+  banner.className = "message hidden";
+  banner.textContent = "";
+}
+
+async function pollAdminProgress() {
+  if (
+    dashboardView.classList.contains("hidden") ||
+    dashboardPollInFlight
+  )
+    return;
+
+  dashboardPollInFlight = true;
+
+  try {
+    if (!currentReportId) {
+      if (Date.now() - lastAnalysesRefreshAt >= 15000)
+        await loadAnalyses();
+      return;
+    }
+
+    const status = await api(
+      "/api/admin/analyses/" +
+      encodeURIComponent(currentReportId) +
+      "/rebuild-status"
+    );
+
+    updateAnalysisProcessingBanner(status);
+
+    if (
+      lastOpenReportProcessing === true &&
+      status.processing === false
+    ) {
+      await loadAnalyses();
+      await openReportSafe(currentReportId, {
+        force: true,
+        resetAiView: false,
+      });
+    } else if (
+      status.processing === true &&
+      Date.now() - lastAnalysesRefreshAt >= 12000
+    ) {
+      await loadAnalyses();
+    } else if (Date.now() - lastAnalysesRefreshAt >= 30000) {
+      await loadAnalyses();
+    }
+
+    lastOpenReportProcessing = status.processing === true;
+  } catch (error) {
+    console.debug("Polling do painel temporariamente indisponível", error);
+  } finally {
+    dashboardPollInFlight = false;
+  }
+}
+
+function statusLabel(status) {
+  const map = {
+    waiting: "Aguardando",
+    running: "Em execução",
+    completed: "Concluído",
+    expired: "Expirado",
+  };
+  return map[status] || status || "—";
+}
+
+function severityLabel(value) {
+  const map = {
+    info: "INFO",
+    low: "BAIXA",
+    medium: "MÉDIA",
+    high: "REVISAR",
+    critical: "CRÍTICA",
+  };
+  return map[value] || String(value || "").toUpperCase();
+}
+
+function setLoggedIn(logged) {
+  document.body.classList.toggle("desk-authenticated", logged);
+  document.getElementById("deskTopbar")?.classList.toggle("hidden", !logged);
+  window.dispatchEvent(new CustomEvent("vorken:auth", {detail: {logged}}));
+  loginView.classList.toggle("hidden", logged);
+  dashboardView.classList.toggle("hidden", !logged);
+  logoutBtn.classList.toggle("hidden", !logged);
+
+  document.getElementById("adminMainNav")?.classList.toggle("hidden", !logged);
+  document.getElementById("adminReadyState")?.classList.toggle("hidden", !logged);
+  document.getElementById("refreshBtn")?.classList.toggle("hidden", !logged);
+
+  if (logged && !dashboardPollTimer) {
+    dashboardPollTimer =
+      setInterval(
+        () => pollAdminProgress(),
+        4000
+      );
+  }
+
+  if (!logged && dashboardPollTimer) {
+    clearInterval(dashboardPollTimer);
+    dashboardPollTimer = null;
+  }
+}
+
+document.getElementById("loginForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+
+  const message = document.getElementById("loginMessage");
+  message.classList.add("hidden");
+
+  try {
+    await api("/api/admin/login", {
+      method: "POST",
+      body: JSON.stringify({
+        password: document.getElementById("adminPassword").value,
+      }),
+    });
+
+    setLoggedIn(true);
+    await refreshAll();
+  } catch (error) {
+    message.textContent = error.message;
+    message.className = "message error";
+  }
+});
+
+logoutBtn.addEventListener("click", async () => {
+  try {
+    await api("/api/admin/logout", { method: "POST" });
+  } finally {
+    setLoggedIn(false);
+  }
+});
+
+document.getElementById("analysisForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+
+  const form = event.currentTarget;
+  const box = document.getElementById("analysisCreated");
+  box.classList.add("hidden");
+
+  try {
+    const data = await api("/api/admin/analyses", {
+      method: "POST",
+      body: JSON.stringify({
+        label: document.getElementById("analysisLabel").value,
+        ttlHours: Number(document.getElementById("analysisTtl").value),
+        serverId: document.getElementById("analysisServer")?.value || null,
+      }),
+    });
+
+    box.innerHTML =
+      '<strong>Análise #' + escapeHtml(data.analysis.id) + ' criada.</strong><br>' +
+      '<span class="analysis-link">' + escapeHtml(data.publicLink) + '</span><br><br>' +
+      '<button id="copyCreatedLink" class="button ghost" type="button">Copiar link</button>';
+
+    box.className = "message ok";
+
+    document.getElementById("copyCreatedLink").addEventListener("click", async () => {
+      await navigator.clipboard.writeText(data.publicLink);
+      document.getElementById("copyCreatedLink").textContent = "Copiado ✓";
+    });
+
+    form.reset();
+    document.getElementById("analysisTtl").value = "24";
+    await loadAnalyses();
+  } catch (error) {
+    box.textContent = error.message;
+    box.className = "message error";
+  }
+});
+
+document.getElementById("ruleForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+
+  const form = event.currentTarget;
+
+  try {
+    await api("/api/admin/rules", {
+      method: "POST",
+      body: JSON.stringify({
+        name: document.getElementById("ruleName").value,
+        type: document.getElementById("ruleType").value,
+        pattern: document.getElementById("rulePattern").value,
+        severity: document.getElementById("ruleSeverity").value,
+        description: document.getElementById("ruleDescription").value,
+      }),
+    });
+
+    form.reset();
+    document.getElementById("ruleSeverity").value = "medium";
+    await loadRules();
+  } catch (error) {
+    alert(error.message);
+  }
+});
+
+document.getElementById("refreshBtn").addEventListener("click", refreshAll);
+document.getElementById("closeReportBtn").addEventListener("click", () => {
+  activeReportController?.abort();
+  reportLoadSequence++;
+  reportCard.classList.add("hidden");
+  reportCard.classList.remove("report-is-loading");
+  reportCard.removeAttribute("aria-busy");
+  document.getElementById("reportEmptyState")?.classList.remove("hidden");
+  currentReportId = null;
+  currentClientReportReleased = false;
+  currentGuerraFriaLinked = false;
+  currentDecisionSelectable = false;
+  currentIntegrationDecision = null;
+  currentDetectedSteamIds = [];
+  selectedBanEvidenceIds.clear();
+  selectedTrustedEvidenceIds.clear();
+  showTechnicalResult = false;
+  lastOpenReportProcessing = null;
+});
+
+async function queueGuerraFriaDecision(action) {
+  if (!currentReportId || !currentDecisionSelectable)
+    return;
+
+  const isBan = action === "ban";
+  if (isBan && window.vorkenFleet?.selectedClientId) {
+    await window.vorkenFleet.banAnalysis({analysisId: currentReportId, evidenceIds: [...selectedBanEvidenceIds], steamIds: currentDetectedSteamIds});
+    return;
+  }
+
+  let reason =
+    isBan
+      ? await requestGuerraFriaBanReason()
+      : "Verificação Vorken concluída sem bloqueio.";
+
+  if (isBan && reason === null)
+    return;
+
+  reason =
+    String(reason || "").trim();
+
+  if (isBan && !reason) {
+    alert("Informe o motivo do banimento.");
+    return;
+  }
+
+  const evidenceIds = isBan ? [...selectedBanEvidenceIds] : [];
+  const trustedEvidenceIds = isBan
+    ? []
+    : [...selectedTrustedEvidenceIds];
+
+  if (isBan && evidenceIds.length === 0) {
+    alert("Selecione pelo menos uma evidência que justifique o banimento.");
+    return;
+  }
+
+  const manualPlayer =
+    isBan && !currentGuerraFriaLinked
+      ? await requestManualBanPlayer()
+      : null;
+
+  if (isBan && !currentGuerraFriaLinked && !manualPlayer)
+    return;
+
+  const confirmed =
+    window.confirm(
+      isBan
+        ? "Confirmar BANIMENTO PERMANENTE com " + evidenceIds.length + " evidência(s) selecionada(s)?"
+        : "Confirmar LIBERAÇÃO e ensinar " + trustedEvidenceIds.length + " item(ns) selecionado(s) como confiáveis?"
+    );
+
+  if (!confirmed)
+    return;
+
+  const banButton =
+    document.getElementById("gfBanBtn");
+  const releaseButton =
+    document.getElementById("gfReleaseBtn");
+
+  try {
+    if (banButton) banButton.disabled = true;
+    if (releaseButton) releaseButton.disabled = true;
+
+    const data = await api(
+      "/api/admin/analyses/" +
+      encodeURIComponent(currentReportId) +
+      "/guerra-fria-decision",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          decision:
+            action === "ban"
+              ? "deny"
+              : "approve",
+          reason,
+          evidenceIds,
+          trustedEvidenceIds,
+          manualPlayer,
+        }),
+      }
+    );
+
+    alert(
+      (isBan
+        ? (scopedReport ? data.message || "Banimento enviado ao Rust." : "Banimento confirmado pelo Guerra Fria.")
+        : (scopedReport ? data.message || "Liberação enviada ao Rust." : "Liberação confirmada pelo Guerra Fria.")) +
+      (
+        Number(data?.learnedArtifacts || 0) > 0
+          ? "\n\nVorken aprendeu " +
+            String(data.learnedArtifacts) +
+            " identidade(s) de arquivo como confiáveis."
+          : ""
+      )
+    );
+
+    lastReportCache = null;
+    await openReportSafe(currentReportId, { force: true });
+  } catch (error) {
+    alert(
+      "Não foi possível enviar a decisão: " +
+      (error?.message || "erro desconhecido")
+    );
+
+    if (banButton) banButton.disabled = false;
+    if (releaseButton) releaseButton.disabled = false;
+  }
+}
+
+document.getElementById("battleMetricsRefresh")?.addEventListener("click", async event => {
+  if (!currentReportId) return;
+  const reportId = currentReportId;
+  const button = event.currentTarget;
+  button.disabled = true;
+  button.textContent = "Consultando BattleMetrics...";
+  try {
+    const data = await api("/api/admin/analyses/" + encodeURIComponent(reportId) + "/battlemetrics", {method:"POST",headers:{"Content-Type":"application/json","X-Vorken-Request":"portal"}});
+    if (currentReportId === reportId) window.renderBattleMetrics?.(data.battleMetrics);
+    lastReportCache = null;
+  } catch (error) {
+    const target = document.getElementById("battleMetricsResults");
+    if (target && currentReportId === reportId) target.textContent = error.message || "Consulta indisponível.";
+  } finally {
+    button.disabled = false;
+    button.textContent = "Consultar BattleMetrics";
+  }
+});
+
+document.getElementById("gfBanBtn")?.addEventListener(
+  "click",
+  () => queueGuerraFriaDecision("ban")
+);
+
+document.getElementById("gfReleaseBtn")?.addEventListener(
+  "click",
+  () => queueGuerraFriaDecision("release")
+);
+
+document.getElementById("clientReportToggleBtn")?.addEventListener("click", async () => {
+  if (!currentReportId) return;
+  const button = document.getElementById("clientReportToggleBtn");
+  const nextReleased = !currentClientReportReleased;
+  const original = button.textContent;
+  try {
+    button.disabled = true;
+    button.textContent = nextReleased ? "Liberando..." : "Ocultando...";
+    const data = await api(
+      "/api/admin/analyses/" + encodeURIComponent(currentReportId) + "/client-report",
+      { method: "POST", body: JSON.stringify({ released: nextReleased }) }
+    );
+    currentClientReportReleased = data.released === true;
+    button.textContent = currentClientReportReleased
+      ? "Ocultar detalhes do cliente"
+      : "Liberar detalhes ao cliente";
+    button.classList.toggle("release-active", currentClientReportReleased);
+  } catch (error) {
+    button.textContent = original;
+    alert(error.message);
+  } finally {
+    button.disabled = false;
+  }
+});
+document.getElementById("toggleReviewViewBtn")?.addEventListener("click", () => {
+  // Filtro local é a única classificação ativa.
+});
+
+document.getElementById("rebuildFindingsBtn").addEventListener("click", async () => {
+  if (!currentReportId) return;
+
+  const button = document.getElementById("rebuildFindingsBtn");
+  const original = button.textContent;
+  const analysisId = currentReportId;
+
+  try {
+    button.disabled = true;
+    button.textContent = "Iniciando...";
+
+    await api(
+      "/api/admin/analyses/" + encodeURIComponent(analysisId) + "/rebuild",
+      { method: "POST" }
+    );
+
+    const startedAt = Date.now();
+    const timeoutMs = 5 * 60 * 1000;
+
+    while (Date.now() - startedAt < timeoutMs) {
+      button.textContent = "Reprocessando...";
+
+      const status = await api(
+        "/api/admin/analyses/" +
+        encodeURIComponent(analysisId) +
+        "/rebuild-status"
+      );
+
+      if (!status.processing) {
+        await loadAnalyses();
+        lastReportCache = null;
+        await openReportSafe(analysisId, { force: true });
+
+        if (status.reviewStatus === "error") {
+          alert(
+            "O filtro técnico foi recalculado, mas a classificação local encontrou um erro. " +
+            (status.reviewError || "O resultado normal foi mantido.")
+          );
+        }
+
+        return;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 2200));
+    }
+
+    throw new Error(
+      "O recálculo continua sendo processado no servidor. Aguarde alguns instantes e abra o relatório novamente."
+    );
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
+});
+
+async function loadAnalyses() {
+  const data = await api("/api/admin/analyses");
+  window.dispatchEvent(new CustomEvent("vorken:analyses", {detail: data.analyses}));
+  lastAnalysesRefreshAt = Date.now();
+  analysesBody.innerHTML = "";
+
+  if (!data.analyses.length) {
+    analysesBody.innerHTML =
+      '<tr><td colspan="6" class="muted">Nenhuma análise criada.</td></tr>';
+    return;
+  }
+
+  const rowsFragment = document.createDocumentFragment();
+
+  for (const item of data.analyses) {
+    const row = document.createElement("tr");
+    const criticalCount =
+      Number(
+        item.critical_findings ??
+        item.high_findings ??
+        0
+      );
+
+    const reviewCount =
+      Number(
+        item.review_findings ??
+        Math.max(
+          0,
+          Number(item.total_findings || 0) -
+          criticalCount
+        )
+      );
+
+    const findings =
+      Number(item.total_findings || 0) === 0
+        ? '<span class="tag low">0</span>'
+        : criticalCount > 0
+          ? '<span class="tag critical">' + Number(item.total_findings) + '</span>'
+          : '<span class="tag medium">' + Number(item.total_findings) + '</span>';
+
+    const stage =
+      item.processing_stage || "waiting";
+
+    const stageLabel =
+      processingStageLabel(
+        stage,
+        item.status
+      );
+
+    const stageClass =
+      processingStageTag(
+        stage,
+        item.status
+      );
+
+    const stageMessage =
+      item.processing_message
+        ? '<br><small class="muted">' +
+          escapeHtml(item.processing_message) +
+          '</small>'
+        : "";
+
+    const sessionKind =
+      item.processing_stage === "filter_error"
+        ? "review"
+        : criticalCount > 0
+          ? "critical"
+          : reviewCount > 0
+            ? "review"
+            : item.status === "completed"
+              ? "clean"
+              : "review";
+
+    row.dataset.sessionKind = sessionKind;
+    row.dataset.analysisId = String(item.id);
+    row.classList.toggle(
+      "active-session",
+      String(currentReportId || "") === String(item.id)
+    );
+    row.dataset.searchText = [
+      item.id,
+      item.label,
+      item.machine_name,
+      item.status,
+      stageLabel
+    ].filter(Boolean).join(" ").toLowerCase();
+
+    const resultTag =
+      sessionKind === "critical"
+        ? '<span class="tag critical">CRÍTICO</span>'
+        : sessionKind === "review"
+          ? '<span class="tag medium">REVISAR</span>'
+          : '<span class="tag low">LIMPO</span>';
+
+    row.innerHTML = `
+      <td><span class="session-check"></span></td>
+      <td><code>VKN-${escapeHtml(String(item.id).padStart(6, "0"))}</code></td>
+      <td>
+        <strong>${escapeHtml(item.label)}</strong><br>
+        <small class="muted">${escapeHtml(item.machine_name || "Aguardando PC")}</small>
+      </td>
+      <td>${escapeHtml(formatDate(item.created_at))}</td>
+      <td>
+        ${item.status === "completed" ? resultTag : '<span class="tag ' + escapeHtml(stageClass) + '">' + escapeHtml(stageLabel) + '</span>'}
+        ${item.status === "completed" ? '<br><small class="muted">' + Number(item.total_findings || 0) + ' achados</small>' : stageMessage}
+      </td>
+      <td><button class="button ghost open-report" data-id="${item.id}" type="button">Abrir</button></td>
+    `;
+
+    rowsFragment.appendChild(row);
+  }
+
+  analysesBody.appendChild(rowsFragment);
+
+  document.querySelectorAll("#analysesBody tr[data-analysis-id]").forEach((row) => {
+    const openRow = async () => {
+      document.querySelectorAll("#analysesBody tr").forEach((item) =>
+        item.classList.remove("active-session")
+      );
+      row.classList.add("active-session");
+      await openReportSafe(row.dataset.analysisId);
+    };
+
+    row.tabIndex = 0;
+    row.setAttribute("role", "button");
+
+    row.addEventListener("click", openRow);
+    row.addEventListener("keydown", async (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      await openRow();
+    });
+  });
+
+  applySessionFilters();
+}
+
+async function openReport(id, options = {}) {
+  const reportChanged =
+    String(currentReportId || "") !== String(id || "");
+
+  if (reportChanged) {
+    selectedBanEvidenceIds.clear();
+    selectedTrustedEvidenceIds.clear();
+  }
+
+  currentReportId = id;
+  document.querySelector('[data-report-filter="overview"]')?.click();
+
+  activeReportController?.abort();
+  activeReportController = new AbortController();
+  const loadSequence = ++reportLoadSequence;
+  const cacheFresh =
+    options.force !== true &&
+    lastReportCache &&
+    String(lastReportCache.id) === String(id) &&
+    Date.now() - lastReportCache.loadedAt < 60000;
+
+  const data = cacheFresh
+    ? lastReportCache.data
+    : await api(
+        "/api/admin/analyses/" + encodeURIComponent(id),
+        { signal: activeReportController.signal }
+      );
+
+  if (loadSequence !== reportLoadSequence)
+    return;
+
+  if (!cacheFresh) {
+    lastReportCache = {
+      id: String(id),
+      data,
+      loadedAt: Date.now(),
+    };
+  }
+
+  const analysis = data.analysis || {};
+  const report = data.report || null;
+  const commonApps = safeArray(data.commonApps);
+  const filteredFindings = [];
+  const finalFindings = safeArray(data.findings)
+    .filter((finding) => !shouldHideFindingClient(finding, commonApps));
+  const findings = finalFindings;
+  const relatedAnalyses = safeArray(data.relatedAnalyses);
+  const payload = report?.payload && typeof report.payload === "object"
+    ? report.payload
+    : {};
+  const uiCounts =
+    payload.uiCounts && typeof payload.uiCounts === "object"
+      ? payload.uiCounts
+      : {};
+  const uiSummary =
+    payload.uiSummary && typeof payload.uiSummary === "object"
+      ? payload.uiSummary
+      : {};
+  const countFor = (key, rows = []) => {
+    const projected = Number(uiCounts[key]);
+    return Number.isFinite(projected)
+      ? projected
+      : safeArray(rows).length;
+  };
+  currentReportPayload = payload;
+  window.renderBattleMetrics?.(payload.battleMetrics);
+  window.dispatchEvent(new CustomEvent("vorken:report", {detail: {analysis, report, findings}}));
+  const collectionCounts =
+    payload.uiCollectionCounts && typeof payload.uiCollectionCounts === "object"
+      ? payload.uiCollectionCounts
+      : {};
+  const collectionCount = (name, rows) => {
+    const total = Number(collectionCounts[name]);
+    return Number.isFinite(total) ? total : rows.length;
+  };
+
+  // Abre o cartão antes de montar as seções pesadas. Assim um erro em uma
+  // seção específica não faz o botão parecer que "não funciona".
+  reportCard.classList.remove("hidden");
+  document.getElementById("reportEmptyState")?.classList.add("hidden");
+
+  document.getElementById("reportTitle").textContent =
+    "#" + analysis.id + " · " + analysis.label;
+
+  currentClientReportReleased =
+    analysis.client_report_released === true;
+
+  currentGuerraFriaLinked =
+    Boolean(scopedReport) || ["guerra_fria", "guerra_fria_manual"].includes(analysis.external_source) &&
+    /^7656119\d{10}$/.test(
+      String(analysis.external_player_id || "")
+    );
+
+  currentDecisionSelectable =
+    analysis.status === "completed" &&
+    !analysis.external_decision && (!scopedReport || ["redeemed", "ended"].includes(scopedSessionState?.status));
+
+  currentIntegrationDecision =
+    analysis.external_decision
+      ? {
+          action:
+            analysis.external_decision === "deny"
+              ? "ban"
+              : "release",
+          status: "completed",
+          result:
+            analysis.external_decision_result || "",
+        }
+      : null;
+
+  const gfActions =
+    document.getElementById("gfIntegrationActions");
+  const gfDecisionBadge =
+    document.getElementById("gfDecisionBadge");
+  const gfBanBtn =
+    document.getElementById("gfBanBtn");
+  const gfReleaseBtn =
+    document.getElementById("gfReleaseBtn");
+
+  gfActions?.classList.toggle(
+    "hidden",
+    false
+  );
+
+  if (gfDecisionBadge) {
+    const decision =
+      currentIntegrationDecision;
+
+    gfDecisionBadge.textContent =
+      decision
+        ? (
+            decision.action === "ban"
+              ? "BANIMENTO"
+              : "LIBERAÇÃO"
+          ) +
+          " · " +
+          String(decision.status || "").toUpperCase()
+        : currentGuerraFriaLinked
+          ? (scopedReport ? "VORKEN · DECISÃO MANUAL" : "GUERRA FRIA · AGUARDANDO DECISÃO")
+          : "VORKEN · DECISÃO MANUAL";
+
+    gfDecisionBadge.className =
+      "gf-decision-badge " +
+      (
+        decision?.status === "completed"
+          ? "complete"
+          : decision?.status === "failed"
+            ? "failed"
+            : decision
+              ? "pending"
+              : ""
+      );
+  }
+
+  const decisionLocked =
+    !currentDecisionSelectable || analysis.status !== "completed" ||
+    Boolean(
+      currentIntegrationDecision &&
+      ["pending","processing","completed"]
+        .includes(currentIntegrationDecision.status)
+    );
+
+  if (gfBanBtn) {
+    gfBanBtn.disabled = decisionLocked;
+    gfBanBtn.textContent =
+      selectedBanEvidenceIds.size > 0
+        ? "⚠ Banir jogador · " + selectedBanEvidenceIds.size + " prova(s)"
+        : "⚠ Banir jogador";
+  }
+
+  if (gfReleaseBtn) {
+    gfReleaseBtn.classList.toggle("hidden", !currentGuerraFriaLinked);
+    gfReleaseBtn.disabled = decisionLocked;
+  }
+
+  const gfTrustAllBtn =
+    document.getElementById("gfTrustAllBtn");
+  if (gfTrustAllBtn) {
+    gfTrustAllBtn.classList.toggle("hidden", !currentGuerraFriaLinked);
+    gfTrustAllBtn.disabled = decisionLocked;
+  }
+
+  const clientToggle = document.getElementById("clientReportToggleBtn");
+  if (clientToggle) {
+    clientToggle.disabled = analysis.client_report_automatic === true;
+    clientToggle.title = analysis.client_report_automatic ? "Altere a disponibilidade nas configurações deste servidor para exigir liberação manual." : "";
+    clientToggle.textContent = analysis.client_report_automatic
+      ? "Relatório automático pelo servidor"
+      : currentClientReportReleased ? "Ocultar detalhes do cliente" : "Liberar detalhes ao cliente";
+    clientToggle.classList.toggle("release-active", currentClientReportReleased);
+  }
+
+  const toggleReviewViewBtn =
+    document.getElementById("toggleReviewViewBtn");
+
+  toggleReviewViewBtn.textContent =
+    showTechnicalResult
+      ? "Ver resultado final"
+      : "Ver resultado técnico";
+
+  updateAnalysisProcessingBanner({
+    status: analysis.status,
+    processingStage: analysis.processing_stage,
+    processingMessage: analysis.processing_message,
+  });
+
+  const scopedNotice=document.getElementById('scopedDecisionNotice');
+  scopedNotice?.classList.add('hidden');
+  if(scopedNotice && scopedReport && scopedSessionState?.status==='ended' && !analysis.external_decision){
+    scopedNotice.classList.remove('hidden');
+    scopedNotice.textContent=/^2\.0\.(?:[7-9]|\d{2,})$/.test(scopedSessionState.plugin_version||'')
+      ? 'Sessão encerrada. Selecione as provas e aplique a decisão; o painel aguardará a confirmação do Rust.'
+      : 'Sessão encerrada. Você pode selecionar as provas. Para aplicar a decisão, baixe o plugin atualizado (2.0.7) em Meu painel e substitua Vorken.cs no Rust.';
+  }
+  lastOpenReportProcessing =
+    isProcessingStage(
+      analysis.processing_stage
+    );
+
+  const arrays = {
+    steamAccounts: safeArray(payload.steamAccounts),
+    usbCurrent: safeArray(payload.usbCurrent),
+    usbHistory: safeArray(payload.usbHistory),
+    usbTimeline: safeArray(payload.usbTimeline),
+    usbFiles: safeArray(payload.usbFiles),
+    usbExecutionEvidence: safeArray(payload.usbExecutionEvidence),
+    serialDevices: safeArray(payload.serialDevices),
+    processes: safeArray(payload.processes),
+    prefetch: safeArray(payload.prefetch),
+    prefetchExecutions: safeArray(payload.prefetchExecutions),
+    services: safeArray(payload.services),
+    drivers: safeArray(payload.drivers),
+    startup: safeArray(payload.startup),
+    files: safeArray(payload.files),
+    peInspections: safeArray(payload.peInspections),
+    zoneIdentifiers: safeArray(payload.zoneIdentifiers),
+    alternateDataStreams: safeArray(payload.alternateDataStreams),
+    autorunIntegrity: safeArray(payload.autorunIntegrity),
+    processModuleIntegrity: safeArray(payload.processModuleIntegrity),
+    processMemoryIntegrity: safeArray(payload.processMemoryIntegrity),
+    protectedWindows: safeArray(payload.protectedWindows),
+    bam: safeArray(payload.bam),
+    userAssist: safeArray(payload.userAssist),
+    muiCache: safeArray(payload.muiCache),
+    pca: safeArray(payload.pca),
+    amcache: safeArray(payload.amcache),
+    shimCache: safeArray(payload.shimCache),
+    setupApiUsb: safeArray(payload.setupApiUsb),
+    powerShellHits: safeArray(payload.powerShellHits),
+    powerShellArtifacts: safeArray(payload.powerShellArtifacts),
+    prefetchIntegrity: safeArray(payload.prefetchIntegrity),
+    hiddenVolumes: safeArray(payload.hiddenVolumes),
+    logClearSignals: safeArray(payload.logClearSignals),
+    processCreationEvents: safeArray(payload.processCreationEvents),
+    defenderDetections: safeArray(payload.defenderDetections),
+    recentShortcuts: safeArray(payload.recentShortcuts),
+    crashArtifacts: safeArray(payload.crashArtifacts),
+    securityProducts: safeArray(payload.securityProducts),
+    recycleBin: safeArray(payload.recycleBin),
+    browserDownloads: safeArray(payload.browserDownloads),
+    browserHistorySignals: safeArray(payload.browserHistorySignals),
+    browserRecoveredArtifacts: safeArray(payload.browserRecoveredArtifacts),
+    networkIndicators: safeArray(payload.networkIndicators),
+    deletedUsnRecords: safeArray(payload.deletedUsnRecords),
+    extensionMismatches: safeArray(payload.extensionMismatches),
+    defenderExclusions: safeArray(payload.defenderExclusions),
+    bootIntegrity: safeArray(payload.bootIntegrity),
+    systemTimeChanges: safeArray(payload.systemTimeChanges),
+    virtualDisks: safeArray(payload.virtualDisks),
+    rustModules: safeArray(payload.rustModules),
+    usnJournalState: safeArray(payload.usnJournalState),
+    usnActivity: safeArray(payload.usnActivity),
+    systemIntegrityExpansion: safeArray(payload.systemIntegrityExpansion),
+  };
+
+  currentDetectedSteamIds = [
+    ...new Set(
+      arrays.steamAccounts
+        .map((account) => normalizeSteamId64Input(account?.steamId64))
+        .filter(Boolean)
+    )
+  ];
+
+  const usbStorageDevices = uniqueUsbStorageDevices([
+    ...arrays.usbCurrent,
+    ...arrays.usbHistory,
+  ]);
+  const usbExecutedExes = arrays.usbExecutionEvidence
+    .filter((item) =>
+      item?.isExe === true &&
+      /\.exe(?:$|[?#])/i.test(String(item.path || item.name || "")) &&
+      (item.removableConfirmed === true || item.detachedRemovable === true)
+    )
+    .sort((a, b) => new Date(b.timeUtc || 0) - new Date(a.timeUtc || 0));
+
+  const disconnectedUsb =
+    usbStorageDevices.filter((item) => item.present === false).length;
+
+  const effectiveFindingSeverity = (item) =>
+    item.severity || "info";
+
+  const criticalFindings =
+    findings
+      .filter((item) =>
+        effectiveFindingSeverity(item) === "critical"
+      )
+      .sort((a, b) => {
+        const aPriority = a.evidence?.priorityMaximum === true ? 1 : 0;
+        const bPriority = b.evidence?.priorityMaximum === true ? 1 : 0;
+
+        if (aPriority !== bPriority)
+          return bPriority - aPriority;
+
+        return Number(b.id || 0) - Number(a.id || 0);
+      });
+
+  const mediumFindings =
+    findings
+      .filter((item) =>
+        ["high", "medium"].includes(
+          effectiveFindingSeverity(item)
+        )
+      )
+      .sort((a, b) => {
+        const rank = { high: 2, medium: 1 };
+        return (
+          (rank[effectiveFindingSeverity(b)] || 0) -
+          (rank[effectiveFindingSeverity(a)] || 0)
+        );
+      });
+
+  if (reportChanged) {
+    for (const finding of [...criticalFindings, ...mediumFindings]) {
+      const findingId = Number(finding?.id);
+      if (Number.isInteger(findingId))
+        selectedTrustedEvidenceIds.add(findingId);
+    }
+  }
+
+  const updateTrustSelectionUi = () => {
+    document
+      .querySelectorAll(".trust-evidence-checkbox")
+      .forEach((checkbox) => {
+        const findingId = Number(checkbox.dataset.findingId);
+        checkbox.checked = selectedTrustedEvidenceIds.has(findingId);
+      });
+
+    const releaseButton = document.getElementById("gfReleaseBtn");
+    if (releaseButton && !releaseButton.disabled) {
+      releaseButton.textContent =
+        "✓ Liberar jogador · " +
+        selectedTrustedEvidenceIds.size +
+        " confiável(is)";
+    }
+  };
+
+  const trustAllButton = document.getElementById("gfTrustAllBtn");
+  if (trustAllButton) {
+    trustAllButton.onclick = () => {
+      const allIds = [...criticalFindings, ...mediumFindings]
+        .map((finding) => Number(finding?.id))
+        .filter(Number.isInteger);
+      const allSelected = allIds.length > 0 &&
+        allIds.every((findingId) => selectedTrustedEvidenceIds.has(findingId));
+
+      selectedTrustedEvidenceIds = allSelected
+        ? new Set()
+        : new Set(allIds);
+      updateTrustSelectionUi();
+      trustAllButton.textContent = allSelected
+        ? "Marcar todos confiáveis"
+        : "Desmarcar confiança";
+    };
+  }
+
+  const hasSuspiciousUsbExecution =
+    usbExecutedExes.length > 0 ||
+    findings.some((item) =>
+      item?.evidence?.usbExecution === true &&
+      item?.evidence?.executionConfirmed === true
+    );
+
+  const usbSuspiciousBanner =
+    document.getElementById("usbSuspiciousBanner");
+
+  if (usbSuspiciousBanner) {
+    usbSuspiciousBanner.classList.toggle(
+      "hidden",
+      !hasSuspiciousUsbExecution
+    );
+    usbSuspiciousBanner.textContent =
+      hasSuspiciousUsbExecution
+        ? "⚠ PENDRIVE SUSPEITO — VERIFICAR: foi detectado um executável iniciado em mídia removível. Revise a seção Pendrives / USB antes de concluir a análise."
+        : "";
+  }
+
+  const infoFindings =
+    findings.filter(
+      (item) =>
+        ["low", "info"].includes(
+          effectiveFindingSeverity(item)
+        )
+    );
+
+  const collectedFindings = infoFindings;
+
+  const hardwareCount =
+    Number.isFinite(Number(uiSummary.hardwareCount))
+      ? Number(uiSummary.hardwareCount)
+      : disconnectedUsb +
+        Number(payload.hardwareSummary?.totalRelevantDevices ?? arrays.serialDevices.length);
+
+  const advancedForensicsCount =
+    Number.isFinite(Number(uiSummary.advancedForensicsCount))
+      ? Number(uiSummary.advancedForensicsCount)
+      : (
+          collectionCount("peInspections", arrays.peInspections) +
+          collectionCount("zoneIdentifiers", arrays.zoneIdentifiers) +
+          collectionCount("alternateDataStreams", arrays.alternateDataStreams) +
+          arrays.autorunIntegrity.filter((x) => x.suspicious === true).length +
+          arrays.processModuleIntegrity.filter((x) => x.suspicious === true).length +
+          collectionCount("processMemoryIntegrity", arrays.processMemoryIntegrity) +
+          collectionCount("protectedWindows", arrays.protectedWindows) +
+          collectionCount("powerShellArtifacts", arrays.powerShellArtifacts) +
+          collectionCount("crashArtifacts", arrays.crashArtifacts) +
+          collectionCount("securityProducts", arrays.securityProducts) +
+          collectionCount("networkIndicators", arrays.networkIndicators) +
+          collectionCount("usnActivity", arrays.usnActivity) +
+          collectionCount("systemIntegrityExpansion", arrays.systemIntegrityExpansion)
+        );
+
+  const informationalCount =
+    infoFindings.length +
+    (
+      Number.isFinite(Number(uiSummary.informationalInventoryCount))
+        ? Number(uiSummary.informationalInventoryCount)
+        : (
+            collectionCount("files", arrays.files) +
+            collectionCount("browserDownloads", arrays.browserDownloads) +
+            collectionCount("recycleBin", arrays.recycleBin) +
+            collectionCount("browserRecoveredArtifacts", arrays.browserRecoveredArtifacts) +
+            collectionCount("deletedUsnRecords", arrays.deletedUsnRecords)
+          )
+    );
+
+  const inventoryLoadNotice =
+    document.getElementById("inventoryLoadNotice");
+  const projection = payload.uiProjection || {};
+  if (inventoryLoadNotice) {
+    inventoryLoadNotice.classList.toggle("hidden", projection.truncated !== true);
+    inventoryLoadNotice.classList.toggle("warning", projection.truncated === true);
+    inventoryLoadNotice.textContent = projection.truncated === true
+      ? "Visualização otimizada: " +
+        Number(projection.projectedItems || 0).toLocaleString("pt-BR") +
+        " de " +
+        Number(projection.originalItems || 0).toLocaleString("pt-BR") +
+        " registros técnicos foram carregados nesta aba. O JSON completo continua disponível para download."
+      : "";
+  }
+
+  const currentStageLabel =
+    processingStageLabel(
+      analysis.processing_stage,
+      analysis.status
+    );
+
+  const hasFilterError =
+    analysis.processing_stage === "filter_error";
+
+  document.getElementById("reportMetrics").innerHTML = `
+    <div class="metric"><small>STATUS</small><strong>${escapeHtml(currentStageLabel)}</strong></div>
+    <div class="metric"><small>CONTAS STEAM</small><strong>${countFor("steamAccounts", arrays.steamAccounts)}</strong><span>${arrays.steamAccounts.filter((x) => x?.banConsensus?.banDetected === true).length} com histórico de ban</span></div>
+    <div class="metric"><small>CLASSIFICAÇÃO</small><strong>FILTRO LOCAL</strong><span>Classificação determinística pelos filtros Vorken</span></div>
+    <div class="metric danger-metric"><small>VERMELHO · CRÍTICO</small><strong>${criticalFindings.length}</strong><span>Somente evidências de prioridade máxima</span></div>
+    <div class="metric warning-metric"><small>LARANJA · REVISAR</small><strong>${mediumFindings.length}</strong><span>Itens suspeitos que exigem verificação administrativa</span></div>
+    <div class="metric info-metric"><small>AZUL · COLETADO</small><strong>${collectedFindings.length}</strong><span>Evidência informativa / não crítica</span></div>
+    <div class="metric hardware-metric"><small>HARDWARE / USB</small><strong>${hardwareCount}</strong><span>Pendrives e placas separados</span></div>
+    <div class="metric priority-metric"><small>ARQUIVOS PRIORITÁRIOS</small><strong id="summaryPriorityCount">0</strong><span>EXE suspeito apagado/removível no topo</span></div>
+    <div class="metric"><small>MÓDULOS FORENSES</small><strong>${advancedForensicsCount}</strong><span>PE · USN · rede · PowerShell · WER</span></div>
+    <div class="metric info-metric"><small>AZUL · INVENTÁRIO</small><strong>${informationalCount}</strong><span>Oculto até você abrir</span></div>
+  `;
+
+  const resultFinalLabel = document.getElementById("resultFinalLabel");
+  if (resultFinalLabel) {
+    resultFinalLabel.textContent =
+      hasFilterError
+        ? "Erro nos filtros · revisão obrigatória"
+        : criticalFindings.length > 0
+          ? "Possível trapaceiro detectado"
+          : mediumFindings.length > 0
+            ? "Itens suspeitos · revisão necessária"
+            : "Limpo · liberação automática";
+    resultFinalLabel.style.color =
+      hasFilterError
+        ? "#ffad66"
+        : criticalFindings.length > 0
+          ? "#ff5769"
+          : mediumFindings.length > 0
+            ? "#ffad66"
+            : "#2bf0c9";
+  }
+
+  const sideRecommendationLabel =
+    document.getElementById("sideRecommendationLabel");
+  const sideRecommendationText =
+    document.getElementById("sideRecommendationText");
+
+  if (sideRecommendationLabel) {
+    sideRecommendationLabel.textContent =
+      hasFilterError
+        ? "Reprocessamento necessário"
+        : hasSuspiciousUsbExecution
+          ? "Pendrive suspeito — verificar"
+        : criticalFindings.length > 0
+          ? "Análise administrativa urgente"
+          : mediumFindings.length > 0
+            ? "Verificação administrativa"
+            : "Liberação automática";
+  }
+
+  if (sideRecommendationText) {
+    sideRecommendationText.textContent =
+      hasFilterError
+        ? "A classificação não terminou corretamente. Esta sessão não é considerada limpa e não pode ser liberada automaticamente. Reprocesse ou revise a análise."
+        : hasSuspiciousUsbExecution
+          ? "Foi detectado EXE executado em mídia removível. Abra Pendrives / USB e confira o arquivo antes de concluir a verificação."
+        : criticalFindings.length > 0
+          ? "Há evidência crítica. Possível trapaceiro detectado; revise antes de aplicar qualquer punição."
+          : mediumFindings.length > 0
+            ? "Há itens suspeitos em laranja. Revise o contexto antes de concluir a verificação."
+            : "Nenhum item vermelho ou laranja foi encontrado. A integração pode aprovar o jogador automaticamente.";
+  }
+
+  const sideStatsMirror = document.getElementById("sideStatsMirror");
+  if (sideStatsMirror) {
+    sideStatsMirror.innerHTML =
+      '<div>◈ <strong>' + findings.length + '</strong> evidências classificadas</div>' +
+      '<div>◈ <strong>' + criticalFindings.length + '</strong> itens críticos</div>' +
+      '<div>◈ <strong>' + mediumFindings.length + '</strong> itens suspeitos para revisão</div>' +
+      '<div>◈ <strong>' + hardwareCount + '</strong> itens de hardware / USB</div>' +
+      '<div>◈ <strong>' + advancedForensicsCount + '</strong> sinais forenses</div>';
+  }
+
+  document.getElementById("criticalCountBadge").textContent = criticalFindings.length;
+  document.getElementById("mediumCountBadge").textContent = mediumFindings.length;
+  document.getElementById("hardwareCountBadge").textContent = usbStorageDevices.length;
+  document.getElementById("infoCountBadge").textContent = informationalCount;
+  document.getElementById("filterCriticalCount")?.replaceChildren(String(criticalFindings.length));
+  document.getElementById("filterMediumCount")?.replaceChildren(String(mediumFindings.length));
+  document.getElementById("filterUsbCount")?.replaceChildren(String(usbStorageDevices.length));
+  document.getElementById("filterSerialCount")?.replaceChildren(String(countFor("serialDevices", arrays.serialDevices)));
+  document.getElementById("filterInventoryCount")?.replaceChildren(String(informationalCount));
+
+  document.getElementById("reportMeta").innerHTML = `
+    <div class="kv"><span>Computador</span><span>${escapeHtml(analysis.machine_name || "—")}</span></div>
+    <div class="kv"><span>Sistema</span><span>${escapeHtml(analysis.os_version || "—")}</span></div>
+    <div class="kv"><span>Agente</span><span>${escapeHtml(analysis.agent_version || "—")}</span></div>
+    ${currentGuerraFriaLinked ? '<div class="kv"><span>SteamID do jogador</span><span>' + escapeHtml(analysis.external_player_id || "—") + '</span></div>' : ""}
+    ${currentGuerraFriaLinked ? '<div class="kv"><span>Código da verificação</span><span>' + escapeHtml(analysis.external_verification_code || "—") + '</span></div>' : ""}
+    ${analysis.external_evidence_url ? '<div class="kv"><span>Provas publicadas</span><span><a class="analysis-link" target="_blank" rel="noopener" href="' + escapeHtml(analysis.external_evidence_url) + '">Abrir resultados do Vorken</a></span></div>' : ""}
+    <div class="kv"><span>Classificação</span><span>Filtros locais Vorken</span></div>
+    <div class="kv"><span>Início</span><span>${escapeHtml(formatDate(analysis.started_at))}</span></div>
+    <div class="kv"><span>Conclusão</span><span>${escapeHtml(formatDate(analysis.finished_at))}</span></div>
+  `;
+
+
+  const steamCorrelation =
+    payload.steamAccountCorrelation &&
+    typeof payload.steamAccountCorrelation === "object"
+      ? payload.steamAccountCorrelation
+      : {};
+
+  const steamAccounts =
+    arrays.steamAccounts;
+
+  const steamAccountsCountBadge =
+    document.getElementById("steamAccountsCountBadge");
+
+  if (steamAccountsCountBadge) {
+    steamAccountsCountBadge.textContent =
+      String(steamAccounts.length);
+  }
+
+  const steamAccountsSummary =
+    document.getElementById("steamAccountsSummary");
+
+  if (steamAccountsSummary) {
+    const previousBanned =
+      Number(
+        steamCorrelation.previousBannedAccounts || 0);
+
+    steamAccountsSummary.className =
+      previousBanned > 0
+        ? "message warning"
+        : "message ok";
+
+    steamAccountsSummary.textContent =
+      steamCorrelation.note ||
+      (
+        steamAccounts.length
+          ? "As contas encontradas foram consultadas na Steam e no Server Armour."
+          : "Nenhuma conta Steam foi encontrada nesta análise."
+      );
+  }
+
+  const providerName = (key) => {
+    if (key === "steam")
+      return "Steam";
+    if (key === "serverArmour")
+      return "Server Armour";
+    return key;
+  };
+
+  const providerResultText = (provider) => {
+    if (!provider || provider.status !== "ok")
+      return "INDISPONÍVEL";
+
+    if (provider.banned === true) {
+      if (provider.source === "server_armour")
+        return String(provider.serverBanCount || 0) + " BAN(S) EM SERVIDORES";
+      return provider.rustSpecific === true
+        ? "BAN · RUST"
+        : "BAN DETECTADO";
+    }
+
+    return "SEM BAN CONHECIDO";
+  };
+
+  const providerTag = (provider) => {
+    if (!provider || provider.status !== "ok")
+      return "info";
+    return provider.banned === true
+      ? "high"
+      : "info";
+  };
+
+  const steamAccountsTarget =
+    document.getElementById("steamAccountsList");
+
+  if (steamAccountsTarget) {
+    steamAccountsTarget.innerHTML =
+      steamAccounts.length
+        ? steamAccounts.map((account) => {
+            const steamId =
+              String(account?.steamId64 || "");
+
+            const consensus =
+              account?.banConsensus || {};
+
+            const checks =
+              account?.providerChecks || {};
+
+            const displayName =
+              account?.personaName ||
+              account?.accountName ||
+              steamId ||
+              "Conta Steam";
+
+            const serverArmourBans =
+              Number(checks?.serverArmour?.serverBanCount || 0);
+
+            const steamAccountFinding =
+              findings.find((finding) =>
+                String(finding?.artifact_type || "") === "steam_account_ban" &&
+                String(finding?.artifact_value || "") === steamId
+              );
+
+            const banEvasionFinding =
+              findings.find((finding) =>
+                String(finding?.artifact_type || "") === "steam_ban_evasion_context" &&
+                String(finding?.artifact_value || "")
+                  .split(",")
+                  .map((value) => value.trim())
+                  .includes(steamId)
+              );
+
+            const selectableSteamFinding =
+              steamAccountFinding ||
+              banEvasionFinding ||
+              null;
+
+            const steamEvidenceSelection =
+              currentDecisionSelectable &&
+              selectableSteamFinding &&
+              Number.isInteger(Number(selectableSteamFinding.id))
+                ? (
+                    '<label class="ban-evidence-select">' +
+                      '<input type="checkbox" class="ban-evidence-checkbox steam-ban-evidence-checkbox" ' +
+                        'data-finding-id="' + escapeHtml(selectableSteamFinding.id) + '" ' +
+                        (selectedBanEvidenceIds.has(Number(selectableSteamFinding.id)) ? 'checked' : '') +
+                      '>' +
+                      '<span>' +
+                        (
+                          String(selectableSteamFinding.artifact_type || "") === "steam_ban_evasion_context"
+                            ? "Usar ban evasion como prova do banimento"
+                            : "Usar histórico de ban desta conta como prova"
+                        ) +
+                      '</span>' +
+                    '</label>'
+                  )
+                : "";
+
+            const tagClass =
+              consensus?.code === "ban_detected"
+                ? (checks?.steam?.rustSpecific === true ? "high" : "medium")
+                : "info";
+
+            const tagText =
+              consensus?.code === "ban_detected"
+                ? (
+                    serverArmourBans > 0
+                      ? "BAN EM SERVIDOR RUST"
+                      : checks?.steam?.rustSpecific === true
+                        ? "BAN · RUST"
+                        : "BAN DETECTADO"
+                  )
+                : consensus?.code === "no_known_ban"
+                  ? "SEM BAN"
+                  : "API INDISPONÍVEL";
+
+            const profileUrl =
+              /^7656119\d{10}$/.test(steamId)
+                ? "https://steamcommunity.com/profiles/" + steamId
+                : "";
+
+            const sourceText =
+              safeArray(account?.sources).join(", ") ||
+              "Steam";
+
+            const providerRows =
+              ["steam", "serverArmour"]
+                .map((key) => {
+                  const provider =
+                    checks?.[key];
+
+                  const reason =
+                    provider?.reason
+                      ? '<div class="kv"><span>Detalhe</span><span>' +
+                        escapeHtml(provider.reason) +
+                        '</span></div>'
+                      : "";
+
+                  const serverBanDetails =
+                    key === "serverArmour" &&
+                    safeArray(provider?.bans).length
+                      ? (
+                          '<div class="message warning">Bans encontrados: ' +
+                          escapeHtml(String(provider?.serverBanCount || safeArray(provider?.bans).length)) +
+                          '</div>' +
+                          safeArray(provider?.bans)
+                            .map((ban) =>
+                              '<div class="finding">' +
+                                '<div class="kv"><span>Servidor</span><span>' +
+                                  escapeHtml(ban?.serverName || "Servidor não informado") +
+                                '</span></div>' +
+                                '<div class="kv"><span>Motivo</span><span>' +
+                                  escapeHtml(ban?.reason || "Não informado") +
+                                '</span></div>' +
+                                '<div class="kv"><span>Data</span><span>' +
+                                  escapeHtml(ban?.created || ban?.dateTime || "—") +
+                                '</span></div>' +
+                                '<div class="kv"><span>Duração</span><span>' +
+                                  escapeHtml(ban?.banLength || "—") +
+                                '</span></div>' +
+                                '<div class="kv"><span>Até</span><span>' +
+                                  escapeHtml(ban?.banUntil || "Permanente / não informado") +
+                                '</span></div>' +
+                                '<div class="kv"><span>Status</span><span>' +
+                                  (ban?.active === false ? "Expirado" : "Ativo") +
+                                '</span></div>' +
+                              '</div>'
+                            )
+                            .join("")
+                        )
+                      : "";
+
+                  return (
+                    '<div class="finding">' +
+                      '<div class="finding-head"><h4>' +
+                        escapeHtml(providerName(key)) +
+                      '</h4><span class="tag ' +
+                        escapeHtml(providerTag(provider)) +
+                      '">' +
+                        escapeHtml(providerResultText(provider)) +
+                      '</span></div>' +
+                      reason +
+                      serverBanDetails +
+                      '<details class="evidence-details"><summary>Resposta normalizada</summary><pre>' +
+                        escapeHtml(JSON.stringify(provider || {}, null, 2)) +
+                      '</pre></details>' +
+                    '</div>'
+                  );
+                })
+                .join("");
+
+            return (
+              '<article class="finding severity-card ' +
+                escapeHtml(tagClass) +
+              '">' +
+                '<div class="finding-head"><h4>' +
+                  escapeHtml(displayName) +
+                '</h4><span class="tag ' +
+                  escapeHtml(tagClass) +
+                '">' +
+                  escapeHtml(tagText) +
+                '</span></div>' +
+                '<code>' +
+                  escapeHtml(steamId || "—") +
+                '</code>' +
+                steamEvidenceSelection +
+                '<div class="kv"><span>AccountName</span><span>' +
+                  escapeHtml(account?.accountName || "—") +
+                '</span></div>' +
+                '<div class="kv"><span>Origem local</span><span>' +
+                  escapeHtml(sourceText) +
+                '</span></div>' +
+                '<div class="kv"><span>Login salvo</span><span>' +
+                  (account?.savedLogin === true ? "Sim" : "Não") +
+                '</span></div>' +
+                '<div class="kv"><span>Mais recente</span><span>' +
+                  (account?.mostRecent === true ? "SIM" : "Não") +
+                '</span></div>' +
+                '<div class="kv"><span>Conta vinculada à análise</span><span>' +
+                  (account?.isLinkedAccount === true ? "SIM" : "Não") +
+                '</span></div>' +
+                '<div class="kv"><span>Último vestígio local</span><span>' +
+                  escapeHtml(formatDate(account?.lastSeenUtc)) +
+                '</span></div>' +
+                '<div class="kv"><span>Resultado</span><span>' +
+                  escapeHtml(consensus?.label || "—") +
+                '</span></div>' +
+                '<div class="kv"><span>Bans Server Armour</span><span>' +
+                  escapeHtml(String(serverArmourBans)) +
+                '</span></div>' +
+                '<div class="kv"><span>Fontes consultadas</span><span>' +
+                  escapeHtml(
+                    safeArray(consensus?.availableSources)
+                      .map((source) => source === "server_armour" ? "Server Armour" : "Steam")
+                      .join(", ") || "—"
+                  ) +
+                '</span></div>' +
+                (
+                  profileUrl
+                    ? '<div class="kv"><span>Perfil</span><span><a class="analysis-link" target="_blank" rel="noopener noreferrer" href="' +
+                      escapeHtml(profileUrl) +
+                      '">Abrir Steam</a></span></div>'
+                    : ""
+                ) +
+                '<details class="evidence-details"><summary>Ver resultados Steam + Server Armour</summary><div>' +
+                  providerRows +
+                '</div></details>' +
+              '</article>'
+            );
+          }).join("")
+        : '<div class="message ok">Nenhuma conta Steam detectada em loginusers.vdf ou userdata.</div>';
+
+    steamAccountsTarget
+      .querySelectorAll(".steam-ban-evidence-checkbox")
+      .forEach((checkbox) => {
+        checkbox.addEventListener("change", () => {
+          const findingId =
+            Number(checkbox.dataset.findingId);
+
+          if (!Number.isInteger(findingId))
+            return;
+
+          if (checkbox.checked)
+            selectedBanEvidenceIds.add(findingId);
+          else
+            selectedBanEvidenceIds.delete(findingId);
+
+          const banButton =
+            document.getElementById("gfBanBtn");
+
+          if (banButton) {
+            const count =
+              selectedBanEvidenceIds.size;
+
+            banButton.textContent =
+              count > 0
+                ? "⚠ Banir jogador · " + count + " prova(s)"
+                : "⚠ Banir jogador";
+          }
+        });
+      });
+  }
+
+
+  const renderFindings = (elementId, rows, emptyMessage) => {
+    const target = document.getElementById(elementId);
+    target.innerHTML = "";
+
+    if (!rows.length) {
+      target.innerHTML = '<div class="message ok">' + escapeHtml(emptyMessage) + '</div>';
+      return;
+    }
+
+    for (const finding of rows) {
+      const element = document.createElement("article");
+      const evidence = finding.evidence || {};
+      const displaySeverity = effectiveFindingSeverity(finding);
+      element.className = "finding severity-card " + escapeHtml(displaySeverity);
+
+      const catalogName = evidence.catalogMatch?.name
+        ? '<div class="kv"><span>Catálogo</span><span>' + escapeHtml(evidence.catalogMatch.name) + '</span></div>'
+        : "";
+
+      const reviewBlock =
+        evidence.priorityMaximum === true
+          ? '<div class="kv"><span>Motor local</span><span>PRIORIDADE MÁXIMA · regra técnica protegida</span></div>'
+          : evidence.protectedByTechnicalEngine === true
+            ? '<div class="kv"><span>Motor local</span><span>Evidência técnica protegida</span></div>'
+            : '<div class="kv"><span>Motor local</span><span>Classificado pelos filtros Vorken</span></div>';
+
+      const browserHistoryTypes = new Set([
+        "browser_history",
+        "browser_catalog_visit_v2",
+        "browser_search_v2",
+        "browser_context_v2",
+        "browser_recovery_v2"
+      ]);
+
+      const browserAccessBlock =
+        browserHistoryTypes.has(String(finding.artifact_type || ""))
+          ? (
+              '<div class="kv"><span>Data do acesso</span><span>' +
+                escapeHtml(formatDate(evidence.visitTimeUtc || evidence.recoveredAtUtc)) +
+              '</span></div>' +
+              '<div class="kv"><span>Navegador</span><span>' +
+                escapeHtml(
+                  evidence.browser
+                    ? String(evidence.browser) +
+                      (evidence.profile ? " · " + String(evidence.profile) : "")
+                    : "—"
+                ) +
+              '</span></div>'
+            )
+          : "";
+
+      const downloadUrl = window.VorkenEvidenceInspector?.origins(evidence)[0]?.url || '';
+
+      const downloadLinkBlock =
+        downloadUrl
+          ? (
+              '<div class="kv"><span>Link do download</span><span>' +
+                '<a class="analysis-link" href="' +
+                  escapeHtml(downloadUrl) +
+                  '" target="_blank" rel="noopener noreferrer">' +
+                  escapeHtml(downloadUrl) +
+                '</a>' +
+              '</span></div>'
+            )
+          : "";
+
+      const selectable =
+        currentDecisionSelectable &&
+        ["critical", "high", "medium"].includes(displaySeverity) &&
+        Number.isInteger(Number(finding.id));
+      const selectionBlock = selectable
+        ? `<div class="finding-learning-actions"><label class="ban-evidence-select"><input type="checkbox" class="ban-evidence-checkbox" data-finding-id="${escapeHtml(finding.id)}" ${selectedBanEvidenceIds.has(Number(finding.id)) ? "checked" : ""}><span>Usar como prova do banimento</span></label><label class="ban-evidence-select trust-evidence-select"><input type="checkbox" class="trust-evidence-checkbox" data-finding-id="${escapeHtml(finding.id)}" ${selectedTrustedEvidenceIds.has(Number(finding.id)) ? "checked" : ""}><span>Confiar ao liberar</span></label></div>`
+        : "";
+      element.innerHTML = `
+        <div class="finding-head"><h4>${escapeHtml(finding.title)}</h4><span class="tag ${escapeHtml(displaySeverity)}">${escapeHtml(severityLabel(displaySeverity))}</span></div>
+        <code>${escapeHtml(finding.artifact_value)}</code>
+        ${selectionBlock}
+        ${catalogName}
+        ${reviewBlock}
+        ${browserAccessBlock}
+        ${downloadLinkBlock}
+        ${evidence.note ? '<div class="kv"><span>Motivo</span><span>' + escapeHtml(evidence.note) + '</span></div>' : ""}
+        ${Object.keys(evidence).length ? '<div class="kv"><span>Evidência</span><span>Resumo técnico carregado. A evidência bruta permanece preservada no relatório original.</span></div>' : ""}
+      `;
+      const inspect = document.createElement("button");
+      inspect.type = "button";
+      inspect.className = "desk-inspect-button";
+      inspect.textContent = "Inspecionar evidência ↗";
+      inspect.addEventListener("click", () => window.dispatchEvent(new CustomEvent("vorken:inspect", {detail: finding})));
+      element.appendChild(inspect);
+      const checkbox = element.querySelector(".ban-evidence-checkbox");
+      checkbox?.addEventListener("change", () => {
+        const findingId = Number(checkbox.dataset.findingId);
+        if (!Number.isInteger(findingId)) return;
+        if (checkbox.checked) selectedBanEvidenceIds.add(findingId); else selectedBanEvidenceIds.delete(findingId);
+        document.querySelectorAll('.ban-evidence-checkbox[data-finding-id="' + findingId + '"]').forEach((item) => { item.checked = selectedBanEvidenceIds.has(findingId); });
+
+        const banButton = document.getElementById("gfBanBtn");
+        if (banButton && !banButton.disabled) {
+          const count = selectedBanEvidenceIds.size;
+          banButton.textContent = count > 0
+            ? "⚠ Banir jogador · " + count + " prova(s)"
+            : "⚠ Banir jogador";
+        }
+      });
+      const trustCheckbox = element.querySelector(".trust-evidence-checkbox");
+      trustCheckbox?.addEventListener("change", () => {
+        const findingId = Number(trustCheckbox.dataset.findingId);
+        if (!Number.isInteger(findingId)) return;
+        if (trustCheckbox.checked)
+          selectedTrustedEvidenceIds.add(findingId);
+        else
+          selectedTrustedEvidenceIds.delete(findingId);
+        updateTrustSelectionUi();
+      });
+      target.appendChild(element);
+    }
+  };
+
+  renderFindings(
+    "criticalFindingsList",
+    criticalFindings,
+    "Nenhum achado crítico."
+  );
+
+  updateTrustSelectionUi();
+
+  renderFindings(
+    "mediumFindingsList",
+    mediumFindings,
+    "Nenhum item suspeito para revisão."
+  );
+
+  renderFindings(
+    "infoFindingsList",
+    infoFindings,
+    "Nenhum achado informativo/baixo."
+  );
+
+  // Relatório interativo leve: não percorre nem cria as centenas de cartões
+  // técnicos que ficam fora da primeira tela. Cada grupo recebe apenas um
+  // resumo limitado; o conjunto integral continua disponível por download.
+  const lightRows = (elementId, rows, emptyMessage, mapper) => {
+    const target = document.getElementById(elementId);
+    if (!target) return;
+
+    const visibleRows = safeArray(rows).slice(0, 60);
+    target.innerHTML = visibleRows.length
+      ? visibleRows.map(mapper).join("")
+      : '<div class="message ok">' + escapeHtml(emptyMessage) + '</div>';
+  };
+
+  const simpleFinding = (title, value, detail, tag = "info") => `
+    <div class="finding">
+      <div class="finding-head">
+        <h4>${escapeHtml(title || "Registro técnico")}</h4>
+        <span class="tag ${escapeHtml(tag)}">${tag === "medium" ? "REVISAR" : "INFO"}</span>
+      </div>
+      <code>${escapeHtml(value || "—")}</code>
+      ${detail ? '<div class="kv"><span>Detalhe</span><span>' + escapeHtml(detail) + '</span></div>' : ""}
+    </div>`;
+
+  const historyTotal =
+    collectionCount("browserHistorySignals", arrays.browserHistorySignals);
+  document.getElementById("historyCountBadge").textContent = historyTotal;
+  document.getElementById("filterHistoryCount")?.replaceChildren(String(historyTotal));
+  lightRows(
+    "browserHistorySignalsList",
+    arrays.browserHistorySignals,
+    "Nenhum histórico suspeito encontrado.",
+    (item) => simpleFinding(
+      item.title || item.browser || "Histórico do navegador",
+      item.url || item.query || item.value || item.domain || "—",
+      item.source || item.reason || item.timestampUtc || "",
+      item.directCatalogVisit === true ? "medium" : "info"
+    )
+  );
+
+  const usbTotal = usbStorageDevices.length;
+  document.getElementById("filterUsbCount")?.replaceChildren(String(usbTotal));
+  lightRows(
+    "deviceOverviewList",
+    usbStorageDevices,
+    "Nenhum pendrive foi encontrado.",
+    (item) => simpleFinding(
+      item.friendlyName || item.name || item.deviceDescription || "Pendrive / armazenamento USB",
+      item.instanceId || item.pnpDeviceId || item.deviceId || item.serialNumber || "—",
+      item.present === false ? "Desconectado" : "Presente na coleta"
+    )
+  );
+  const lightUsbExecutionEvidenceList = document.getElementById("usbExecutionEvidenceList");
+  if (lightUsbExecutionEvidenceList) {
+    lightUsbExecutionEvidenceList.innerHTML = usbExecutedExes.length
+      ? usbExecutedExes.map((item) => `
+          <article class="finding severity-card critical">
+            <div class="finding-head">
+              <h4>${escapeHtml(item.name || "Executável em pendrive")}</h4>
+              <span class="tag critical">CRÍTICO · EXECUTADO NO PENDRIVE</span>
+            </div>
+            <code>${escapeHtml(item.path || "—")}</code>
+            <div class="kv"><span>Fonte da execução</span><span>${escapeHtml(item.source || "—")}</span></div>
+            <div class="kv"><span>Última execução</span><span>${escapeHtml(formatDate(item.timeUtc))}</span></div>
+            ${Number(item.runCount || 0) > 0
+              ? '<div class="kv"><span>Execuções registradas</span><span>' + escapeHtml(String(item.runCount)) + '</span></div>'
+              : ""}
+          </article>
+        `).join("")
+      : '<div class="message ok">Nenhum EXE executado em pendrive foi encontrado.</div>';
+  }
+
+  const serialTotal =
+    collectionCount("serialDevices", arrays.serialDevices);
+  document.getElementById("filterSerialCount")?.replaceChildren(String(serialTotal));
+  lightRows(
+    "serialDeviceList",
+    arrays.serialDevices,
+    "Nenhuma placa ou porta serial encontrada.",
+    (item) => simpleFinding(
+      item.name || item.friendlyName || "Dispositivo serial",
+      item.deviceId || item.pnpDeviceId || item.port || "—",
+      item.manufacturer || item.description || ""
+    )
+  );
+
+  document.getElementById("advancedForensicsCountBadge").textContent =
+    String(advancedForensicsCount);
+  document.getElementById("advancedForensicsSummary").innerHTML = `
+    <div class="metric"><small>REGISTROS FORENSES</small><strong>${advancedForensicsCount.toLocaleString("pt-BR")}</strong><span>Contagem integral mantida no servidor</span></div>
+    <div class="metric"><small>NA INTERFACE</small><strong>${Number(projection.projectedItems || 0).toLocaleString("pt-BR")}</strong><span>Amostra limitada para preservar a resposta da aba</span></div>`;
+  document.getElementById("advancedForensicsList").innerHTML =
+    '<div class="message">Os módulos detalhados não são montados automaticamente. Use o JSON completo quando precisar auditar todos os registros.</div>';
+
+  document.getElementById("artifactSummary").innerHTML = `
+    <div class="kv"><span>Registros técnicos totais</span><span>${Number(projection.originalItems || 0).toLocaleString("pt-BR")}</span></div>
+    <div class="kv"><span>Registros carregados na interface</span><span>${Number(projection.projectedItems || 0).toLocaleString("pt-BR")}</span></div>
+    <div class="kv"><span>Achados classificados</span><span>${findings.length}</span></div>`;
+
+  const deferredTargets = [
+    "priorityFilesList",
+    "unknownAppsList",
+    "recoveredHistoryList",
+    "deletedUsnList",
+    "socialDownloadsList",
+    "browserDangerDownloadsList",
+    "browserDownloadsList",
+    "recycleBinList",
+    "forensicTimelineList",
+    "relatedAnalysesList",
+    "recentExecutionList",
+    "candidateFilesList",
+    "processStartList",
+    "compilationTimesList",
+    "integritySignalsList",
+    "rustModulesList",
+    "executionArtifactsList",
+  ];
+  for (const targetId of deferredTargets) {
+    const target = document.getElementById(targetId);
+    if (target) {
+      target.innerHTML =
+        '<div class="message">Detalhes extensos disponíveis no JSON completo.</div>';
+    }
+  }
+
+  document.getElementById("filteredCountBadge").textContent = "0";
+  const lightReviewBox = document.getElementById("reviewStatusBox");
+  lightReviewBox.className = "message ok";
+  lightReviewBox.textContent =
+    "Filtros locais ativos. Somente resultados classificados e resumos limitados são montados nesta aba.";
+  document.getElementById("filteredFindingsList").innerHTML =
+    '<div class="message ok">Aplicativos confiáveis foram descartados pelos filtros locais.</div>';
+
+  const lightRawReport = document.getElementById("rawReport");
+  lightRawReport.textContent =
+    "Modo leve ativo. O relatório bruto não é inserido no DOM do navegador.";
+  const lightDownloadRawReportBtn = document.getElementById("downloadRawReportBtn");
+  if (lightDownloadRawReportBtn) {
+    lightDownloadRawReportBtn.href =
+      scopedReport ? scopedBase()+"/raw" : "/api/admin/analyses/" + encodeURIComponent(id) + "/raw";
+  }
+
+  reportCard.classList.remove("report-is-loading");
+  reportCard.removeAttribute("aria-busy");
+  return;
+
+  document.getElementById("filteredCountBadge").textContent = "0";
+
+  const reviewBox = document.getElementById("reviewStatusBox");
+  reviewBox.className = "message ok";
+  reviewBox.textContent =
+    "Filtros locais ativos. O Vorken usa catálogo confiável, correlação de execução, USB, histórico, origem e regras forenses sem IA.";
+
+  const filteredList =
+    document.getElementById("filteredFindingsList");
+
+  if (filteredList) {
+    filteredList.innerHTML =
+      '<div class="message ok">Aplicativos confiáveis são descartados diretamente pelos filtros locais; apenas sinais técnicos relevantes permanecem no relatório.</div>';
+  }
+
+  const unknownAppFindings = findings.filter((item) =>
+    item.artifact_type === "unknown_app"
+  );
+
+  document.getElementById("unknownAppsCountBadge").textContent =
+    unknownAppFindings.length;
+
+  renderFindings(
+    "unknownAppsList",
+    unknownAppFindings,
+    "Nenhum aplicativo desconhecido ou aplicativo conhecido com assinatura/origem inválida."
+  );
+
+  const recoveredHistoryFindings = findings.filter((item) =>
+    item.artifact_type === "browser_recovery"
+  );
+
+  document.getElementById("recoveredHistoryCountBadge").textContent =
+    recoveredHistoryFindings.length;
+
+  renderFindings(
+    "recoveredHistoryList",
+    recoveredHistoryFindings,
+    "Nenhum vestígio recuperado passou pelos filtros de relevância."
+  );
+
+  const deletedUsnFindings = findings.filter((item) =>
+    item.artifact_type === "usn_delete"
+  );
+
+  document.getElementById("deletedUsnCountBadge").textContent =
+    deletedUsnFindings.length;
+
+  renderFindings(
+    "deletedUsnList",
+    deletedUsnFindings,
+    "Nenhum arquivo apagado passou pelos filtros de relevância do USN."
+  );
+
+  // A parte decisiva do relatório já está pronta. Entrega esse primeiro
+  // quadro ao navegador antes de montar inventários extensos e colapsados.
+  reportCard.classList.remove("report-is-loading");
+  reportCard.removeAttribute("aria-busy");
+  await yieldToBrowser();
+  if (loadSequence !== reportLoadSequence) return;
+
+  document.getElementById("advancedForensicsCountBadge").textContent =
+    advancedForensicsCount;
+
+  document.getElementById("advancedForensicsSummary").innerHTML = `
+    <div class="metric"><small>PE / PACKERS</small><strong>${arrays.peInspections.length}</strong></div>
+    <div class="metric"><small>ZONE.IDENTIFIER</small><strong>${arrays.zoneIdentifiers.length}</strong></div>
+    <div class="metric"><small>POWERSHELL</small><strong>${arrays.powerShellArtifacts.length}</strong></div>
+    <div class="metric"><small>AUTORUNS SUSPEITOS</small><strong>${arrays.autorunIntegrity.filter((x) => x.suspicious === true).length}</strong></div>
+    <div class="metric"><small>ADS</small><strong>${arrays.alternateDataStreams.length}</strong></div>
+    <div class="metric"><small>DLL / MÓDULOS</small><strong>${arrays.processModuleIntegrity.length}</strong></div>
+    <div class="metric"><small>MEMÓRIA PRIVADA EXEC</small><strong>${arrays.processMemoryIntegrity.length}</strong></div>
+    <div class="metric"><small>STREAMPROOF</small><strong>${arrays.protectedWindows.length}</strong></div>
+    <div class="metric"><small>REDE / DNS</small><strong>${arrays.networkIndicators.length}</strong></div>
+    <div class="metric"><small>JOURNALTRACE</small><strong>${arrays.usnActivity.length}</strong></div>
+    <div class="metric"><small>WER / CRASH</small><strong>${arrays.crashArtifacts.length}</strong></div>
+    <div class="metric"><small>ANTIVÍRUS / FIREWALL</small><strong>${arrays.securityProducts.length}</strong></div>
+    <div class="metric"><small>INTEGRIDADE WINDOWS</small><strong>${arrays.systemIntegrityExpansion.length}</strong></div>
+  `;
+
+  const compactJson = (value) =>
+    escapeHtml(JSON.stringify(value, null, 2));
+
+  const advancedGroup = (title, rows, mapper, emptyText = "Nenhum registro.") => `
+    <details class="evidence-details">
+      <summary>${escapeHtml(title)} · ${rows.length}</summary>
+      <div>
+        ${rows.length
+          ? rows.slice(0, 400).map(mapper).join("")
+          : '<div class="message ok">' + escapeHtml(emptyText) + '</div>'}
+      </div>
+    </details>
+  `;
+
+  const advancedHtml = [];
+
+  advancedHtml.push(
+    advancedGroup(
+      "PE / entropia / packers",
+      arrays.peInspections.filter((x) =>
+        x.packedLike === true ||
+        x.highEntropy === true ||
+        x.randomLikeName === true ||
+        safeArray(x.suspiciousApis).length > 0),
+      (item) => `
+        <div class="finding">
+          <div class="finding-head"><h4>${escapeHtml(item.name || "PE")}</h4><span class="tag ${item.randomLikeName ? "critical" : "info"}">${item.randomLikeName ? "ALEATÓRIO" : item.packedLike ? "PACKER · INVENTÁRIO" : item.highEntropy ? "ENTROPIA · INVENTÁRIO" : "PE · INVENTÁRIO"}</span></div>
+          <code>${escapeHtml(item.path || "—")}</code>
+          <div class="kv"><span>Entropia</span><span>${escapeHtml(item.entropy ?? "—")}</span></div>
+          <div class="kv"><span>Assinado</span><span>${item.signed ? "Sim" : "Não"}</span></div>
+          <div class="kv"><span>Packers</span><span>${escapeHtml(safeArray(item.packerIndicators).join(", ") || "—")}</span></div>
+          <div class="kv"><span>APIs</span><span>${escapeHtml(safeArray(item.suspiciousApis).join(", ") || "—")}</span></div>
+        </div>
+      `
+    )
+  );
+
+  advancedHtml.push(
+    advancedGroup(
+      "Origem de arquivos / Zone.Identifier",
+      arrays.zoneIdentifiers.filter((x) => x.hostUrl || x.referrerUrl),
+      (item) => `
+        <div class="finding">
+          <div class="finding-head"><h4>${escapeHtml(item.fileName || "Arquivo")}</h4><span class="tag info">ZONE ${escapeHtml(item.zoneId ?? "—")}</span></div>
+          <code>${escapeHtml(item.path || "—")}</code>
+          <div class="kv"><span>HostUrl</span><span>${escapeHtml(item.hostUrl || "—")}</span></div>
+          <div class="kv"><span>Referrer</span><span>${escapeHtml(item.referrerUrl || "—")}</span></div>
+        </div>
+      `
+    )
+  );
+
+  advancedHtml.push(
+    advancedGroup(
+      "PowerShell / PSReadLine / eventos",
+      arrays.powerShellArtifacts,
+      (item) => `
+        <div class="finding">
+          <div class="finding-head"><h4>${escapeHtml(item.source || "PowerShell")}</h4><span class="tag info">POWERSHELL · INVENTÁRIO</span></div>
+          <code>${escapeHtml(item.command || "—")}</code>
+          <div class="kv"><span>Indicadores</span><span>${escapeHtml(safeArray(item.matchedIndicators).join(", ") || "—")}</span></div>
+          <div class="kv"><span>Data</span><span>${escapeHtml(formatDate(item.timestampUtc))}</span></div>
+        </div>
+      `
+    )
+  );
+
+  advancedHtml.push(
+    advancedGroup(
+      "Autoruns / tarefas agendadas",
+      arrays.autorunIntegrity.filter((x) => x.suspicious === true),
+      (item) => `
+        <div class="finding">
+          <div class="finding-head"><h4>${escapeHtml(item.name || item.source || "Autorun")}</h4><span class="tag ${item.fileExists && !item.signed ? "high" : "medium"}">AUTORUN</span></div>
+          <code>${escapeHtml(item.command || item.executablePath || "—")}</code>
+          <div class="kv"><span>Fonte</span><span>${escapeHtml(item.source || "—")}</span></div>
+          <div class="kv"><span>Assinado</span><span>${item.signed ? "Sim" : "Não"}</span></div>
+        </div>
+      `
+    )
+  );
+
+  advancedHtml.push(
+    advancedGroup(
+      "Alternate Data Streams",
+      arrays.alternateDataStreams,
+      (item) => `
+        <div class="finding">
+          <div class="finding-head"><h4>${escapeHtml(item.streamName || "ADS")}</h4><span class="tag ${item.suspicious ? "high" : "info"}">ADS</span></div>
+          <code>${escapeHtml(item.path || "—")}</code>
+          <div class="kv"><span>Tamanho</span><span>${escapeHtml(item.streamSize ?? 0)} bytes</span></div>
+        </div>
+      `
+    )
+  );
+
+  advancedHtml.push(
+    advancedGroup(
+      "DLLs / módulos em processos críticos",
+      arrays.processModuleIntegrity.filter((x) => x.suspicious === true),
+      (item) => `
+        <div class="finding">
+          <div class="finding-head"><h4>${escapeHtml((item.processName || "processo") + " → " + (item.moduleName || "módulo"))}</h4><span class="tag high">DLL</span></div>
+          <code>${escapeHtml(item.modulePath || "—")}</code>
+          <div class="kv"><span>Assinado</span><span>${item.moduleSigned ? "Sim" : "Não"}</span></div>
+        </div>
+      `
+    )
+  );
+
+  advancedHtml.push(
+    advancedGroup(
+      "Memória executável privada / manual-map",
+      arrays.processMemoryIntegrity,
+      (item) => `
+        <div class="finding">
+          <div class="finding-head"><h4>${escapeHtml(item.processName || "Processo")}</h4><span class="tag ${item.potentialManualMap ? "critical" : "info"}">${item.potentialManualMap ? "POSSÍVEL MANUAL MAP" : "MEM_PRIVATE EXEC"}</span></div>
+          <code>${escapeHtml((item.baseAddress || "—") + " · " + (item.regionSize || 0) + " bytes")}</code>
+          <div class="kv"><span>Processo</span><span>${escapeHtml(item.processPath || "—")}</span></div>
+          <div class="kv"><span>Cabeçalho MZ</span><span>${item.mzHeader ? "SIM" : "Não"}</span></div>
+        </div>
+      `
+    )
+  );
+
+  advancedHtml.push(
+    advancedGroup(
+      "Janelas protegidas / streamproof",
+      arrays.protectedWindows,
+      (item) => `
+        <div class="finding">
+          <div class="finding-head"><h4>${escapeHtml(item.processName || "Processo")}</h4><span class="tag ${item.signed ? "medium" : "high"}">CAPTURE EXCLUSION</span></div>
+          <code>${escapeHtml(item.processPath || "—")}</code>
+          <div class="kv"><span>Classe</span><span>${escapeHtml(item.windowClass || "—")}</span></div>
+          <div class="kv"><span>Assinado</span><span>${item.signed ? "Sim" : "Não"}</span></div>
+        </div>
+      `
+    )
+  );
+
+  const networkInteresting = arrays.networkIndicators.filter((x) =>
+    safeArray(x.matchedIndicators).length > 0 ||
+    (x.source === "TCP" && x.processSigned === false && x.processPath)
+  );
+
+  advancedHtml.push(
+    advancedGroup(
+      "Rede / DNS / conexões",
+      networkInteresting,
+      (item) => `
+        <div class="finding">
+          <div class="finding-head"><h4>${escapeHtml(item.domain || item.processName || item.remoteAddress || "Rede")}</h4><span class="tag ${safeArray(item.matchedIndicators).length ? "high" : "medium"}">${escapeHtml(item.source || "REDE")}</span></div>
+          <div class="kv"><span>Processo</span><span>${escapeHtml(item.processPath || item.processName || "—")}</span></div>
+          <div class="kv"><span>Destino</span><span>${escapeHtml(item.domain || ((item.remoteAddress || "—") + ":" + (item.remotePort || "")))}</span></div>
+          <div class="kv"><span>Indicadores</span><span>${escapeHtml(safeArray(item.matchedIndicators).join(", ") || "—")}</span></div>
+        </div>
+      `
+    )
+  );
+
+  const usnInteresting = arrays.usnActivity.filter((x) =>
+    x.deleted === true ||
+    x.underPrefetchDirectory === true ||
+    x.browserDatabase === true ||
+    x.windowsForensicArtifact === true
+  );
+
+  advancedHtml.push(
+    advancedGroup(
+      "JournalTrace / USN",
+      usnInteresting,
+      (item) => {
+        const informationalForensic =
+          item.underPrefetchDirectory === true ||
+          item.windowsForensicArtifact === true;
+
+        const tagClass = informationalForensic
+          ? "info"
+          : item.deleted
+            ? "high"
+            : "info";
+
+        const tagText = informationalForensic
+          ? "INVENTÁRIO"
+          : item.deleted
+            ? "DELETE"
+            : "USN";
+
+        return `
+          <div class="finding">
+            <div class="finding-head"><h4>${escapeHtml(item.fileName || "USN")}</h4><span class="tag ${tagClass}">${tagText}</span></div>
+            <div class="kv"><span>Data</span><span>${escapeHtml(formatDate(item.timestampUtc))}</span></div>
+            <div class="kv"><span>Motivos</span><span>${escapeHtml(safeArray(item.reasons).join(", ") || "—")}</span></div>
+            <div class="kv"><span>Volume</span><span>${escapeHtml(item.volume || "—")}</span></div>
+          </div>
+        `;
+      }
+    )
+  );
+
+  advancedHtml.push(
+    advancedGroup(
+      "Windows Error Reporting / crashes",
+      arrays.crashArtifacts,
+      (item) => `
+        <div class="finding">
+          <div class="finding-head"><h4>${escapeHtml(item.appName || item.eventType || "Crash")}</h4><span class="tag info">WER</span></div>
+          <code>${escapeHtml(item.appPath || item.faultingModulePath || item.artifactPath || "—")}</code>
+          <div class="kv"><span>Data</span><span>${escapeHtml(formatDate(item.timestampUtc))}</span></div>
+        </div>
+      `
+    )
+  );
+
+  advancedHtml.push(
+    advancedGroup(
+      "Antivírus / firewall registrados",
+      arrays.securityProducts,
+      (item) => `
+        <div class="finding">
+          <div class="finding-head"><h4>${escapeHtml(item.displayName || "Produto de segurança")}</h4><span class="tag info">${escapeHtml(item.category || "SECURITY")}</span></div>
+          <div class="kv"><span>Estado</span><span>${escapeHtml(item.productState || "—")}</span></div>
+        </div>
+      `
+    )
+  );
+
+  advancedHtml.push(
+    advancedGroup(
+      "Integridade do Windows / BCD / serviços / SRUM",
+      arrays.systemIntegrityExpansion,
+      (item) => {
+        const pcaSvc =
+          String(item.name || item.kind || "").toLowerCase() === "pcasvc";
+        const rawSeverity =
+          String(item.severityHint || "").toLowerCase();
+        const tag = pcaSvc
+          ? "info"
+          : ["high","critical"].includes(rawSeverity)
+            ? "high"
+            : rawSeverity === "medium"
+              ? "medium"
+              : "info";
+
+        return `
+          <div class="finding">
+            <div class="finding-head"><h4>${escapeHtml(item.name || item.kind || "Integridade")}</h4><span class="tag ${tag}">${escapeHtml(pcaSvc ? "WINDOWS · INFO" : String(item.kind || "INTEGRITY").toUpperCase())}</span></div>
+            <code>${escapeHtml(item.detail || "—")}</code>
+            <div class="kv"><span>Data</span><span>${escapeHtml(formatDate(item.timestampUtc))}</span></div>
+          </div>
+        `;
+      }
+    )
+  );
+
+  document.getElementById("advancedForensicsList").innerHTML =
+    advancedHtml.join("");
+
+  await yieldToBrowser();
+  if (loadSequence !== reportLoadSequence) return;
+
+  document.getElementById("artifactSummary").innerHTML = `
+    <div class="kv"><span>Contas Steam detectadas</span><span>${arrays.steamAccounts.length}</span></div>
+    <div class="kv"><span>Contas Steam com ban</span><span>${arrays.steamAccounts.filter((x) => x?.banConsensus?.banDetected === true).length}</span></div>
+    <div class="kv"><span>USB conectados</span><span>${arrays.usbCurrent.length}</span></div>
+    <div class="kv"><span>USB no histórico</span><span>${arrays.usbHistory.length} (${disconnectedUsb} desconectados)</span></div>
+    <div class="kv"><span>Eventos USB</span><span>${arrays.usbTimeline.length}</span></div>
+    <div class="kv"><span>Placas / Serial</span><span>${payload.hardwareSummary?.totalRelevantDevices ?? arrays.serialDevices.length}</span></div>
+    <div class="kv"><span>Arduino</span><span>${payload.hardwareSummary?.arduinoCount ?? 0}</span></div>
+    <div class="kv"><span>MAKCU / Moku</span><span>${payload.hardwareSummary?.makcuCount ?? 0}</span></div>
+    <div class="kv"><span>Execuções Prefetch</span><span>${arrays.prefetchExecutions.length}</span></div>
+    <div class="kv"><span>Arquivos analisados</span><span>${arrays.files.length}</span></div>
+    <div class="kv"><span>PE / packers</span><span>${arrays.peInspections.length}</span></div>
+    <div class="kv"><span>Zone.Identifier</span><span>${arrays.zoneIdentifiers.length}</span></div>
+    <div class="kv"><span>ADS</span><span>${arrays.alternateDataStreams.length}</span></div>
+    <div class="kv"><span>Autoruns avançados</span><span>${arrays.autorunIntegrity.length}</span></div>
+    <div class="kv"><span>Processos</span><span>${arrays.processes.length}</span></div>
+    <div class="kv"><span>Módulos em processos críticos</span><span>${arrays.processModuleIntegrity.length}</span></div>
+    <div class="kv"><span>Memória privada executável</span><span>${arrays.processMemoryIntegrity.length}</span></div>
+    <div class="kv"><span>Janelas excluídas de captura</span><span>${arrays.protectedWindows.length}</span></div>
+    <div class="kv"><span>Prefetch</span><span>${arrays.prefetch.length}</span></div>
+    <div class="kv"><span>Serviços</span><span>${arrays.services.length}</span></div>
+    <div class="kv"><span>Drivers</span><span>${arrays.drivers.length}</span></div>
+    <div class="kv"><span>Inicialização</span><span>${arrays.startup.length}</span></div>
+    <div class="kv"><span>BAM/DAM</span><span>${arrays.bam.length}</span></div>
+    <div class="kv"><span>UserAssist</span><span>${arrays.userAssist.length}</span></div>
+    <div class="kv"><span>MUICache</span><span>${arrays.muiCache.length}</span></div>
+    <div class="kv"><span>PCA Store</span><span>${arrays.pca.length}</span></div>
+    <div class="kv"><span>Amcache</span><span>${arrays.amcache.length}</span></div>
+    <div class="kv"><span>ShimCache</span><span>${arrays.shimCache.length}</span></div>
+    <div class="kv"><span>SetupAPI USB</span><span>${arrays.setupApiUsb.length}</span></div>
+    <div class="kv"><span>PowerShell por regra</span><span>${arrays.powerShellHits.length}</span></div>
+    <div class="kv"><span>PowerShell avançado</span><span>${arrays.powerShellArtifacts.length}</span></div>
+    <div class="kv"><span>Anomalias Prefetch</span><span>${arrays.prefetchIntegrity.length}</span></div>
+    <div class="kv"><span>Volumes sem letra</span><span>${arrays.hiddenVolumes.length}</span></div>
+    <div class="kv"><span>Limpezas de log (24h)</span><span>${arrays.logClearSignals.length}</span></div>
+    <div class="kv"><span>Processos históricos (4688)</span><span>${arrays.processCreationEvents.length}</span></div>
+    <div class="kv"><span>Defender</span><span>${arrays.defenderDetections.length} detecções · ${arrays.defenderExclusions.length} exclusões</span></div>
+    <div class="kv"><span>Atalhos recentes</span><span>${arrays.recentShortcuts.length}</span></div>
+    <div class="kv"><span>WER / crashes</span><span>${arrays.crashArtifacts.length}</span></div>
+    <div class="kv"><span>Produtos de segurança</span><span>${arrays.securityProducts.length}</span></div>
+    <div class="kv"><span>Downloads no histórico</span><span>${arrays.browserDownloads.length}</span></div>
+    <div class="kv"><span>Downloads não localizados</span><span>${arrays.browserDownloads.filter((x) => x.fileMissing === true).length}</span></div>
+    <div class="kv"><span>Histórico suspeito do navegador</span><span>${arrays.browserHistorySignals.length}</span></div>
+    <div class="kv"><span>Vestígios de histórico apagado</span><span>${arrays.browserRecoveredArtifacts.length}</span></div>
+    <div class="kv"><span>Arquivos apagados no USN</span><span>${arrays.deletedUsnRecords.length}</span></div>
+    <div class="kv"><span>JournalTrace / USN</span><span>${arrays.usnActivity.length}</span></div>
+    <div class="kv"><span>Rede / DNS</span><span>${arrays.networkIndicators.length}</span></div>
+    <div class="kv"><span>Integridade Windows ampliada</span><span>${arrays.systemIntegrityExpansion.length}</span></div>
+    <div class="kv"><span>Lixeira</span><span>${arrays.recycleBin.length}</span></div>
+    <div class="kv"><span>Ambiente virtual</span><span>${payload.vmEnvironment?.isVirtualMachine ? escapeHtml(payload.vmEnvironment?.detectedPlatform || "Sim") : "Não detectado"}</span></div>
+    <div class="kv"><span>Extensões modificadas</span><span>${arrays.extensionMismatches.length}</span></div>
+    <div class="kv"><span>Módulos do Rust</span><span>${arrays.rustModules.length}</span></div>
+    <div class="kv"><span>Discos virtuais</span><span>${arrays.virtualDisks.length}</span></div>
+    <div class="kv"><span>Prefetch habilitado</span><span>${payload.systemArtifacts?.enablePrefetcher ?? "—"}</span></div>
+    <div class="kv"><span>Amcache presente</span><span>${payload.systemArtifacts?.amcacheExists ? "Sim" : "Não"}</span></div>
+    <div class="kv"><span>Erros parciais</span><span>${(payload.errors || []).length}</span></div>
+  `;
+
+  const hw = payload.hardwareSummary || {};
+  const connectedStorage = arrays.usbCurrent.filter((item) => {
+    const haystack = [item.name, item.deviceId, item.pnpDeviceId, item.manufacturer]
+      .join(" ").toLowerCase();
+    return haystack.includes("disk") ||
+      haystack.includes("mass storage") ||
+      haystack.includes("usbstor") ||
+      haystack.includes("storage");
+  }).length;
+
+  document.getElementById("deviceOverviewList").innerHTML = `
+    <div class="metric-grid">
+      <div class="metric"><small>PENDRIVES CONECTADOS</small><strong>${connectedStorage}</strong></div>
+      <div class="metric"><small>USB DESCONECTADOS</small><strong>${disconnectedUsb}</strong></div>
+      <div class="metric"><small>ARQUIVOS EM USB CONECTADO</small><strong>${arrays.usbFiles.length}</strong></div>
+      <div class="metric"><small>ARDUINO</small><strong>${Number(hw.arduinoCount ?? 0)}</strong></div>
+      <div class="metric"><small>MAKCU / MOKU</small><strong>${Number(hw.makcuCount ?? 0)}</strong></div>
+      <div class="metric"><small>CH34X</small><strong>${Number(hw.ch34xCount ?? 0)}</strong></div>
+      <div class="metric"><small>CP210X</small><strong>${Number(hw.cp210xCount ?? 0)}</strong></div>
+      <div class="metric"><small>FTDI</small><strong>${Number(hw.ftdiCount ?? 0)}</strong></div>
+      <div class="metric"><small>OUTROS SERIAIS</small><strong>${Number(hw.otherSerialCount ?? 0)}</strong></div>
+    </div>
+    <div class="message">CH34x/CP210x/FTDI são bridges USB-Serial. Eles aparecem separados de Arduino/MAKCU para evitar afirmar um modelo de placa sem evidência suficiente.</div>
+  `;
+  document.getElementById("relatedAnalysesList").innerHTML = relatedAnalyses.length
+    ? relatedAnalyses.map((item) => `
+        <div class="finding">
+          <div class="finding-head">
+            <h4>#${escapeHtml(item.id)} · ${escapeHtml(item.label || "Análise")}</h4>
+            <span class="tag ${escapeHtml(item.status || "info")}">${escapeHtml(statusLabel(item.status))}</span>
+          </div>
+          <div class="kv"><span>Data</span><span>${escapeHtml(formatDate(item.created_at))}</span></div>
+          <div class="kv"><span>Computador</span><span>${escapeHtml(item.machine_name || "—")}</span></div>
+          <div class="kv"><span>Agente</span><span>${escapeHtml(item.agent_version || "—")}</span></div>
+          <button class="button ghost open-related-report" data-id="${escapeHtml(item.id)}">Abrir relatório</button>
+        </div>
+      `).join("")
+    : '<div class="message">Nenhuma análise anterior associada a este fingerprint.</div>';
+
+  document.querySelectorAll(".open-related-report").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await openReportSafe(button.dataset.id);
+    });
+  });
+
+  const latestUsbActivity = (item) => {
+    const values = [item.lastConnectedUtc, item.lastDisconnectedUtc]
+      .filter(Boolean)
+      .map((value) => new Date(value))
+      .filter((value) => !Number.isNaN(value.getTime()))
+      .sort((a, b) => b - a);
+    return values[0] || null;
+  };
+
+  const usbExecutionEvidenceList =
+    document.getElementById("usbExecutionEvidenceList");
+
+  if (usbExecutionEvidenceList) {
+    const rows = [...arrays.usbExecutionEvidence]
+      .sort((a, b) =>
+        Number(b.critical === true) - Number(a.critical === true) ||
+        new Date(b.timeUtc || 0) - new Date(a.timeUtc || 0));
+
+    usbExecutionEvidenceList.innerHTML = rows.length
+      ? rows.map((item) => {
+          const critical = item.critical === true;
+          const tagClass = critical ? "critical" : "info";
+          const tagText = critical
+            ? "CRÍTICO · EXECUTADO NO PENDRIVE"
+            : "EXECUÇÃO EM USB";
+          const times = safeArray(item.executionTimesUtc)
+            .filter(Boolean)
+            .slice(0, 12);
+
+          return `
+            <article class="finding severity-card ${tagClass}">
+              <div class="finding-head">
+                <h4>${escapeHtml(item.name || "Arquivo executado")}</h4>
+                <span class="tag ${tagClass}">${escapeHtml(tagText)}</span>
+              </div>
+              <code>${escapeHtml(item.path || "—")}</code>
+              <div class="kv"><span>Fonte da execução</span><span>${escapeHtml(item.source || "—")}</span></div>
+              <div class="kv"><span>Última execução</span><span>${escapeHtml(formatDate(item.timeUtc))}</span></div>
+              ${Number(item.runCount || 0) > 0
+                ? '<div class="kv"><span>Execuções registradas</span><span>' + escapeHtml(String(item.runCount)) + '</span></div>'
+                : ""}
+              ${times.length
+                ? '<div class="kv"><span>Horários preservados</span><span>' +
+                    times.map((value) => escapeHtml(formatDate(value))).join("<br>") +
+                  '</span></div>'
+                : ""}
+              <div class="kv"><span>Classificação</span><span>${
+                critical
+                  ? "Executado dentro de pendrive · crítico direto"
+                  : item.detachedRemovable === true
+                    ? "Execução em volume removido / não montado"
+                    : "Execução em mídia removível"
+              }</span></div>
+              ${item.detail
+                ? '<div class="kv"><span>Evidência</span><span>' + escapeHtml(item.detail) + '</span></div>'
+                : ""}
+            </article>
+          `;
+        }).join("")
+      : '<div class="message ok">Nenhuma evidência de execução em pendrive/USB foi encontrada nesta análise.</div>';
+  }
+
+  const connectedUsbFilesList =
+    document.getElementById("connectedUsbFilesList");
+
+  if (connectedUsbFilesList) {
+    connectedUsbFilesList.innerHTML = arrays.usbFiles.length
+      ? arrays.usbFiles.map((item) => `
+          <div class="usb-file-row">
+            <div>
+              <strong>${escapeHtml(item.name || item.relativePath || "Arquivo")}</strong>
+              <code>${escapeHtml(item.path || "—")}</code>
+            </div>
+            <div class="usb-file-meta">
+              <span>${escapeHtml(item.volumeLabel || item.drive || "USB")}</span>
+              <span>${escapeHtml(item.extension || "sem extensão")}</span>
+              <span>${escapeHtml(String(item.size ?? 0))} bytes</span>
+              <span>${escapeHtml(formatDate(item.lastWriteUtc))}</span>
+            </div>
+          </div>
+        `).join("")
+      : '<div class="message ok">Nenhum arquivo de pendrive conectado foi encontrado nesta análise.</div>';
+  }
+
+  const disconnected = arrays.usbHistory.filter((item) => item.present === false);
+  document.getElementById("disconnectedUsbList").innerHTML = disconnected.length
+    ? disconnected
+        .sort((a, b) =>
+          new Date(b.lastDisconnectedUtc || b.lastConnectedUtc || 0) -
+          new Date(a.lastDisconnectedUtc || a.lastConnectedUtc || 0))
+        .map((item) => `
+        <div class="finding">
+          <div class="finding-head">
+            <h4>${escapeHtml(item.friendlyName || item.deviceDescription || item.deviceClass || "Dispositivo USB")}</h4>
+            <span class="tag medium">DESCONECTADO</span>
+          </div>
+          <div class="kv"><span>Fabricante</span><span>${escapeHtml(item.manufacturer || "—")}</span></div>
+          <div class="kv"><span>Instância / serial</span><span>${escapeHtml(item.instanceId || "—")}</span></div>
+          <div class="kv"><span>Última atividade detectada</span><span>${escapeHtml(formatDate(latestUsbActivity(item)))}</span></div>
+          <div class="kv"><span>Última conexão detectada</span><span>${escapeHtml(formatDate(item.lastConnectedUtc))}</span></div>
+          <div class="kv"><span>Última desconexão detectada</span><span>${escapeHtml(formatDate(item.lastDisconnectedUtc))}</span></div>
+          <div class="kv"><span>Fonte do horário</span><span>${escapeHtml(item.timelineSource || "Não registrado pelo Windows")}</span></div>
+          <code>${escapeHtml(item.deviceClass || "")}</code>
+        </div>
+      `).join("")
+    : '<div class="message ok">Nenhum dispositivo USB histórico marcado como desconectado.</div>';
+
+  document.getElementById("serialDeviceList").innerHTML = `
+    <div class="metric-grid">
+      <div class="metric"><small>DISPOSITIVOS</small><strong>${Number(hw.totalRelevantDevices ?? arrays.serialDevices.length)}</strong></div>
+      <div class="metric"><small>ARDUINO</small><strong>${Number(hw.arduinoCount ?? 0)}</strong></div>
+      <div class="metric"><small>MAKCU / MOKU</small><strong>${Number(hw.makcuCount ?? 0)}</strong></div>
+      <div class="metric"><small>CH34X</small><strong>${Number(hw.ch34xCount ?? 0)}</strong></div>
+    </div>
+    <div class="kv"><span>CP210x</span><span>${Number(hw.cp210xCount ?? 0)}</span></div>
+    <div class="kv"><span>FTDI</span><span>${Number(hw.ftdiCount ?? 0)}</span></div>
+    <div class="kv"><span>Outros seriais</span><span>${Number(hw.otherSerialCount ?? 0)}</span></div>
+    <div class="message">A contagem identifica famílias/bridges por VID/PID, descritor e fabricante. CH34x/CP210x/FTDI isoladamente não provam qual placa está atrás do bridge.</div>
+  `;
+
+  const socialDownloads = arrays.browserDownloads
+    .map((item) => ({
+      item,
+      origin: downloadOriginKind(item),
+      name: item.fileName || item.targetPath || "",
+      officialDiscordUpdate: isOfficialDiscordInstallerOrUpdateClient(item),
+      discordAttachmentExe:
+        /\.exe$/i.test(item.fileName || item.targetPath || "") &&
+        isDiscordAttachmentDownloadClient(item)
+    }))
+    .filter((entry) =>
+      entry.origin &&
+      isRiskyDownloadName(entry.name) &&
+      !entry.officialDiscordUpdate)
+    .sort((a, b) => new Date(b.item.startTimeUtc || 0) - new Date(a.item.startTimeUtc || 0))
+    .slice(0, 300);
+
+  document.getElementById("socialDownloadsCountBadge").textContent = socialDownloads.length;
+  document.getElementById("socialDownloadsList").innerHTML = socialDownloads.length
+    ? socialDownloads.map(({ item, origin, name, discordAttachmentExe }) => {
+        const sourceUrl =
+          safeExternalUrl(item.sourceUrl) ||
+          safeExternalUrl(item.finalUrl) ||
+          safeExternalUrl(item.pageUrl) ||
+          safeExternalUrl(item.referrerUrl);
+
+        const doubleExtension = isDeceptiveDoubleExtension(name);
+        const tag = discordAttachmentExe
+          ? "critical"
+          : doubleExtension
+            ? "high"
+            : "medium";
+
+        return `
+          <div class="finding severity-card ${tag}">
+            <div class="finding-head">
+              <h4>${escapeHtml(item.fileName || "Download")}</h4>
+              <span class="tag ${tag}">${escapeHtml(origin.toUpperCase())}</span>
+            </div>
+            <div class="kv"><span>Baixado em</span><span>${escapeHtml(formatDate(item.startTimeUtc))}</span></div>
+            <div class="kv"><span>Destino</span><span>${escapeHtml(item.targetPath || item.currentPath || "—")}</span></div>
+            <div class="kv"><span>Arquivo presente</span><span>${item.fileExists ? "Sim" : "Não / movido"}</span></div>
+            <div class="kv"><span>Dupla extensão</span><span>${doubleExtension ? "SIM" : "Não"}</span></div>
+            ${sourceUrl ? `<div class="kv"><span>Origem</span><span><a href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(sourceUrl)}</a></span></div>` : ""}
+          </div>
+        `;
+      }).join("")
+    : '<div class="message ok">Nenhum executável/script/arquivo compactado originado de Discord ou Telegram foi encontrado.</div>';
+
+  const browserDangerDownloads = arrays.browserDownloads
+    .map((item) => ({ item, danger: browserDangerInfo(item.dangerType) }))
+    .filter((entry) => entry.danger.suspicious)
+    .sort((a, b) => new Date(b.item.startTimeUtc || 0) - new Date(a.item.startTimeUtc || 0))
+    .slice(0, 300);
+
+  document.getElementById("browserDangerCountBadge").textContent = browserDangerDownloads.length;
+  document.getElementById("browserDangerDownloadsList").innerHTML = browserDangerDownloads.length
+    ? browserDangerDownloads.map(({ item, danger }) => {
+        const sourceUrl =
+          safeExternalUrl(item.sourceUrl) ||
+          safeExternalUrl(item.finalUrl) ||
+          safeExternalUrl(item.pageUrl) ||
+          safeExternalUrl(item.referrerUrl);
+
+        return `
+          <div class="finding severity-card ${escapeHtml(danger.severity)}">
+            <div class="finding-head">
+              <h4>${escapeHtml(item.fileName || "Download")}</h4>
+              <span class="tag ${escapeHtml(danger.severity)}">${escapeHtml(danger.label)}</span>
+            </div>
+            <div class="kv"><span>DangerType</span><span>${Number(danger.code)}</span></div>
+            <div class="kv"><span>Baixado em</span><span>${escapeHtml(formatDate(item.startTimeUtc))}</span></div>
+            <div class="kv"><span>Destino</span><span>${escapeHtml(item.targetPath || item.currentPath || "—")}</span></div>
+            <div class="kv"><span>Navegador</span><span>${escapeHtml(item.browser || "—")}</span></div>
+            ${sourceUrl ? `<div class="kv"><span>Origem</span><span><a href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(sourceUrl)}</a></span></div>` : ""}
+          </div>
+        `;
+      }).join("")
+    : '<div class="message ok">Nenhum download sinalizado como perigoso/incomum pelo navegador foi preservado no histórico.</div>';
+
+  const wasFilteredByReview = () => false;
+
+  const finalDetectionText =
+    finalFindings
+      .map((finding) =>
+        [
+          finding?.artifact_value,
+          finding?.evidence?.fileName,
+          finding?.evidence?.name,
+          finding?.evidence?.path,
+          finding?.evidence?.targetPath,
+          finding?.evidence?.currentPath,
+          finding?.evidence?.originalPath,
+          finding?.evidence?.sourceUrl,
+          finding?.evidence?.finalUrl,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase()
+      )
+      .join("\n");
+
+  const aiConfirmedDetectionFor = (...values) =>
+    values
+      .flat(Infinity)
+      .filter(Boolean)
+      .some((value) => {
+        const raw =
+          String(value || "")
+            .toLowerCase()
+            .trim();
+
+        if (!raw)
+          return false;
+
+        const name =
+          clientWindowsBaseName(raw);
+
+        return (
+          finalDetectionText.includes(raw) ||
+          (
+            name.length >= 4 &&
+            finalDetectionText.includes(name)
+          )
+        );
+      });
+
+  const priorityFiles = [];
+
+  for (const item of arrays.browserDownloads) {
+    if (item.fileMissing !== true) continue;
+
+    const name = item.fileName || item.targetPath || "";
+
+    if (
+      isVorkenArtifactClient(
+        name,
+        item.targetPath,
+        item.currentPath,
+        item.sourceUrl,
+        item.finalUrl,
+        item.referrerUrl,
+        item.pageUrl,
+        item.siteUrl,
+        item.urlChain
+      )
+    ) {
+      continue;
+    }
+
+    if (
+      commonAppMatchClient(
+        name,
+        commonApps
+      )
+    ) {
+      continue;
+    }
+
+    if (
+      !aiConfirmedDetectionFor(
+        name,
+        item.targetPath,
+        item.currentPath,
+        item.sourceUrl,
+        item.finalUrl,
+        item.referrerUrl
+      )
+    ) {
+      continue;
+    }
+
+    if (!/\.(exe|com|scr|dll|bat|cmd|ps1|msi)$/i.test(name)) continue;
+
+    priorityFiles.push({
+      priority: 5,
+      status: "BAIXADO E APAGADO / MOVIDO",
+      tag: "high",
+      name: item.fileName || "Executável",
+      path: item.targetPath || item.currentPath || "—",
+      time: item.startTimeUtc,
+      source: item.browser || "Navegador",
+      url: item.sourceUrl || item.finalUrl || item.pageUrl || "",
+      detail: "Histórico de download preservado; arquivo não está mais no destino original."
+    });
+  }
+
+  for (const item of arrays.deletedUsnRecords) {
+    const lower = String(item.fileName || "").toLowerCase();
+
+    if (
+      isVorkenArtifactClient(
+        item.fileName,
+        item.volume,
+        item.path
+      ) ||
+      commonAppMatchClient(
+        item.fileName,
+        commonApps
+      )
+    ) {
+      continue;
+    }
+
+    if (
+      !aiConfirmedDetectionFor(
+        item.fileName,
+        item.volume,
+        item.path
+      )
+    ) {
+      continue;
+    }
+
+    const highInterest =
+      item.randomLikeName === true ||
+      item.deceptiveDoubleExtension === true ||
+      ["loader", "injector", "cheat", "hack", "script", "aimbot", "recoil", "spoofer", "bypass", "eac"]
+        .some((term) => lower.includes(term));
+
+    if (!highInterest) continue;
+
+    priorityFiles.push({
+      priority: item.randomLikeName || item.deceptiveDoubleExtension ? 10 : 8,
+      status: item.randomLikeName || item.deceptiveDoubleExtension
+        ? "APAGADO · CRÍTICO"
+        : "APAGADO · ALTO INTERESSE",
+      tag: item.randomLikeName || item.deceptiveDoubleExtension ? "critical" : "high",
+      name: item.fileName || "Arquivo apagado",
+      path: item.volume || "NTFS",
+      time: item.timestampUtc,
+      source: "USN Journal",
+      url: "",
+      detail: "O NTFS registrou a exclusão mesmo sem haver execução do arquivo."
+    });
+  }
+
+  for (const item of arrays.browserRecoveredArtifacts) {
+    if (
+      isVorkenArtifactClient(
+        item.recoveredFileName,
+        item.recoveredUrl,
+        item.sourceArtifact
+      ) ||
+      commonAppMatchClient(
+        item.recoveredFileName,
+        commonApps
+      )
+    ) {
+      continue;
+    }
+
+    if (
+      !aiConfirmedDetectionFor(
+        item.recoveredFileName,
+        item.recoveredUrl,
+        item.sourceArtifact
+      )
+    ) {
+      continue;
+    }
+
+    const critical =
+      item.randomLikeName === true ||
+      item.deceptiveDoubleExtension === true ||
+      safeArray(item.catalogMatches).length > 0;
+
+    if (!critical && Number(item.riskScore || 0) < 4)
+      continue;
+
+    priorityFiles.push({
+      priority: critical ? 10 : 7,
+      status: critical ? "HISTÓRICO APAGADO · CRÍTICO" : "HISTÓRICO APAGADO",
+      tag: critical ? "critical" : "high",
+      name: item.recoveredFileName || item.recoveredUrl || "Vestígio recuperado",
+      path: item.sourceArtifact || "SQLite",
+      time: null,
+      source: item.recoveryKind || "SQLite",
+      url: item.recoveredUrl || "",
+      detail: item.note || "Vestígio recuperado do banco do navegador."
+    });
+  }
+
+  for (const item of arrays.prefetchExecutions) {
+    if (item.likelyDetachedOrRemovable !== true) continue;
+    const pathValue = item.resolvedExecutablePath || item.nativeExecutablePath || "";
+    const lower = String(pathValue).replaceAll("/", "\\").toLowerCase();
+    if (lower.includes("\\windows\\") ||
+        lower.includes("\\program files\\") ||
+        lower.includes("\\program files (x86)\\") ||
+        lower.includes("\\steamapps\\common\\")) continue;
+
+    priorityFiles.push({
+      priority: 6,
+      status: "EXECUTADO / VOLUME REMOVIDO",
+      tag: "high",
+      name: item.executableName || item.prefetchFile || "Executável",
+      path: pathValue || "—",
+      time: item.lastRunUtc,
+      source: "Prefetch",
+      url: "",
+      detail: "Execução recente registrada em mídia removível ou volume não montado."
+    });
+  }
+
+  for (const item of arrays.recycleBin) {
+    const name = item.fileName || item.originalPath || "";
+    if (!/\.(exe|com|scr|dll|bat|cmd|ps1|msi)$/i.test(name)) continue;
+
+    priorityFiles.push({
+      priority: 4,
+      status: "ARQUIVO EXCLUÍDO",
+      tag: "medium",
+      name: item.fileName || "Executável",
+      path: item.originalPath || "—",
+      time: item.deletedAtUtc,
+      source: "Lixeira do Windows",
+      url: "",
+      detail: item.recycledDataPresent ? "Ainda existe conteúdo na Lixeira." : "Metadado de exclusão preservado; conteúdo não localizado."
+    });
+  }
+
+  for (const item of arrays.bam) {
+    const pathValue = item.path || "";
+    const lower = String(pathValue).replaceAll("/", "\\").toLowerCase();
+    if (item.fileExists !== false) continue;
+    if (!/\.(exe|com|scr|dll)$/i.test(pathValue)) continue;
+    if (!lower.includes("\\downloads\\") &&
+        !lower.includes("\\desktop\\") &&
+        !lower.includes("\\temp\\")) continue;
+
+    priorityFiles.push({
+      priority: 3,
+      status: "EXECUTADO / ARQUIVO AUSENTE",
+      tag: "medium",
+      name: pathValue.split("\\").filter(Boolean).at(-1) || "Executável",
+      path: pathValue,
+      time: item.lastExecutionUtc,
+      source: "BAM",
+      url: "",
+      detail: "O Windows registrou execução, mas o arquivo não foi localizado no caminho original."
+    });
+  }
+
+  for (const item of arrays.files) {
+    const ext = String(item.extension || "").toLowerCase();
+    if (![".zip", ".rar", ".7z"].includes(ext)) continue;
+
+    const zipText = [
+      item.name,
+      item.path,
+      ...safeArray(item.archiveEntries)
+    ].join(" ").toLowerCase();
+
+    const zipTerms = [
+      "rust", "cheat", "hack", "script", "loader", "injector",
+      "aimbot", "recoil", "macro", "spoofer", "bypass", "eac"
+    ].filter((term) => zipText.includes(term));
+
+    const randomExeInside = ext === ".zip" && safeArray(item.archiveEntries)
+      .some((entry) => looksRandomExecutableNameClient(entry));
+
+    if (zipTerms.length < 2 && !randomExeInside) continue;
+
+    priorityFiles.push({
+      priority: randomExeInside ? 7 : 5,
+      status: ext === ".zip" ? "ZIP SUSPEITO" : "ARQUIVO COMPACTADO SUSPEITO",
+      tag: randomExeInside ? "high" : "medium",
+      name: item.name || "Arquivo ZIP",
+      path: item.path || "—",
+      time: item.lastWriteUtc || item.createdUtc,
+      source: ext === ".zip" ? "Análise interna do ZIP" : "Nome/caminho do arquivo compactado",
+      url: "",
+      detail: randomExeInside
+        ? "ZIP contém executável com nome aleatório."
+        : "Arquivo compactado contém combinação de termos associados a cheat/script: " + zipTerms.join(", ")
+    });
+  }
+
+  for (const finding of [...criticalFindings, ...mediumFindings]) {
+    const maximumPriority =
+      finding.evidence?.priorityMaximum === true;
+
+    if (
+      !maximumPriority &&
+      ![
+        "archive",
+        "file",
+        "browser_download",
+        "browser_recovery",
+        "usn_delete",
+        "unknown_app",
+        "prefetch_execution",
+        "process_history",
+        "browser_history",
+        "bam",
+        "recycle_bin"
+      ].includes(finding.artifact_type)
+    ) {
+      continue;
+    }
+
+    priorityFiles.push({
+      priority: maximumPriority
+        ? 100
+        : finding.severity === "critical"
+          ? 10
+          : finding.severity === "high"
+            ? 8
+            : 4,
+      status: maximumPriority
+        ? "PRIORIDADE MÁXIMA"
+        : finding.severity === "critical"
+          ? "CATÁLOGO / CRÍTICO"
+          : finding.severity === "high"
+            ? "ALTO RISCO"
+            : "REVISAR",
+      tag: finding.severity === "critical" ? "critical" :
+        finding.severity === "high" ? "high" : "medium",
+      name: finding.title || "Arquivo suspeito",
+      path: finding.artifact_value || "—",
+      time: finding.created_at,
+      source: finding.evidence?.catalogMatch?.name || finding.artifact_type,
+      url: finding.evidence?.sourceUrl || finding.evidence?.finalUrl || "",
+      detail: finding.evidence?.note || "Achado priorizado pelo motor de detecção."
+    });
+  }
+
+  const prioritySeen = new Set();
+  const priorityUnique = priorityFiles
+    .filter((item) =>
+      !wasFilteredByReview(
+        item.name,
+        item.path
+      ))
+    .sort((a, b) => b.priority - a.priority || new Date(b.time || 0) - new Date(a.time || 0))
+    .filter((item) => {
+      const key = String(item.name || item.path || "").toLowerCase();
+      if (!key || prioritySeen.has(key)) return false;
+      prioritySeen.add(key);
+      return true;
+    })
+    .slice(0, 150);
+
+  document.getElementById("priorityCountBadge").textContent = priorityUnique.length;
+  const summaryPriorityCount = document.getElementById("summaryPriorityCount");
+  if (summaryPriorityCount) summaryPriorityCount.textContent = priorityUnique.length;
+
+  await yieldToBrowser();
+  if (loadSequence !== reportLoadSequence) return;
+
+  document.getElementById("priorityFilesList").innerHTML = priorityUnique.length
+    ? priorityUnique.map((item) => {
+        const sourceUrl = safeExternalUrl(item.url);
+        return `
+          <div class="finding">
+            <div class="finding-head">
+              <h4>${escapeHtml(item.name || "Arquivo")}</h4>
+              <span class="tag ${escapeHtml(item.tag)}">${escapeHtml(item.status)}</span>
+            </div>
+            <div class="kv"><span>Caminho</span><span>${escapeHtml(item.path || "—")}</span></div>
+            <div class="kv"><span>Data / horário</span><span>${escapeHtml(formatDate(item.time))}</span></div>
+            <div class="kv"><span>Fonte</span><span>${escapeHtml(item.source || "—")}</span></div>
+            ${sourceUrl ? `<div class="kv"><span>Origem do download</span><span><a href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.url)}</a></span></div>` : ""}
+            <div class="kv"><span>Motivo</span><span>${escapeHtml(item.detail || "—")}</span></div>
+          </div>
+        `;
+      }).join("")
+    : '<div class="message ok">Nenhum arquivo apagado/executado de alta prioridade foi identificado.</div>';
+
+  const historyFindingTypes = new Set([
+    "browser_catalog_visit_v2",
+    "browser_search_v2",
+    "browser_context_v2",
+    "browser_recovery_v2",
+    "browser_history"
+  ]);
+
+  const historyFindings = findings.filter((finding) =>
+    historyFindingTypes.has(String(finding?.artifact_type || ""))
+  );
+
+  const historyFindingKey = (finding) => {
+    const evidence = finding?.evidence || {};
+    return [
+      String(evidence.browser || "").toLowerCase(),
+      String(evidence.profile || "").toLowerCase(),
+      String(
+        evidence.url ||
+        evidence.recoveredUrl ||
+        finding?.artifact_value ||
+        ""
+      ).toLowerCase(),
+      String(evidence.visitTimeUtc || evidence.recoveredAtUtc || "")
+    ].join("|");
+  };
+
+  const rawHistoryKey = (item) => [
+    String(item?.browser || "").toLowerCase(),
+    String(item?.profile || "").toLowerCase(),
+    String(item?.url || "").toLowerCase(),
+    String(item?.visitTimeUtc || "")
+  ].join("|");
+
+  const findingsByHistoryKey = new Map();
+  for (const finding of historyFindings) {
+    const key = historyFindingKey(finding);
+    if (!findingsByHistoryKey.has(key))
+      findingsByHistoryKey.set(key, []);
+    findingsByHistoryKey.get(key).push(finding);
+  }
+
+  const usedHistoryFindingIds = new Set();
+  const severityRank = {
+    critical: 4,
+    high: 3,
+    medium: 2,
+    low: 1,
+    info: 0
+  };
+
+  const browserHistorySignals = arrays.browserHistorySignals
+    .map((item) => {
+      const matchedFindings = findingsByHistoryKey.get(rawHistoryKey(item)) || [];
+      const finding = matchedFindings
+        .sort((a, b) =>
+          (severityRank[b?.severity] || 0) -
+          (severityRank[a?.severity] || 0)
+        )[0] || null;
+
+      if (finding?.id)
+        usedHistoryFindingIds.add(String(finding.id));
+
+      return {
+        ...item,
+        finding,
+        resolvedSeverity:
+          finding?.severity ||
+          (String(item?.riskLevel || "").toLowerCase() === "high"
+            ? "high"
+            : "medium")
+      };
+    })
+    .filter((item) =>
+      item.finding ||
+      ["high", "medium"].includes(
+        String(item.riskLevel || "").toLowerCase()
+      )
+    );
+
+  for (const finding of historyFindings) {
+    if (usedHistoryFindingIds.has(String(finding.id)))
+      continue;
+
+    const evidence = finding.evidence || {};
+    browserHistorySignals.push({
+      ...evidence,
+      url:
+        evidence.url ||
+        evidence.recoveredUrl ||
+        finding.artifact_value ||
+        "",
+      finding,
+      resolvedSeverity: finding.severity || "medium",
+      reason: evidence.note || finding.title || "Ocorrência preservada pelo filtro técnico"
+    });
+  }
+
+  browserHistorySignals.sort((a, b) =>
+    (severityRank[b.resolvedSeverity] || 0) -
+    (severityRank[a.resolvedSeverity] || 0) ||
+    new Date(b.visitTimeUtc || b.recoveredAtUtc || 0) -
+    new Date(a.visitTimeUtc || a.recoveredAtUtc || 0)
+  );
+
+  browserHistorySignals.splice(500);
+
+  document.getElementById("historyCountBadge").textContent = browserHistorySignals.length;
+  document.getElementById("filterHistoryCount")?.replaceChildren(
+    String(browserHistorySignals.length)
+  );
+
+  document.getElementById("browserHistorySignalsList").innerHTML = browserHistorySignals.length
+    ? browserHistorySignals.map((item) => {
+        const severity = String(item.resolvedSeverity || "medium").toLowerCase();
+        const safeUrl = safeExternalUrl(item.url);
+        const catalogMatch =
+          item.finding?.evidence?.catalogMatch ||
+          item.catalogMatch ||
+          null;
+        const label = severity === "critical"
+          ? "CRÍTICO · CATÁLOGO"
+          : item.searchQuery
+            ? "REVISAR · PESQUISA"
+            : item.finding?.artifact_type === "browser_recovery_v2"
+              ? "REVISAR · RECUPERADO"
+              : "REVISAR · SITE/PÁGINA";
+        const tagClass = severity === "critical"
+          ? "critical"
+          : severity === "high"
+            ? "high"
+            : "medium";
+        return `
+          <div class="finding severity-card ${escapeHtml(severity)}">
+            <div class="finding-head">
+              <h4>${escapeHtml(item.searchQuery || item.host || item.title || "Histórico do navegador")}</h4>
+              <span class="tag ${escapeHtml(tagClass)}">${escapeHtml(label)}</span>
+            </div>
+            <div class="kv"><span>Navegador</span><span>${escapeHtml((item.browser || "—") + " · " + (item.profile || "perfil"))}</span></div>
+            <div class="kv"><span>Visitado em</span><span>${escapeHtml(formatDate(item.visitTimeUtc || item.recoveredAtUtc))}</span></div>
+            <div class="kv"><span>Título</span><span>${escapeHtml(item.title || "—")}</span></div>
+            ${item.searchQuery ? `<div class="kv"><span>Pesquisa</span><span>${escapeHtml(item.searchQuery)}</span></div>` : ""}
+            ${catalogMatch ? `<div class="kv"><span>Catálogo confirmado</span><span>${escapeHtml(catalogMatch.name || "Indicador catalogado")}</span></div>` : ""}
+            ${catalogMatch?.matchedBy ? `<div class="kv"><span>Indicador exato</span><span>${escapeHtml(catalogMatch.matchedBy)}</span></div>` : ""}
+            <div class="kv"><span>Termos encontrados</span><span>${escapeHtml((item.matchedTerms || []).join(", ") || "—")}</span></div>
+            <div class="kv"><span>Motivo</span><span>${escapeHtml(item.finding?.evidence?.note || item.reason || "—")}</span></div>
+            ${safeUrl ? `<div class="kv"><span>URL</span><span><a href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.url)}</a></span></div>` : `<code>${escapeHtml(item.url || "—")}</code>`}
+          </div>
+        `;
+      }).join("")
+    : '<div class="message ok">Nenhuma ocorrência suspeita foi preservada no histórico.</div>';
+  const missingDownloads = [...arrays.browserDownloads]
+    .filter((item) => item.fileMissing === true)
+    .sort((a, b) =>
+      new Date(b.startTimeUtc || 0) - new Date(a.startTimeUtc || 0))
+    .slice(0, 500);
+
+  document.getElementById("browserDownloadsList").innerHTML = missingDownloads.length
+    ? missingDownloads.map((item) => {
+        const sourceUrl = safeExternalUrl(item.sourceUrl);
+        const finalUrl = safeExternalUrl(item.finalUrl);
+        const pageUrl = safeExternalUrl(item.pageUrl || item.referrerUrl || item.siteUrl);
+
+        const linkRow = (label, url, fallback) => {
+          const safeUrl = safeExternalUrl(url);
+          if (!safeUrl) {
+            return `<div class="kv"><span>${escapeHtml(label)}</span><span>${escapeHtml(fallback || "—")}</span></div>`;
+          }
+
+          return `<div class="kv"><span>${escapeHtml(label)}</span><span><a href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(url)}</a></span></div>`;
+        };
+
+        const executableLike = /\.(exe|com|scr|dll|bat|cmd|ps1|msi)$/i
+          .test(item.fileName || item.targetPath || "");
+
+        return `
+          <div class="finding">
+            <div class="finding-head">
+              <h4>${escapeHtml(item.fileName || "Download")}</h4>
+              <span class="tag ${executableLike ? "medium" : "info"}">APAGADO / MOVIDO</span>
+            </div>
+            <div class="kv"><span>Navegador</span><span>${escapeHtml((item.browser || "—") + " · " + (item.profile || "perfil"))}</span></div>
+            <div class="kv"><span>Baixado em</span><span>${escapeHtml(formatDate(item.startTimeUtc))}</span></div>
+            <div class="kv"><span>Destino original</span><span>${escapeHtml(item.targetPath || "—")}</span></div>
+            <div class="kv"><span>Tamanho</span><span>${Number(item.totalBytes || 0).toLocaleString("pt-BR")} bytes</span></div>
+            <div class="kv"><span>MIME</span><span>${escapeHtml(item.mimeType || "—")}</span></div>
+            ${linkRow("URL original", sourceUrl, item.sourceUrl)}
+            ${linkRow("URL final", finalUrl, item.finalUrl)}
+            ${linkRow("Página / referrer", pageUrl, item.pageUrl || item.referrerUrl || item.siteUrl)}
+            <div class="kv"><span>Fonte forense</span><span>${escapeHtml(item.databaseSource || "Histórico do navegador")}</span></div>
+          </div>
+        `;
+      }).join("")
+    : '<div class="message ok">Nenhum download apagado/movido foi preservado no histórico dos navegadores suportados.</div>';
+
+  const timeline = [];
+
+  for (const item of arrays.browserHistorySignals) {
+    if (!item.visitTimeUtc) continue;
+    timeline.push({
+      time: item.visitTimeUtc,
+      action: item.searchQuery ? "PESQUISA SUSPEITA" : "SITE SUSPEITO",
+      tag: item.riskLevel === "high" ? "high" : item.riskLevel === "medium" ? "medium" : "info",
+      path: item.searchQuery || item.host || item.url || "Navegador",
+      detail: [item.browser, safeArray(item.matchedTerms).join(", ")].filter(Boolean).join(" · ")
+    });
+  }
+
+  for (const item of arrays.browserDownloads) {
+    if (!item.startTimeUtc) continue;
+    timeline.push({
+      time: item.startTimeUtc,
+      action: "BAIXADO",
+      tag: item.fileMissing ? "medium" : "info",
+      path: item.targetPath || item.fileName || "Download",
+      detail: [item.browser, item.sourceUrl || item.finalUrl].filter(Boolean).join(" · ")
+    });
+  }
+
+  for (const item of arrays.prefetchExecutions) {
+    if (!item.lastRunUtc) continue;
+    timeline.push({
+      time: item.lastRunUtc,
+      action: "EXECUTADO",
+      tag: item.likelyDetachedOrRemovable ? "high" : "info",
+      path: item.resolvedExecutablePath || item.nativeExecutablePath || item.executableName || "Executável",
+      detail: "Prefetch · " + Number(item.runCount || 0) + " execução(ões)"
+    });
+  }
+
+  for (const item of arrays.recycleBin) {
+    if (!item.deletedAtUtc) continue;
+    timeline.push({
+      time: item.deletedAtUtc,
+      action: "EXCLUÍDO",
+      tag: /\.(exe|dll|com|scr|bat|cmd|ps1|msi)$/i.test(item.fileName || "") ? "medium" : "info",
+      path: item.originalPath || item.fileName || "Lixeira",
+      detail: item.recycledDataPresent ? "Ainda presente na Lixeira" : "Dados reciclados não localizados"
+    });
+  }
+
+  for (const item of arrays.usbTimeline) {
+    if (!item.timeCreatedUtc) continue;
+    timeline.push({
+      time: item.timeCreatedUtc,
+      action: item.eventType === "disconnect" ? "USB DESCONECTADO" : item.eventType === "connect" ? "USB CONECTADO" : "USB",
+      tag: item.eventType === "disconnect" ? "medium" : "info",
+      path: item.deviceId || item.evidence || "Dispositivo USB",
+      detail: (item.provider || "Windows") + (item.eventId ? " · Event " + item.eventId : "")
+    });
+  }
+
+  for (const item of arrays.processCreationEvents) {
+    if (!item.timeCreatedUtc) continue;
+    timeline.push({
+      time: item.timeCreatedUtc,
+      action: "PROCESSO",
+      tag: item.processPresent === false ? "medium" : "info",
+      path: item.processPath || item.processName || "Processo",
+      detail: item.parentProcessName ? "Pai: " + item.parentProcessName : "Event 4688"
+    });
+  }
+
+  timeline.sort((a, b) => new Date(b.time) - new Date(a.time));
+
+  await yieldToBrowser();
+  if (loadSequence !== reportLoadSequence) return;
+
+  document.getElementById("forensicTimelineList").innerHTML = timeline.length
+    ? timeline.slice(0, 300).map((item) => `
+        <div class="finding">
+          <div class="finding-head">
+            <h4>${escapeHtml(item.action)}</h4>
+            <span class="tag ${escapeHtml(item.tag)}">${escapeHtml(formatDate(item.time))}</span>
+          </div>
+          <code>${escapeHtml(item.path || "—")}</code>
+          <div class="kv"><span>Fonte / detalhe</span><span>${escapeHtml(item.detail || "—")}</span></div>
+        </div>
+      `).join("")
+    : '<div class="message">Nenhum evento suficiente para montar a linha do tempo.</div>';
+
+  const recycleEntries = [...arrays.recycleBin]
+    .sort((a, b) => new Date(b.deletedAtUtc || 0) - new Date(a.deletedAtUtc || 0))
+    .slice(0, 500);
+
+  document.getElementById("recycleBinList").innerHTML = recycleEntries.length
+    ? recycleEntries.map((item) => {
+        const executable = /\.(exe|dll|com|scr|bat|cmd|ps1|msi)$/i.test(item.fileName || "");
+        return `
+          <div class="finding">
+            <div class="finding-head">
+              <h4>${escapeHtml(item.fileName || "Arquivo excluído")}</h4>
+              <span class="tag ${executable ? "medium" : "info"}">LIXEIRA</span>
+            </div>
+            <div class="kv"><span>Excluído em</span><span>${escapeHtml(formatDate(item.deletedAtUtc))}</span></div>
+            <div class="kv"><span>Caminho original</span><span>${escapeHtml(item.originalPath || "—")}</span></div>
+            <div class="kv"><span>Tamanho original</span><span>${Number(item.originalSize || 0).toLocaleString("pt-BR")} bytes</span></div>
+            <div class="kv"><span>Dados ainda na Lixeira</span><span>${item.recycledDataPresent ? "Sim" : "Não"}</span></div>
+          </div>
+        `;
+      }).join("")
+    : '<div class="message ok">Nenhum metadado de arquivo excluído foi encontrado na Lixeira.</div>';
+
+  const processStarts = [...arrays.processes]
+    .filter((item) => item.startTimeUtc)
+    .sort((a, b) => new Date(b.startTimeUtc) - new Date(a.startTimeUtc))
+    .slice(0, 250);
+
+  document.getElementById("processStartList").innerHTML = processStarts.length
+    ? processStarts.map((item) => `
+        <div class="finding">
+          <div class="finding-head">
+            <h4>${escapeHtml(item.name || "Processo")}</h4>
+            <span class="tag info">PID ${Number(item.pid || 0)}</span>
+          </div>
+          <div class="kv"><span>Iniciado em</span><span>${escapeHtml(formatDate(item.startTimeUtc))}</span></div>
+          <div class="kv"><span>Caminho</span><span>${escapeHtml(item.path || "—")}</span></div>
+          <div class="kv"><span>Assinado</span><span>${item.signed ? "Sim" : "Não"}${item.signerSubject ? " · " + escapeHtml(item.signerSubject) : ""}</span></div>
+        </div>
+      `).join("")
+    : '<div class="message">Nenhum horário de início de processo disponível.</div>';
+
+  const compileTimes = [];
+
+  for (const item of arrays.files) {
+    if (!item.compilationTimeUtc) continue;
+    compileTimes.push({
+      path: item.path || item.name,
+      time: item.compilationTimeUtc,
+      source: "PE Header",
+      signer: item.signerSubject || ""
+    });
+  }
+
+  for (const item of arrays.amcache) {
+    if (!item.linkDateUtc) continue;
+    compileTimes.push({
+      path: item.fullPath || item.name,
+      time: item.linkDateUtc,
+      source: "Amcache LinkDate",
+      signer: item.publisher || ""
+    });
+  }
+
+  compileTimes.sort((a, b) => new Date(b.time) - new Date(a.time));
+
+  document.getElementById("compilationTimesList").innerHTML = compileTimes.length
+    ? compileTimes.slice(0, 300).map((item) => `
+        <div class="finding">
+          <div class="finding-head">
+            <h4>${escapeHtml(item.source)}</h4>
+            <span class="tag info">${escapeHtml(formatDate(item.time))}</span>
+          </div>
+          <code>${escapeHtml(item.path || "—")}</code>
+          ${item.signer ? '<div class="kv"><span>Publisher / assinante</span><span>' + escapeHtml(item.signer) + '</span></div>' : ""}
+        </div>
+      `).join("")
+    : '<div class="message">Nenhum timestamp de compilação PE disponível.</div>';
+
+  const reviewFiles = [...arrays.files]
+    .sort((a, b) => {
+      const aExec = a.prefetchEvidenceUtc ? 1 : 0;
+      const bExec = b.prefetchEvidenceUtc ? 1 : 0;
+      if (aExec !== bExec) return bExec - aExec;
+      return new Date(b.lastWriteUtc || 0) - new Date(a.lastWriteUtc || 0);
+    })
+    .slice(0, 250);
+
+  await yieldToBrowser();
+  if (loadSequence !== reportLoadSequence) return;
+
+  document.getElementById("candidateFilesList").innerHTML = reviewFiles.length
+    ? reviewFiles.map((item) => `
+        <div class="finding">
+          <div class="finding-head">
+            <h4>${escapeHtml(item.name || "Arquivo")}</h4>
+            <span class="tag ${item.prefetchEvidenceUtc ? "medium" : "info"}">
+              ${item.prefetchEvidenceUtc ? "EXECUÇÃO INDICADA" : "INVENTÁRIO"}
+            </span>
+          </div>
+          <div class="kv"><span>Caminho</span><span>${escapeHtml(item.path || "—")}</span></div>
+          <div class="kv"><span>Última modificação</span><span>${escapeHtml(formatDate(item.lastWriteUtc))}</span></div>
+          <div class="kv"><span>Evidência de execução</span><span>${escapeHtml(formatDate(item.prefetchEvidenceUtc))}</span></div>
+          <div class="kv"><span>Unidade</span><span>${escapeHtml(item.driveType || "—")}</span></div>
+          <div class="kv"><span>Assinado</span><span>${item.signed ? "Sim" : "Não"}${item.signerSubject ? " · " + escapeHtml(item.signerSubject) : ""}</span></div>
+          <code>SHA-256: ${escapeHtml(item.sha256 || "não disponível")}</code>
+        </div>
+      `).join("")
+    : '<div class="message">Nenhum arquivo executável candidato foi coletado.</div>';
+
+  const recentExecutions = [...arrays.prefetchExecutions]
+    .filter((item) => {
+      if (!item.lastRunUtc || item.likelyDetachedOrRemovable !== true) return false;
+
+      const p = String(item.resolvedExecutablePath || item.nativeExecutablePath || "")
+        .replaceAll("/", "\\").toLowerCase();
+
+      const trusted =
+        p.includes("\\windows\\") ||
+        p.includes("\\program files\\") ||
+        p.includes("\\program files (x86)\\") ||
+        p.includes("\\steamapps\\common\\");
+
+      return !trusted;
+    })
+    .sort((a, b) => new Date(b.lastRunUtc) - new Date(a.lastRunUtc))
+    .slice(0, 100);
+
+  document.getElementById("recentExecutionList").innerHTML = recentExecutions.length
+    ? recentExecutions.map((item) => {
+        const risky = item.likelyDetachedOrRemovable === true;
+        const unresolved = item.volumeNotMounted === true && !risky;
+        const status = risky
+          ? "VOLUME REMOVÍVEL / NÃO MONTADO"
+          : unresolved
+            ? "VOLUME NÃO CORRELACIONADO"
+            : item.executablePresent === false
+              ? "ARQUIVO NÃO LOCALIZADO"
+              : "EXECUÇÃO REGISTRADA";
+
+        return `
+          <div class="finding">
+            <div class="finding-head">
+              <h4>${escapeHtml(item.executableName || item.prefetchFile || "Executável")}</h4>
+              <span class="tag ${risky ? "high" : "info"}">${escapeHtml(status)}</span>
+            </div>
+            <div class="kv"><span>Última execução</span><span>${escapeHtml(formatDate(item.lastRunUtc))}</span></div>
+            <div class="kv"><span>Quantidade de execuções</span><span>${Number(item.runCount || 0)}</span></div>
+            <div class="kv"><span>Caminho nativo</span><span>${escapeHtml(item.nativeExecutablePath || "—")}</span></div>
+            <div class="kv"><span>Caminho atual</span><span>${escapeHtml(item.resolvedExecutablePath || "Não montado / não resolvido")}</span></div>
+            <div class="kv"><span>Arquivo presente</span><span>${item.executablePresent === true ? "Sim" : item.executablePresent === false ? "Não" : "Indeterminado"}</span></div>
+            <code>${escapeHtml(item.prefetchFile || "")}</code>
+          </div>
+        `;
+      }).join("")
+    : '<div class="message ok">Nenhuma execução suspeita em mídia removível/não montada foi identificada.</div>';
+
+  const integritySignals = [];
+
+  const deceptiveExtensions = new Set([
+    ".txt", ".log", ".csv", ".json", ".xml", ".ini", ".cfg",
+    ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".ico",
+    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+    ".zip", ".rar", ".7z", ".tar", ".gz",
+    ".mp3", ".wav", ".ogg", ".mp4", ".avi", ".mkv", ".mov",
+    ".html", ".htm", ".css", ".md"
+  ]);
+
+  for (const item of arrays.extensionMismatches.slice(0, 100)) {
+    const candidate = String(item.path || item.name || "");
+    const dot = candidate.lastIndexOf(".");
+    const ext = dot >= 0 ? candidate.slice(dot).toLowerCase() : "";
+
+    if (!deceptiveExtensions.has(ext)) continue;
+
+    integritySignals.push({
+      title: "Executável com extensão disfarçada",
+      value: candidate,
+      detail: item.reason || "Cabeçalho PE/MZ em extensão normalmente usada por documento/mídia.",
+      tag: "medium"
+    });
+  }
+
+  for (const item of arrays.defenderDetections.slice(0, 100)) {
+    integritySignals.push({
+      title: "Microsoft Defender",
+      value: item.threatName || item.path || "Detecção",
+      detail: [formatDate(item.timeCreatedUtc), item.path, item.action].filter(Boolean).join(" · "),
+      tag: "medium"
+    });
+  }
+
+  for (const item of arrays.bootIntegrity.slice(0, 50)) {
+    integritySignals.push({
+      title: "Boot / BCD",
+      value: item.raw || item.setting,
+      detail: "Configuração de integridade do Windows",
+      tag: "medium"
+    });
+  }
+
+  const importantServices = ["PcaSvc", "DiagTrack", "EventLog"];
+
+  for (const serviceName of importantServices) {
+    const service = arrays.services.find((item) =>
+      String(item.name || "").toLowerCase() === serviceName.toLowerCase());
+
+    if (!service) continue;
+
+    const disabled =
+      String(service.startMode || "").toLowerCase() === "disabled";
+
+    if (!disabled) continue;
+
+    integritySignals.push({
+      title: "Recurso do Windows desativado",
+      value: service.name + " · " + (service.displayName || ""),
+      detail: "StartMode: " + (service.startMode || "—") + " · Estado: " + (service.state || "—"),
+      tag: "medium"
+    });
+  }
+
+  const explorer = arrays.processes.find((item) =>
+    String(item.name || "").toLowerCase() === "explorer");
+
+  if (explorer?.startTimeUtc && arrays.pca.length === 0) {
+    const explorerAgeMinutes =
+      (Date.now() - new Date(explorer.startTimeUtc).getTime()) / 60000;
+
+    if (Number.isFinite(explorerAgeMinutes) &&
+        explorerAgeMinutes >= 0 &&
+        explorerAgeMinutes <= 20) {
+      integritySignals.push({
+        title: "Explorer reiniciado recentemente",
+        value: "explorer.exe",
+        detail: "Início: " + formatDate(explorer.startTimeUtc) + " · PCA Store vazio nesta coleta.",
+        tag: "medium"
+      });
+    }
+  }
+
+  if (payload.vmEnvironment?.isVirtualMachine) {
+    integritySignals.push({
+      title: "Ambiente virtual detectado",
+      value: payload.vmEnvironment.detectedPlatform || "Máquina virtual",
+      detail: [
+        payload.vmEnvironment.manufacturer,
+        payload.vmEnvironment.model
+      ].filter(Boolean).join(" · "),
+      tag: "info"
+    });
+  }
+
+  await yieldToBrowser();
+  if (loadSequence !== reportLoadSequence) return;
+
+  document.getElementById("integritySignalsList").innerHTML = integritySignals.length
+    ? integritySignals.slice(0, 250).map((item) => `
+        <div class="finding">
+          <div class="finding-head">
+            <h4>${escapeHtml(item.title)}</h4>
+            <span class="tag ${escapeHtml(item.tag)}">REVISAR</span>
+          </div>
+          <code>${escapeHtml(item.value || "—")}</code>
+          <div class="kv"><span>Detalhe</span><span>${escapeHtml(item.detail || "—")}</span></div>
+        </div>
+      `).join("")
+    : '<div class="message ok">Nenhum contexto adicional de integridade/anti-forense coletado.</div>';
+
+  const knownOverlayTokens = [
+    "discord", "steam", "gameoverlayrenderer", "nvidia", "nvspcap",
+    "amd", "radeon", "obs", "overwolf", "medal", "steelseries",
+    "logitech", "razer", "microsoft"
+  ];
+
+  const suspiciousRustModules = arrays.rustModules.filter((item) => {
+    const haystack = [
+      item.path,
+      item.moduleName,
+      item.companyName,
+      item.signerSubject
+    ].join(" ").toLowerCase();
+
+    const knownOverlay = knownOverlayTokens.some((token) =>
+      haystack.includes(token));
+
+    return !knownOverlay &&
+      item.signed === false &&
+      item.underGameDirectory === false &&
+      item.underWindows === false &&
+      (
+        item.underTemp === true ||
+        (
+          item.underUserProfile === true &&
+          !item.underProgramFiles &&
+          !item.companyName
+        )
+      );
+  });
+
+  document.getElementById("rustModulesList").innerHTML = suspiciousRustModules.length
+    ? suspiciousRustModules.slice(0, 100).map((item) => `
+        <div class="finding">
+          <div class="finding-head">
+            <h4>${escapeHtml(item.moduleName || "DLL")}</h4>
+            <span class="tag high">EXTERNO / NÃO ASSINADO</span>
+          </div>
+          <div class="kv"><span>Processo</span><span>${escapeHtml((item.processName || "Rust") + " #" + (item.processId || ""))}</span></div>
+          <div class="kv"><span>Caminho</span><span>${escapeHtml(item.path || "—")}</span></div>
+          <div class="kv"><span>Empresa</span><span>${escapeHtml(item.companyName || "—")}</span></div>
+          <div class="kv"><span>Assinante</span><span>${escapeHtml(item.signerSubject || "—")}</span></div>
+        </div>
+      `).join("")
+    : '<div class="message ok">Nenhum módulo suspeito carregado no Rust. Módulos normais de Steam/Discord/GPU ficam apenas no inventário bruto.</div>';
+  const execArtifacts = [];
+
+  for (const item of arrays.bam.slice(0, 300)) {
+    execArtifacts.push({
+      source: "BAM/DAM",
+      value: item.path,
+      detail: item.lastExecutionUtc ? "Última execução: " + formatDate(item.lastExecutionUtc) : "Timestamp indisponível",
+      state: item.fileExists ? "Arquivo presente" : "Arquivo ausente"
+    });
+  }
+
+  for (const item of arrays.pca.slice(0, 300)) {
+    execArtifacts.push({
+      source: item.source || "PCA",
+      value: item.path,
+      detail: item.fileExists ? "Arquivo presente" : "Arquivo ausente",
+      state: ""
+    });
+  }
+
+  for (const item of arrays.amcache.slice(0, 300)) {
+    execArtifacts.push({
+      source: "Amcache",
+      value: item.fullPath || item.name,
+      detail: "Registro: " + formatDate(item.fileKeyLastWriteUtc),
+      state: item.filePresent ? "Arquivo presente" : "Arquivo ausente"
+    });
+  }
+
+  for (const item of arrays.shimCache.slice(0, 300)) {
+    execArtifacts.push({
+      source: "ShimCache",
+      value: item.path,
+      detail: item.lastModifiedUtc ? "Última modificação: " + formatDate(item.lastModifiedUtc) : "Timestamp não disponível",
+      state: item.filePresent ? "Arquivo presente" : "Arquivo ausente"
+    });
+  }
+
+  for (const item of arrays.userAssist.slice(0, 300)) {
+    execArtifacts.push({
+      source: "UserAssist",
+      value: item.decodedName,
+      detail: "Registro de uso da interface do Windows",
+      state: ""
+    });
+  }
+
+  for (const item of arrays.powerShellHits.slice(0, 200)) {
+    execArtifacts.push({
+      source: "PowerShell",
+      value: item.matchedLine,
+      detail: "Regra: " + (item.ruleName || item.pattern || "custom"),
+      state: item.sourceFile || ""
+    });
+  }
+
+  await yieldToBrowser();
+  if (loadSequence !== reportLoadSequence) return;
+
+  document.getElementById("executionArtifactsList").innerHTML = execArtifacts.length
+    ? execArtifacts.slice(0, 500).map((item) => `
+        <div class="finding">
+          <div class="finding-head">
+            <h4>${escapeHtml(item.source)}</h4>
+            <span class="tag info">EVIDÊNCIA</span>
+          </div>
+          <code>${escapeHtml(item.value || "—")}</code>
+          <div class="kv"><span>Detalhe</span><span>${escapeHtml(item.detail || "—")}</span></div>
+          ${item.state ? '<div class="kv"><span>Estado</span><span>' + escapeHtml(item.state) + '</span></div>' : ""}
+        </div>
+      `).join("")
+    : '<div class="message">Nenhum artefato adicional de execução foi coletado.</div>';
+
+  const rawReport = document.getElementById("rawReport");
+  rawReport.textContent = projection.truncated === true
+    ? "Visualização leve ativa. Os dados completos não são inseridos no navegador."
+    : "O relatório completo está disponível para download.";
+
+  const downloadRawReportBtn =
+    document.getElementById("downloadRawReportBtn");
+  if (downloadRawReportBtn) {
+    downloadRawReportBtn.href =
+      "/api/admin/analyses/" + encodeURIComponent(id) + "/raw";
+  }
+
+}
+
+async function loadRules() {
+  const data = await api("/api/admin/rules");
+  rulesList.innerHTML = "";
+
+  for (const rule of data.rules) {
+    const item = document.createElement("div");
+    item.className = "rule";
+
+    item.innerHTML = `
+      <div>
+        <strong>${escapeHtml(rule.name)}</strong>
+        <small>
+          ${escapeHtml(rule.type)} ·
+          <span class="tag ${escapeHtml(rule.severity)}">${escapeHtml(severityLabel(rule.severity))}</span>
+          · ${rule.enabled ? "ATIVA" : "DESATIVADA"}
+        </small><br>
+        <code>${escapeHtml(rule.pattern)}</code>
+        ${rule.description ? '<small><br>' + escapeHtml(rule.description) + '</small>' : ""}
+      </div>
+      <button class="button ghost toggle-rule" data-id="${rule.id}">
+        ${rule.enabled ? "Desativar" : "Ativar"}
+      </button>
+    `;
+
+    rulesList.appendChild(item);
+  }
+
+  document.querySelectorAll(".toggle-rule").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await api("/api/admin/rules/" + button.dataset.id + "/toggle", {
+        method: "POST",
+      });
+      await loadRules();
+    });
+  });
+}
+
+async function refreshAll() {
+  await Promise.all([loadAnalyses(), loadRules()]);
+}
+
+
+let activeSessionFilter = "all";
+
+function switchAdminTab(name) {
+  const panels = {
+    clients: document.getElementById("clientsPanel"),
+    servers: document.getElementById("serversPanel"),
+    bans: document.getElementById("bansPanel"),
+    sessions: document.getElementById("sessionsPanel"),
+    scanner: document.getElementById("scannerPanel"),
+    players: document.getElementById("playersPanel"),
+    settings: document.getElementById("settingsPanel"),
+  };
+
+  const panelName =
+    name === "home"
+      ? "sessions"
+      : name;
+
+  for (const [key, panel] of Object.entries(panels)) {
+    panel?.classList.toggle("hidden", key !== panelName);
+  }
+
+  document.querySelectorAll("[data-admin-tab]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.adminTab === name);
+  });
+}
+
+function applySessionFilters() {
+  const query =
+    String(document.getElementById("sessionSearch")?.value || "")
+      .trim()
+      .toLowerCase();
+
+  document.querySelectorAll("#analysesBody tr").forEach((row) => {
+    if (!row.dataset.sessionKind) return;
+
+    const matchesKind =
+      activeSessionFilter === "all" ||
+      row.dataset.sessionKind === activeSessionFilter;
+
+    const matchesQuery =
+      !query ||
+      String(row.dataset.searchText || row.textContent || "")
+        .toLowerCase()
+        .includes(query);
+
+    row.classList.toggle("hidden", !(matchesKind && matchesQuery));
+  });
+}
+
+function setupVorkenAdminUi() {
+  document.querySelectorAll("[data-admin-tab]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const tab = button.dataset.adminTab || "sessions";
+      switchAdminTab(tab);
+    });
+  });
+
+  document.getElementById("sessionSearch")?.addEventListener(
+    "input",
+    applySessionFilters
+  );
+
+  document.querySelectorAll(".session-filter").forEach((button) => {
+    button.addEventListener("click", () => {
+      activeSessionFilter = button.dataset.sessionFilter || "all";
+      document.querySelectorAll(".session-filter").forEach((item) =>
+        item.classList.toggle("active", item === button)
+      );
+      applySessionFilters();
+    });
+  });
+
+  document.querySelectorAll("[data-report-filter]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const filter = button.dataset.reportFilter || "overview";
+      document.querySelectorAll("[data-report-filter]").forEach((item) =>
+        item.classList.toggle("active", item === button)
+      );
+      document.querySelectorAll("[data-report-group]").forEach((section) => {
+        const groups =
+          String(section.dataset.reportGroup || "")
+            .split(" ")
+            .filter(Boolean);
+
+        let visible =
+          groups.includes(filter);
+
+        // Visões de severidade devem ser absolutas:
+        // CRÍTICO mostra somente a lista critical.
+        // REVISAR mostra somente a lista laranja.
+        if (filter === "critical") {
+          visible =
+            section.id === "criticalSection" || section.id === "reportOverview";
+        } else if (filter === "medium") {
+          visible =
+            section.id === "mediumSection" || section.id === "reportOverview";
+        }
+
+        section.classList.toggle(
+          "report-filter-hidden",
+          !visible
+        );
+
+        if (
+          visible &&
+          section.tagName === "DETAILS"
+        ) {
+          section.open = true;
+        }
+      });
+    });
+  });
+
+  document.getElementById("exportReportBtn")?.addEventListener("click", () => {
+    window.print();
+  });
+
+  document.getElementById("hashReportBtn")?.addEventListener("click", async () => {
+    if (!currentReportId) {
+      alert("Abra um relatório antes de gerar o hash.");
+      return;
+    }
+
+    const result = await api(
+      "/api/admin/analyses/" +
+      encodeURIComponent(currentReportId) +
+      "/raw-hash"
+    );
+    const hash = String(result.sha256 || "");
+
+    try {
+      await navigator.clipboard.writeText(hash);
+      alert("SHA-256 copiado para a área de transferência:\n" + hash);
+    } catch {
+      alert("SHA-256 do relatório:\n" + hash);
+    }
+  });
+
+  switchAdminTab("sessions");
+}
+
+setupVorkenAdminUi();
+
+async function boot() {
+  try {
+    await api("/api/admin/me");
+    setLoggedIn(true);
+    await refreshAll();
+    const requested=Number(new URLSearchParams(location.search).get("analysis"));
+    if(Number.isInteger(requested)&&requested>0)await openReportSafe(requested);
+  } catch {
+    setLoggedIn(false);
+  }
+}
+
+if(scopedReport){
+ document.body.classList.add('scoped-report');
+ loginView.classList.add('hidden');dashboardView.classList.remove('hidden');
+ document.getElementById('closeReportBtn').addEventListener('click',()=>parent.postMessage({type:'vorken-report-close'},location.origin));
+ openReportSafe(scopedReport).catch(error=>alert(error.message));
+}else boot();
+
