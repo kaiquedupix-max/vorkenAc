@@ -633,6 +633,7 @@ internal static class AdvancedCollectors
         }
     }
 
+    [System.Reflection.Obfuscation(Exclude = true)]
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern uint QueryDosDevice(
         string? lpDeviceName,

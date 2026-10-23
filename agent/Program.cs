@@ -164,6 +164,7 @@ internal static class Program
                 AutorunIntegrityCollector.Collect,
                 errors);
 
+            DateTime processSnapshotUtc = DateTime.UtcNow;
             List<ProcessRecord> processes = SafeCollect(
                 "Processos",
                 CollectProcesses,
@@ -259,10 +260,8 @@ internal static class Program
                 AdvancedCollectors.CollectRecentLogClearSignals,
                 errors);
 
-            List<ProcessCreationRecord> processCreationEvents = SafeCollect(
-                "Event Log 4688",
-                DeepForensicCollector.CollectProcessCreationEvents,
-                errors);
+            ProcessJournalReport processJournal = ProcessJournalCollector.Collect();
+            List<ProcessCreationRecord> processCreationEvents = processJournal.Events;
 
             List<ProcessTerminationRecord> processTerminationEvents = SafeCollect(
                 "Event Log 4689",
@@ -431,6 +430,8 @@ internal static class Program
                 SerialDevices = serialDevices,
                 HardwareSummary = hardwareSummary,
                 Processes = processes,
+                ProcessSnapshotUtc = processSnapshotUtc,
+                ProcessJournal = processJournal,
                 Prefetch = prefetch,
                 PrefetchExecutions = prefetchExecutions,
                 Services = services,
@@ -1427,11 +1428,16 @@ internal static class Program
 
         foreach (Process process in Process.GetProcesses())
         {
+            string processName = "";
+            int processId = 0;
             try
             {
-                if (InspectionScope.IsExcludedProcess(process.ProcessName)) continue;
+                processName = process.ProcessName;
+                processId = process.Id;
+                if (InspectionScope.IsExcludedProcess(processName)) continue;
 
-                string? path = process.MainModule?.FileName;
+                string? path = ProcessMetadata.TryGetExecutablePath(processId);
+                if (!string.IsNullOrWhiteSpace(path) && !InspectionScope.CanInspectPath(path)) continue;
                 string? hash = null;
                 bool signed = false;
                 string? signer = null;
@@ -1452,21 +1458,24 @@ internal static class Program
 
                 result.Add(new ProcessRecord
                 {
-                    Pid = process.Id,
-                    Name = process.ProcessName,
+                    Pid = processId,
+                    Name = processName,
                     Path = path,
                     Sha256 = hash,
                     Signed = signed,
                     SignerSubject = signer,
-                    StartTimeUtc = TryGetStartTime(process)
+                    StartTimeUtc = TryGetStartTime(process),
+                    InspectionStatus = string.IsNullOrWhiteSpace(path) ? "metadata-only" : InspectionScope.CanInspectPath(path) ? "scanned" : "file-excluded"
                 });
             }
             catch
             {
+                if (string.IsNullOrEmpty(processName) || InspectionScope.IsExcludedProcess(processName)) continue;
                 result.Add(new ProcessRecord
                 {
-                    Pid = process.Id,
-                    Name = process.ProcessName
+                    Pid = processId,
+                    Name = processName,
+                    InspectionStatus = "metadata-only"
                 });
             }
             finally
@@ -2009,6 +2018,8 @@ internal sealed class ScanReport
     public List<SerialDeviceRecord> SerialDevices { get; set; } = new();
     public HardwareSummaryRecord HardwareSummary { get; set; } = new();
     public List<ProcessRecord> Processes { get; set; } = new();
+    public DateTime ProcessSnapshotUtc { get; set; }
+    public ProcessJournalReport ProcessJournal { get; set; } = new();
     public List<PrefetchRecord> Prefetch { get; set; } = new();
     public List<PrefetchExecutionRecord> PrefetchExecutions { get; set; } = new();
     public List<ServiceRecord> Services { get; set; } = new();
@@ -2143,6 +2154,7 @@ internal sealed class ProcessRecord
     public bool Signed { get; set; }
     public string? SignerSubject { get; set; }
     public DateTime? StartTimeUtc { get; set; }
+    public string InspectionStatus { get; set; } = "metadata-only";
 }
 
 internal sealed class PrefetchRecord

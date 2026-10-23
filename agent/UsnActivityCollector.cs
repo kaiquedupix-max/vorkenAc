@@ -561,6 +561,7 @@ internal static class UsnActivityCollector
         public uint FileIndexLow;
     }
 
+    [System.Reflection.Obfuscation(Exclude = true)]
     [DllImport(
         "kernel32.dll",
         CharSet = CharSet.Unicode,
@@ -574,6 +575,7 @@ internal static class UsnActivityCollector
         uint dwFlagsAndAttributes,
         IntPtr hTemplateFile);
 
+    [System.Reflection.Obfuscation(Exclude = true)]
     [DllImport(
         "kernel32.dll",
         SetLastError = true)]
@@ -582,6 +584,7 @@ internal static class UsnActivityCollector
         SafeFileHandle hFile,
         out BY_HANDLE_FILE_INFORMATION lpFileInformation);
 
+    [System.Reflection.Obfuscation(Exclude = true)]
     [DllImport(
         "kernel32.dll",
         SetLastError = true,
@@ -597,6 +600,7 @@ internal static class UsnActivityCollector
         out int lpBytesReturned,
         IntPtr lpOverlapped);
 
+    [System.Reflection.Obfuscation(Exclude = true)]
     [DllImport(
         "kernel32.dll",
         SetLastError = true,

@@ -137,6 +137,7 @@ internal static class AlternateDataStreamCollector
         public string cStreamName;
     }
 
+    [System.Reflection.Obfuscation(Exclude = true)]
     [DllImport(
         "kernel32.dll",
         CharSet = CharSet.Unicode,
@@ -147,6 +148,7 @@ internal static class AlternateDataStreamCollector
         out WIN32_FIND_STREAM_DATA lpFindStreamData,
         int dwFlags);
 
+    [System.Reflection.Obfuscation(Exclude = true)]
     [DllImport(
         "kernel32.dll",
         CharSet = CharSet.Unicode,
@@ -166,7 +168,8 @@ internal static class AlternateDataStreamCollector
         protected override bool ReleaseHandle() =>
             FindClose(handle);
 
-        [DllImport(
+        [System.Reflection.Obfuscation(Exclude = true)]
+    [DllImport(
             "kernel32.dll",
             SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]

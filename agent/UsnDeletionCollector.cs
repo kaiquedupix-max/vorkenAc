@@ -433,6 +433,7 @@ internal static class UsnDeletionCollector
         public ulong UsnJournalID;
     }
 
+    [System.Reflection.Obfuscation(Exclude = true)]
     [DllImport(
         "kernel32.dll",
         CharSet = CharSet.Unicode,
@@ -446,6 +447,7 @@ internal static class UsnDeletionCollector
         uint dwFlagsAndAttributes,
         IntPtr hTemplateFile);
 
+    [System.Reflection.Obfuscation(Exclude = true)]
     [DllImport(
         "kernel32.dll",
         SetLastError = true,
@@ -461,6 +463,7 @@ internal static class UsnDeletionCollector
         out int lpBytesReturned,
         IntPtr lpOverlapped);
 
+    [System.Reflection.Obfuscation(Exclude = true)]
     [DllImport(
         "kernel32.dll",
         SetLastError = true,

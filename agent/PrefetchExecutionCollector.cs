@@ -358,12 +358,14 @@ internal static class PrefetchExecutionCollector
         catch { return DateTime.MinValue; }
     }
 
+    [System.Reflection.Obfuscation(Exclude = true)]
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern uint QueryDosDevice(
         string? lpDeviceName,
         StringBuilder lpTargetPath,
         int ucchMax);
 
+    [System.Reflection.Obfuscation(Exclude = true)]
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetVolumeNameForVolumeMountPoint(
@@ -371,6 +373,7 @@ internal static class PrefetchExecutionCollector
         StringBuilder lpszVolumeName,
         int cchBufferLength);
 
+    [System.Reflection.Obfuscation(Exclude = true)]
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetVolumeInformation(

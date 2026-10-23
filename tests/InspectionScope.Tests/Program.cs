@@ -33,7 +33,9 @@ try
         @"AppData\LocalLow\Facepunch Studios\Rust\log.txt",
         @"Steam\userdata\123\252490\remote\config.cfg",
         @"Downloads\RustClient.exe",
-        @"Downloads\RustClient_Data\data.bin"
+        @"Downloads\RustClient_Data\data.bin",
+        @"Program Files\EasyAntiCheat_EOS\service.exe",
+        @"Downloads\RustDedicated_Data\data.bin"
     })
     {
         string path = Path.Combine(root, relative);

@@ -31,7 +31,8 @@ internal static class InspectionScope
                 string component = part.Split(':')[0].TrimEnd(' ', '.');
                 // Skip DOS short-name aliases rather than resolve them inside protected storage.
                 if (System.Text.RegularExpressions.Regex.IsMatch(component, @"~[0-9]+(?:\.|$)")) return false;
-                if (component.Equals("steamapps", StringComparison.OrdinalIgnoreCase) ||
+                if (component.StartsWith("EasyAntiCheat", StringComparison.OrdinalIgnoreCase) ||
+                    component.Equals("steamapps", StringComparison.OrdinalIgnoreCase) ||
                     component.Equals("252490", StringComparison.OrdinalIgnoreCase) ||
                     component.Equals("Facepunch Studios", StringComparison.OrdinalIgnoreCase) ||
                     component.Equals("Rust", StringComparison.OrdinalIgnoreCase) ||

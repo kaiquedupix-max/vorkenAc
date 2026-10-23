@@ -20,7 +20,6 @@ import {
   catalogWebTargetMatch,
   isArtifactProtectedFromLearning,
 } from "./detectionPolicyV4.js";
-import { initRemoteSupportDb, installRemoteSupport } from "./remoteSupport.js";
 import { initFleetDb, installFleet, clientReportVisibility } from "./serverFleet.js";
 import { initVorkenPlatform, installVorkenPlatform, backfillLegacyVorkenBans } from "./vorkenPlatform.js";
 import { startVorkenBot } from "./vorkenBot.js";
@@ -42,10 +41,6 @@ const agentBinaryPath = String(
 const agentBinaryUrl = String(
   process.env.AGENT_BINARY_URL ||
   "https://github.com/kaiquedupix-max/vorkenAc/releases/download/agent-latest/Vorken.Agent.exe"
-).trim();
-const remoteAdminBinaryUrl = String(
-  process.env.REMOTE_ADMIN_BINARY_URL ||
-  "https://github.com/kaiquedupix-max/vorkenAc/releases/download/agent-latest/Vorken.RemoteAdmin.exe"
 ).trim();
 const agentBinaryCacheMs = Math.max(
   15000,
@@ -8410,9 +8405,6 @@ app.get("/api/admin/me", requireAdmin, (_req, res) => {
   res.json({ authenticated: true });
 });
 
-app.get("/api/admin/remote-admin/download", requireAdmin, (_req, res) => {
-  res.redirect(302, remoteAdminBinaryUrl);
-});
 
 
 function integrationSecretMatches(req) {
@@ -9309,12 +9301,7 @@ async function loadSharedAnalysisReport(id, serverId = null) {
   if (reportResult.rows[0]) {
     rawAdminReport = decodeStoredRawReport(reportResult.rows[0]);
 
-    reportResult.rows[0].payload =
-      projectReportPayloadForAdmin({
-        ...rawAdminReport,
-        usbExecutionEvidence:
-          compactUsbExecutionEvidence(rawAdminReport),
-      });
+
 
     delete reportResult.rows[0].payload_raw;
     delete reportResult.rows[0].payload_encoding;
@@ -9347,6 +9334,12 @@ async function loadSharedAnalysisReport(id, serverId = null) {
        sf.id ASC`,
     [id]
   );
+
+  if (reportResult.rows[0]) {
+    reportResult.rows[0].payload = projectReportPayloadForAdmin({
+      ...rawAdminReport, usbExecutionEvidence: compactUsbExecutionEvidence(rawAdminReport),
+    }, findingsResult.rows);
+  }
 
   const aiFilteredResult = {
     rows: [],
@@ -10812,13 +10805,7 @@ ${cards || '<div class="finding">Nenhuma evidência publicada.</div>'}
 </main></body></html>`);
 });
 
-const remoteSupport = installRemoteSupport(app, {
-  pool,
-  getAnalysisByToken,
-  validToken,
-  publicUrl,
-  requireSiteAdmin: requireAdmin,
-});
+app.use(["/api/remote", "/api/agent/:token/remote", "/api/admin/remote-admins", "/api/admin/remote-admin/download", "/ws/remote"], (_req, res) => res.status(410).json({ error: "remote_support_removed" }));
 
 installFleet(app, { pool, requireAdmin });
 
@@ -10866,7 +10853,6 @@ app.get("*", (_req, res) => {
 
 initDb()
   .then(async () => {
-    await initRemoteSupportDb(pool);
     await initFleetDb(pool);
     await initVorkenPlatform(pool);
     const importedBans=await backfillLegacyVorkenBans(pool);
@@ -10875,7 +10861,6 @@ initDb()
     await backfillPreviouslyApprovedAnalyses();
 
     const server = http.createServer(app);
-    remoteSupport.attach(server);
     server.listen(port, "0.0.0.0", () => {
       console.log("Vorken web ouvindo na porta " + port);
     });

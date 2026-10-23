@@ -29,5 +29,6 @@ internal sealed class GuidedLogHost : UserControl
         SendMessage(_box.Handle, 0x00b6, IntPtr.Zero, (IntPtr)(Math.Clamp(value, 0, Math.Max(0, _bar.Total - _bar.Page)) - first));
         RefreshBar(this, EventArgs.Empty);
     }
+    [System.Reflection.Obfuscation(Exclude = true)]
     [DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr handle, uint message, IntPtr wParam, IntPtr lParam);
 }

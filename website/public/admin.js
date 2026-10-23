@@ -8,7 +8,6 @@ const dashboardView = document.getElementById("dashboardView");
 const logoutBtn = document.getElementById("logoutBtn");
 const analysesBody = document.getElementById("analysesBody");
 const rulesList = document.getElementById("rulesList");
-const remoteAdminsList = document.getElementById("remoteAdminsList");
 const reportCard = document.getElementById("reportCard");
 let currentReportId = null;
 let showTechnicalResult = false;
@@ -950,74 +949,6 @@ document.getElementById("ruleForm").addEventListener("submit", async (event) => 
     await loadRules();
   } catch (error) {
     alert(error.message);
-  }
-});
-
-document.getElementById("remoteAdminForm")?.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const form = event.currentTarget;
-  const message = document.getElementById("remoteAdminMessage");
-  const password = document.getElementById("remoteAdminPassword").value;
-  const confirmation = document.getElementById("remoteAdminPasswordConfirm").value;
-  message.className = "message hidden";
-
-  if (password !== confirmation) {
-    message.textContent = "As duas senhas precisam ser iguais.";
-    message.className = "message error";
-    return;
-  }
-
-  try {
-    await api("/api/admin/remote-admins", {
-      method: "POST",
-      body: JSON.stringify({
-        displayName: document.getElementById("remoteAdminDisplayName").value,
-        username: document.getElementById("remoteAdminUsername").value,
-        password,
-      }),
-    });
-    form.reset();
-    message.textContent = "Administrador criado. Ele já pode entrar no aplicativo.";
-    message.className = "message ok";
-    await loadRemoteAdmins();
-  } catch (error) {
-    message.textContent = error.message;
-    message.className = "message error";
-  }
-});
-
-document.getElementById("refreshRemoteAdminsBtn")?.addEventListener("click", loadRemoteAdmins);
-
-document.getElementById("remotePasswordCancel")?.addEventListener("click", () => {
-  document.getElementById("remotePasswordDialog")?.close();
-});
-
-document.getElementById("remotePasswordForm")?.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const dialog = document.getElementById("remotePasswordDialog");
-  const message = document.getElementById("remotePasswordMessage");
-  const password = document.getElementById("remotePasswordNew").value;
-  const confirmation = document.getElementById("remotePasswordConfirm").value;
-  const adminId = document.getElementById("remotePasswordAdminId").value;
-  message.className = "message hidden";
-
-  if (password !== confirmation) {
-    message.textContent = "As duas senhas precisam ser iguais.";
-    message.className = "message error";
-    return;
-  }
-
-  try {
-    await api("/api/admin/remote-admins/" + encodeURIComponent(adminId) + "/password", {
-      method: "POST",
-      body: JSON.stringify({ password }),
-    });
-    dialog.close();
-    event.currentTarget.reset();
-    await loadRemoteAdmins();
-  } catch (error) {
-    message.textContent = error.message;
-    message.className = "message error";
   }
 });
 
@@ -4325,64 +4256,8 @@ async function loadRules() {
   });
 }
 
-async function loadRemoteAdmins() {
-  if (!remoteAdminsList) return;
-  try {
-    const data = await api("/api/admin/remote-admins");
-    const admins = Array.isArray(data.admins) ? data.admins : [];
-    remoteAdminsList.innerHTML = admins.length
-      ? admins.map((admin) => {
-          const stateClass = !admin.enabled ? "disabled" : admin.online ? "online" : "";
-          const stateLabel = !admin.enabled ? "DESATIVADO" : admin.online ? "● ONLINE" : "○ OFFLINE";
-          return `
-            <div class="remote-admin-row ${admin.enabled ? "" : "is-disabled"}">
-              <div class="remote-admin-identity">
-                <strong>${escapeHtml(admin.displayName)}</strong>
-                <code>@${escapeHtml(admin.username)}</code>
-                <div class="remote-admin-meta">
-                  <span class="remote-admin-status ${stateClass}">${stateLabel}</span>
-                  <span class="muted">Criado em ${escapeHtml(formatDate(admin.createdAt))}</span>
-                </div>
-              </div>
-              <div class="remote-admin-actions">
-                <button class="button ghost remote-admin-password" type="button" data-id="${escapeHtml(admin.id)}" data-name="${escapeHtml(admin.displayName)}">Redefinir senha</button>
-                <button class="button ghost remote-admin-toggle" type="button" data-id="${escapeHtml(admin.id)}" data-enabled="${admin.enabled ? "true" : "false"}">${admin.enabled ? "Desativar" : "Ativar"}</button>
-              </div>
-            </div>`;
-        }).join("")
-      : '<div class="remote-admin-empty">Nenhum administrador cadastrado.</div>';
-
-    remoteAdminsList.querySelectorAll(".remote-admin-toggle").forEach((button) => {
-      button.addEventListener("click", async () => {
-        const disabling = button.dataset.enabled === "true";
-        if (disabling && !window.confirm("Desativar esta conta? Sessões remotas ativas desse administrador serão encerradas.")) return;
-        try {
-          await api("/api/admin/remote-admins/" + encodeURIComponent(button.dataset.id) + "/toggle", { method: "POST" });
-          await loadRemoteAdmins();
-        } catch (error) {
-          alert(error.message);
-        }
-      });
-    });
-
-    remoteAdminsList.querySelectorAll(".remote-admin-password").forEach((button) => {
-      button.addEventListener("click", () => {
-        const dialog = document.getElementById("remotePasswordDialog");
-        document.getElementById("remotePasswordForm").reset();
-        document.getElementById("remotePasswordAdminId").value = button.dataset.id || "";
-        document.getElementById("remotePasswordTarget").textContent =
-          "Conta: " + (button.dataset.name || "Administrador") + ". Sessões atuais serão encerradas após a alteração.";
-        document.getElementById("remotePasswordMessage").className = "message hidden";
-        dialog.showModal();
-      });
-    });
-  } catch (error) {
-    remoteAdminsList.innerHTML = '<div class="message error">' + escapeHtml(error.message) + '</div>';
-  }
-}
-
 async function refreshAll() {
-  await Promise.all([loadAnalyses(), loadRules(), loadRemoteAdmins()]);
+  await Promise.all([loadAnalyses(), loadRules()]);
 }
 
 
@@ -4396,7 +4271,6 @@ function switchAdminTab(name) {
     sessions: document.getElementById("sessionsPanel"),
     scanner: document.getElementById("scannerPanel"),
     players: document.getElementById("playersPanel"),
-    admins: document.getElementById("remoteAdminsPanel"),
     settings: document.getElementById("settingsPanel"),
   };
 
@@ -4442,7 +4316,6 @@ function setupVorkenAdminUi() {
     button.addEventListener("click", () => {
       const tab = button.dataset.adminTab || "sessions";
       switchAdminTab(tab);
-      if (tab === "admins") loadRemoteAdmins();
     });
   });
 
@@ -4481,10 +4354,10 @@ function setupVorkenAdminUi() {
         // REVISAR mostra somente a lista laranja.
         if (filter === "critical") {
           visible =
-            section.id === "criticalSection";
+            section.id === "criticalSection" || section.id === "reportOverview";
         } else if (filter === "medium") {
           visible =
-            section.id === "mediumSection";
+            section.id === "mediumSection" || section.id === "reportOverview";
         }
 
         section.classList.toggle(

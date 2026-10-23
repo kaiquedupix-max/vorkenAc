@@ -13,52 +13,6 @@ namespace Vorken.Agent;
 
 internal static class DeepForensicCollector
 {
-    public static List<ProcessCreationRecord> CollectProcessCreationEvents()
-    {
-        var result = new List<ProcessCreationRecord>();
-
-        foreach (string xml in QueryEvents(
-                     "Security",
-                     "*[System[(EventID=4688)]]",
-                     700,
-                     15000))
-        {
-            try
-            {
-                XDocument doc = XDocument.Parse(xml);
-                XNamespace ns = "http://schemas.microsoft.com/win/2004/08/events/event";
-                DateTime timeUtc = EventTime(doc, ns);
-
-                var data = EventData(doc, ns);
-
-                string processPath = GetData(data, "NewProcessName");
-                string parentPath = GetData(data, "ParentProcessName");
-
-                if (string.IsNullOrWhiteSpace(processPath))
-                    continue;
-
-                result.Add(new ProcessCreationRecord
-                {
-                    TimeCreatedUtc = timeUtc,
-                    ProcessPath = processPath,
-                    ProcessName = Path.GetFileName(processPath),
-                    ParentProcessPath = parentPath,
-                    ParentProcessName = Path.GetFileName(parentPath),
-                    ProcessPresent = SafeFileExists(processPath),
-                    DriveType = GetDriveType(processPath)
-                });
-            }
-            catch
-            {
-            }
-        }
-
-        return result
-            .OrderByDescending(x => x.TimeCreatedUtc)
-            .Take(700)
-            .ToList();
-    }
-
     public static List<ProcessTerminationRecord> CollectProcessTerminationEvents()
     {
         var result = new List<ProcessTerminationRecord>();
@@ -94,6 +48,8 @@ internal static class DeepForensicCollector
 
                 if (string.IsNullOrWhiteSpace(processPath))
                     continue;
+
+                if (InspectionScope.IsExcludedProcess(Path.GetFileName(processPath)) || !InspectionScope.CanInspectPath(processPath)) continue;
 
                 result.Add(new ProcessTerminationRecord
                 {
@@ -847,17 +803,6 @@ internal static class DeepForensicCollector
             (text ?? "")
                 .Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries)
                 .Take(count));
-}
-
-internal sealed class ProcessCreationRecord
-{
-    public DateTime TimeCreatedUtc { get; set; }
-    public string ProcessName { get; set; } = "";
-    public string ProcessPath { get; set; } = "";
-    public string ParentProcessName { get; set; } = "";
-    public string ParentProcessPath { get; set; } = "";
-    public bool ProcessPresent { get; set; }
-    public string DriveType { get; set; } = "";
 }
 
 internal sealed class ProcessTerminationRecord

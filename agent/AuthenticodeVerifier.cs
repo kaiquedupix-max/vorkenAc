@@ -140,6 +140,7 @@ internal static class AuthenticodeVerifier
         public IntPtr pSignatureSettings;
     }
 
+    [System.Reflection.Obfuscation(Exclude = true)]
     [DllImport(
         "wintrust.dll",
         ExactSpelling = true,

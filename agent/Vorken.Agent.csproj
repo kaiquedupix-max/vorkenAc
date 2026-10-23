@@ -32,10 +32,12 @@
   <ItemGroup>
     <EmbeddedResource Include="assets/ui-*.wav" />
     <EmbeddedResource Include="../brand/vorken-icon.png" LogicalName="Vorken.BrandMark.png" />
+    <PackageReference Include="System.Diagnostics.EventLog" Version="8.0.0" />
     <PackageReference Include="System.Management" Version="8.0.0" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.8" />
     <PackageReference Include="Prefetch" Version="2026.5.2" />
     <PackageReference Include="Amcache" Version="2026.5.3" />
     <PackageReference Include="AppCompatCache" Version="1.2.4" />
   </ItemGroup>
+  <Import Project="Obfuscation.targets" />
 </Project>

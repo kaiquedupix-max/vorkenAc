@@ -91,8 +91,6 @@ Ao aceitar, você declara que leu este texto, compreendeu o escopo da análise e
 7. TRANSPARÊNCIA DURANTE A SESSÃO
 O aplicativo exibirá o andamento da coleta e permanecerá aberto até a conclusão. Não feche a janela durante o processo, pois isso pode interromper a análise e gerar um resultado incompleto.
 
-7.1 SUPORTE REMOTO OPCIONAL
-O suporte remoto não começa junto com a análise. Cada sessão exige que você escolha um administrador, selecione entre somente tela ou tela com controle e confirme novamente a autorização. A tela pode exibir conteúdo pessoal que esteja aberto no computador; feche-o antes de transmitir. O Vorken não habilita transferência de arquivos, área de transferência ou acesso após o encerramento, e exibe um botão visível para parar a sessão imediatamente.
 
 8. RESPONSABILIDADE E CONTESTAÇÃO
 A decisão administrativa deve considerar o conjunto das evidências e o contexto da sessão. Caso você discorde do resultado, solicite à administração a revisão do relatório e das evidências utilizadas.
@@ -140,8 +138,6 @@ Al aceptar, declara que ha leído este texto, comprende el alcance del análisis
 7. TRANSPARENCIA DURANTE LA SESIÓN
 La aplicación mostrará el progreso de la recopilación y permanecerá abierta hasta finalizar. No cierre la ventana durante el proceso, ya que podría interrumpir el análisis y producir un resultado incompleto.
 
-7.1 SOPORTE REMOTO OPCIONAL
-El soporte remoto no comienza junto con el análisis. Cada sesión requiere elegir un administrador, seleccionar solo pantalla o pantalla con control y confirmar nuevamente la autorización. La pantalla puede mostrar contenido personal abierto; ciérrelo antes de transmitir. Vorken no permite transferencia de archivos, portapapeles ni acceso después de finalizar, y mantiene visible un botón para detener la sesión inmediatamente.
 
 8. RESPONSABILIDAD Y RECLAMACIÓN
 La decisión administrativa debe considerar el conjunto de evidencias y el contexto de la sesión. Si no está de acuerdo con el resultado, solicite a la administración una revisión del informe y de las evidencias utilizadas.
@@ -189,8 +185,6 @@ By accepting, you state that you have read this text, understand the scope of th
 7. SESSION TRANSPARENCY
 The application will display collection progress and remain open until completion. Do not close the window during the process, as this may interrupt the analysis and produce an incomplete result.
 
-7.1 OPTIONAL REMOTE SUPPORT
-Remote support does not start with the analysis. Each session requires you to choose an administrator, select screen only or screen with control, and confirm authorization again. The screen may expose personal content currently open on the computer; close it before sharing. Vorken does not enable file transfer, clipboard access or access after the session ends, and displays a visible button to stop the session immediately.
 
 8. RESPONSIBILITY AND APPEALS
 The administrative decision must consider all evidence and the session context. If you disagree with the result, ask the administration to review the report and the evidence used.

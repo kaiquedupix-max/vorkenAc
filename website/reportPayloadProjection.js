@@ -1,3 +1,5 @@
+import { buildProcessActivity } from "./processActivity.js";
+
 const DEFAULT_COLLECTION_LIMIT = 0;
 
 const COLLECTION_LIMITS = Object.freeze({
@@ -35,7 +37,7 @@ export function isUsbStorageDevice(item) {
   return /usbstor|mass storage|flash (?:disk|drive)|usb (?:disk|drive)|pendrive|thumb drive|disk&ven_|diskdrive|physicaldrive/.test(text);
 }
 
-export function projectReportPayloadForAdmin(payload) {
+export function projectReportPayloadForAdmin(payload, findings = []) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     return {
       uiCollectionCounts: {},
@@ -75,6 +77,7 @@ export function projectReportPayloadForAdmin(payload) {
     projectedItems += projected[key].length;
   }
 
+  projected.processActivity = buildProcessActivity(payload, findings);
   projected.uiCollectionCounts = counts;
   projected.uiProjection = {
     truncated: projectedItems < originalItems,

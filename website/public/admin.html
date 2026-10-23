@@ -39,7 +39,6 @@
       <a class="vorken-nav-button" href="/admin/clientes"><span>Clientes e servidores</span></a>
       <a class="vorken-nav-button" href="/admin/banimentos"><span>Banimentos</span></a>
       <button class="vorken-nav-button" data-admin-tab="players">♟<span>Jogadores online</span></button>
-      <button class="vorken-nav-button" data-admin-tab="admins">♙<span>Administradores</span></button>
       <button class="vorken-nav-button" data-admin-tab="settings">⚙<span>Configurações</span></button>
     </nav>
 
@@ -135,6 +134,8 @@
             </div>
 
             <div class="report-category-grid">
+              <button class="report-category-card" data-report-filter="processes"><span>PROCESSOS ABERTOS</span><strong id="activityOpenCount">0</strong></button>
+              <button class="report-category-card" data-report-filter="journal"><span>JOURNAL</span><strong id="activityJournalCount">0</strong></button>
               <button class="report-category-card active" data-report-filter="overview">
                 <span>VISÃO GERAL</span><strong>Todos</strong>
               </button>
@@ -162,7 +163,7 @@
             <div id="analysisProcessingBanner" class="message hidden"></div>
             <div id="usbSuspiciousBanner" class="message usb-suspicious-alert hidden"></div>
 
-            <section id="reportOverview" class="report-overview-grid">
+            <section id="reportOverview" class="report-overview-grid" data-report-group="overview critical medium history usb serial inventory">
               <div class="report-center-column">
                 <div id="reportMetrics" class="metric-grid report-summary-grid"></div>
 
@@ -239,6 +240,8 @@
             </section>
 
             <section class="report-deep-sections">
+<details class="report-section activity-section" data-report-group="processes"><summary>Processos abertos</summary><p id="activity-open-status" role="status"></p><p class="muted">Itens comuns são ocultados por assinatura e localização. A presença nesta lista não indica trapaça.</p><label>Pesquisar nome, caminho ou PID<input id="activity-open-search" type="search" placeholder="Pesquisar nesta lista"></label><div id="activity-open-list"></div><button type="button" id="activity-open-more" class="button ghost" hidden>Mostrar mais</button></details>
+<details class="report-section activity-section" data-report-group="journal"><summary>Journal · execuções desde a inicialização</summary><p id="activity-journal-status" role="status"></p><p class="muted">Itens comuns são ocultados por assinatura e localização. A presença nesta lista não indica trapaça.</p><label>Pesquisar nome, caminho ou PID<input id="activity-journal-search" type="search" placeholder="Pesquisar nesta lista"></label><div id="activity-journal-list"></div><button type="button" id="activity-journal-more" class="button ghost" hidden>Mostrar mais</button></details>
               <details class="report-section info-inventory" data-report-group="inventory">
                 <summary>
                   <span>Itens ignorados pelos filtros locais</span>
@@ -490,84 +493,9 @@
         </div>
       </section>
 
-      <section id="remoteAdminsPanel" class="vorken-tab-panel hidden settings-panel">
-        <div class="panel-heading">
-          <div class="eyebrow">SUPORTE REMOTO</div>
-          <h1>Administradores do aplicativo</h1>
-          <p>Crie contas individuais para quem poderá receber solicitações de tela e controle.</p>
-        </div>
-
-        <article class="card remote-admin-download-card">
-          <div class="remote-admin-app-identity">
-            <span class="remote-admin-app-logo"><img src="/vorken-logo.svg" alt="Logo Vorken"></span>
-            <div>
-              <div class="eyebrow">APLICATIVO OFICIAL</div>
-              <h2>Vorken Remote Admin</h2>
-              <p class="muted">Aplicativo Windows para receber transmissões, assistir análises e controlar sessões autorizadas.</p>
-            </div>
-          </div>
-          <a class="button primary remote-admin-download-button" href="/api/admin/remote-admin/download">⇩ Baixar Vorken Admin</a>
-        </article>
-
-        <div class="settings-grid remote-admin-settings-grid">
-          <article class="card remote-admin-create-card">
-            <div class="eyebrow">NOVA CONTA</div>
-            <h2>Criar administrador</h2>
-            <p class="muted">O usuário poderá entrar no aplicativo Vorken Remote Admin. Não existe senha padrão.</p>
-            <form id="remoteAdminForm">
-              <label>Nome exibido
-                <input id="remoteAdminDisplayName" maxlength="100" placeholder="Ex.: Kaique · Moderação" required>
-              </label>
-              <label>Usuário
-                <input id="remoteAdminUsername" maxlength="40" pattern="[A-Za-z0-9._-]{3,40}" placeholder="Ex.: kaique.admin" autocomplete="off" required>
-              </label>
-              <label>Senha inicial
-                <input id="remoteAdminPassword" type="password" minlength="12" maxlength="200" autocomplete="new-password" placeholder="Mínimo de 12 caracteres" required>
-              </label>
-              <label>Confirmar senha
-                <input id="remoteAdminPasswordConfirm" type="password" minlength="12" maxlength="200" autocomplete="new-password" required>
-              </label>
-              <button class="button primary" type="submit">Criar administrador</button>
-            </form>
-            <div id="remoteAdminMessage" class="message hidden"></div>
-          </article>
-
-          <article class="card remote-admin-list-card">
-            <div class="remote-admin-list-heading">
-              <div>
-                <div class="eyebrow">CONTAS CADASTRADAS</div>
-                <h2>Equipe disponível</h2>
-              </div>
-              <button id="refreshRemoteAdminsBtn" class="button ghost" type="button">↻ Atualizar</button>
-            </div>
-            <div id="remoteAdminsList" class="remote-admin-list">
-              <div class="message">Carregando administradores...</div>
-            </div>
-          </article>
-        </div>
-      </section>
     </section>
   </main>
 
-  <dialog id="remotePasswordDialog" class="gf-ban-dialog">
-    <form id="remotePasswordForm" class="gf-ban-dialog-card">
-      <div class="eyebrow">CREDENCIAL ADMINISTRATIVA</div>
-      <h2>Redefinir senha</h2>
-      <p id="remotePasswordTarget" class="muted"></p>
-      <input id="remotePasswordAdminId" type="hidden">
-      <label>Nova senha
-        <input id="remotePasswordNew" type="password" minlength="12" maxlength="200" autocomplete="new-password" required>
-      </label>
-      <label>Confirmar nova senha
-        <input id="remotePasswordConfirm" type="password" minlength="12" maxlength="200" autocomplete="new-password" required>
-      </label>
-      <div id="remotePasswordMessage" class="message hidden"></div>
-      <div class="gf-ban-dialog-actions">
-        <button id="remotePasswordCancel" class="button ghost" type="button">Cancelar</button>
-        <button class="button primary" type="submit">Salvar nova senha</button>
-      </div>
-    </form>
-  </dialog>
 
   <dialog id="banReasonDialog" class="gf-ban-dialog">
     <form method="dialog" class="gf-ban-dialog-card">
@@ -632,6 +560,8 @@
   <link rel="stylesheet" href="/evidence-inspector.css?v=20261015">
   <script src="/evidence-inspector.js?v=20261015"></script>
   <script src="/battle-metrics-ui.js?v=20261015" defer></script>
+  <link rel="stylesheet" href="/process-activity.css?v=20261023">
+  <script src="/process-activity-ui.js?v=20261023" defer></script>
   <script src="/admin.js?v=20261015-battlemetrics" defer></script>
   <script type="module" src="/operations.js?v=20261004"></script>
 </body>

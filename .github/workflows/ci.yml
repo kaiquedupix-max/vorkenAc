@@ -25,6 +25,12 @@ jobs:
       - name: Test inspection exclusions
         run: dotnet run --project .\tests\InspectionScope.Tests\InspectionScope.Tests.csproj -c Release
 
+      - name: Test process journal
+        run: dotnet run --project .\tests\ProcessJournal.Tests\ProcessJournal.Tests.csproj -c Release
+
+      - name: Restore pinned build tools
+        run: dotnet tool restore
+
       - name: Restore agent
         run: dotnet restore .\agent\Vorken.Agent.csproj -r win-x64
 
@@ -34,11 +40,8 @@ jobs:
       - name: Publish agent
         run: dotnet publish .\agent\Vorken.Agent.csproj -c Release -r win-x64 --self-contained true --no-restore -o .\publish
 
-      - name: Restore remote administration app
-        run: dotnet restore .\admin-app\Vorken.RemoteAdmin.csproj -r win-x64
-
-      - name: Build and publish remote administration app
-        run: dotnet publish .\admin-app\Vorken.RemoteAdmin.csproj -c Release -r win-x64 --self-contained true --no-restore -o .\publish-admin
+      - name: Validate protected report contract
+        run: dotnet run --project .\tests\PublishedAgent.Tests\PublishedAgent.Tests.csproj -c Release -- .\agent\obj\Release\net8.0-windows\win-x64\obfuscation\input\Vorken.Agent.dll .\agent\obj\Release\net8.0-windows\win-x64\obfuscation\output\Vorken.Agent.dll .\publish\Vorken.Agent.exe
 
       - name: Detect SignPath configuration
         id: signpath-config
@@ -150,8 +153,6 @@ jobs:
         run: |
           $hash = (Get-FileHash .\publish\Vorken.Agent.exe -Algorithm SHA256).Hash.ToLower()
           "$hash  Vorken.Agent.exe" | Set-Content -Encoding ascii .\publish\SHA256SUMS.txt
-          $adminHash = (Get-FileHash .\publish-admin\Vorken.RemoteAdmin.exe -Algorithm SHA256).Hash.ToLower()
-          "$adminHash  Vorken.RemoteAdmin.exe" | Set-Content -Encoding ascii .\publish-admin\REMOTE_ADMIN_SHA256SUMS.txt
 
       - uses: actions/upload-artifact@v4
         with:
@@ -159,15 +160,6 @@ jobs:
           path: |
             .\publish\Vorken.Agent.exe
             .\publish\SHA256SUMS.txt
-            .\LICENSE
-          retention-days: 30
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Vorken-RemoteAdmin-win-x64
-          path: |
-            .\publish-admin\Vorken.RemoteAdmin.exe
-            .\publish-admin\REMOTE_ADMIN_SHA256SUMS.txt
             .\LICENSE
           retention-days: 30
 
@@ -182,7 +174,7 @@ jobs:
           $repo = "${{ github.repository }}"
           $shortSha = "${{ github.sha }}".Substring(0, 7)
           $notes = @"
-          Build automático do agente e do aplicativo administrativo a partir do commit $shortSha.
+          Build automático do agente a partir do commit $shortSha.
 
           ## Code signing policy
           Free code signing provided by SignPath.io, certificate by SignPath Foundation.
@@ -209,8 +201,6 @@ jobs:
           $assets = @(
             ".\publish\Vorken.Agent.exe",
             ".\publish\SHA256SUMS.txt",
-            ".\publish-admin\Vorken.RemoteAdmin.exe",
-            ".\publish-admin\REMOTE_ADMIN_SHA256SUMS.txt",
             ".\LICENSE"
           )
 
@@ -221,8 +211,17 @@ jobs:
             }
           }
 
+          # Remove retired remote-control downloads from the rolling release.
+          $retired = @(gh release view $tag --repo $repo --json assets --jq '.assets[].name')
+          foreach ($oldAsset in @('Vorken.RemoteAdmin.exe', 'REMOTE_ADMIN_SHA256SUMS.txt')) {
+            if ($retired -contains $oldAsset) {
+              gh release delete-asset $tag $oldAsset --repo $repo --yes
+              if ($LASTEXITCODE -ne 0) { throw "Failed to remove retired asset: $oldAsset" }
+            }
+          }
+
           $publishedAssets = @(gh release view $tag --repo $repo --json assets --jq '.assets[].name')
-          foreach ($expectedAsset in @("Vorken.Agent.exe", "SHA256SUMS.txt", "Vorken.RemoteAdmin.exe", "REMOTE_ADMIN_SHA256SUMS.txt", "LICENSE")) {
+          foreach ($expectedAsset in @('Vorken.Agent.exe', 'SHA256SUMS.txt', 'LICENSE')) {
             if ($publishedAssets -notcontains $expectedAsset) {
               throw "Release asset was not published: $expectedAsset"
             }
@@ -247,8 +246,6 @@ jobs:
           files: |
             .\publish\Vorken.Agent.exe
             .\publish\SHA256SUMS.txt
-            .\publish-admin\Vorken.RemoteAdmin.exe
-            .\publish-admin\REMOTE_ADMIN_SHA256SUMS.txt
             .\LICENSE
 
   web:
@@ -269,7 +266,6 @@ jobs:
       - name: Check server syntax
         run: |
           node --check server.js
-          node --check remoteSupport.js
 
       - name: Check browser scripts
         run: |

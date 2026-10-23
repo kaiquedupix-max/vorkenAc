@@ -242,7 +242,7 @@ internal static class NetworkIndicatorCollector
                     try
                     {
                         processPath =
-                            process.MainModule?.FileName ?? "";
+                            ProcessMetadata.TryGetExecutablePath(process.Id) ?? "";
 
                         if (
                             !string.IsNullOrWhiteSpace(processPath) &&
@@ -252,6 +252,7 @@ internal static class NetworkIndicatorCollector
                                 AuthenticodeVerifier.Verify(
                                     processPath);
                         }
+                        if (!string.IsNullOrEmpty(processPath) && !InspectionScope.CanInspectPath(processPath)) continue;
                     }
                     catch
                     {
@@ -359,6 +360,7 @@ internal static class NetworkIndicatorCollector
         public uint dwOwningPid;
     }
 
+    [System.Reflection.Obfuscation(Exclude = true)]
     [DllImport(
         "iphlpapi.dll",
         SetLastError = true)]

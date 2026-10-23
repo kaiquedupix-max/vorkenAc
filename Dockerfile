@@ -2,6 +2,8 @@
 # Build the Windows agent from the same private checkout as the website.
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS agent-build
 WORKDIR /src
+COPY .config/ ./.config/
+RUN dotnet tool restore
 COPY agent/ ./agent/
 COPY brand/ ./brand/
 RUN dotnet publish ./agent/Vorken.Agent.csproj -c Release -r win-x64 --self-contained true -o /agent-output
