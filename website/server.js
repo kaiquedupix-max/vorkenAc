@@ -82,7 +82,7 @@ async function loadPublishedAgentBinary() {
     return agentBinaryCache;
   }
 
-  if (agentBinaryUrl) {
+  if (agentBinaryUrl && process.env.AGENT_BINARY_SOURCE !== "local") {
     try {
       const response = await fetch(agentBinaryUrl, {
         redirect: "follow",
@@ -133,7 +133,7 @@ async function loadPublishedAgentBinary() {
     agentBinaryCache = {
       fetchedAt: now,
       binary,
-      source: "local-fallback",
+      source: process.env.AGENT_BINARY_SOURCE === "local" ? "local-build" : "local-fallback",
     };
 
     return agentBinaryCache;

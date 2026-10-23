@@ -1,3 +1,5 @@
+using Directory = Vorken.Agent.ScanDirectory;
+using File = Vorken.Agent.ScanFile;
 using Microsoft.Win32;
 using System.Globalization;
 using System.Text.RegularExpressions;

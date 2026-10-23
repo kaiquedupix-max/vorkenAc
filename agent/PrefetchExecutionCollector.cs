@@ -1,3 +1,5 @@
+using Directory = Vorken.Agent.ScanDirectory;
+using File = Vorken.Agent.ScanFile;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -34,7 +36,7 @@ internal static class PrefetchExecutionCollector
             try
             {
                 using var stream = new FileStream(
-                    file,
+                    InspectionScope.RequirePath(file),
                     FileMode.Open,
                     FileAccess.Read,
                     FileShare.ReadWrite | FileShare.Delete);

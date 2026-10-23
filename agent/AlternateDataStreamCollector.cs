@@ -1,3 +1,4 @@
+using File = Vorken.Agent.ScanFile;
 using Microsoft.Win32.SafeHandles;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;

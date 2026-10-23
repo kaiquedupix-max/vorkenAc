@@ -1,3 +1,5 @@
+using Directory = Vorken.Agent.ScanDirectory;
+using File = Vorken.Agent.ScanFile;
 using System.Text.Json;
 
 namespace Vorken.Agent;

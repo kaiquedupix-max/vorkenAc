@@ -1,3 +1,4 @@
+using File = Vorken.Agent.ScanFile;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;

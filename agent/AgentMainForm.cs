@@ -1,3 +1,5 @@
+using Directory = Vorken.Agent.ScanDirectory;
+using File = Vorken.Agent.ScanFile;
 ﻿using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -1978,7 +1980,7 @@ internal sealed partial class AgentMainForm : Form
             await using (
                 var file =
                     new FileStream(
-                        destination,
+                        InspectionScope.RequirePath(destination),
                         FileMode.Create,
                         FileAccess.Write,
                         FileShare.Read))
@@ -1986,7 +1988,7 @@ internal sealed partial class AgentMainForm : Form
                 await response.Content.CopyToAsync(file);
             }
 
-            var info = new FileInfo(destination);
+            var info = new FileInfo(InspectionScope.RequirePath(destination));
 
             if (!info.Exists ||
                 info.Length <= 0 ||

@@ -22,6 +22,9 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
+      - name: Test inspection exclusions
+        run: dotnet run --project .\tests\InspectionScope.Tests\InspectionScope.Tests.csproj -c Release
+
       - name: Restore agent
         run: dotnet restore .\agent\Vorken.Agent.csproj -r win-x64
 

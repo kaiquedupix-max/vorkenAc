@@ -1,3 +1,5 @@
+using Directory = Vorken.Agent.ScanDirectory;
+using File = Vorken.Agent.ScanFile;
 using Microsoft.Data.Sqlite;
 using System.Globalization;
 
@@ -783,13 +785,13 @@ internal static class BrowserHistoryCollector
     private static void CopyOpenFile(string source, string destination)
     {
         using var input = new FileStream(
-            source,
+            InspectionScope.RequirePath(source),
             FileMode.Open,
             FileAccess.Read,
             FileShare.ReadWrite | FileShare.Delete);
 
         using var output = new FileStream(
-            destination,
+            InspectionScope.RequirePath(destination),
             FileMode.Create,
             FileAccess.Write,
             FileShare.None);

@@ -1,3 +1,4 @@
+using File = Vorken.Agent.ScanFile;
 using System.Diagnostics;
 using System.Net;
 using System.Runtime.InteropServices;
@@ -235,6 +236,8 @@ internal static class NetworkIndicatorCollector
 
                     processName =
                         process.ProcessName;
+
+                    if (InspectionScope.IsExcludedProcess(processName)) continue;
 
                     try
                     {

@@ -1,3 +1,5 @@
+using Directory = Vorken.Agent.ScanDirectory;
+using File = Vorken.Agent.ScanFile;
 namespace Vorken.Agent;
 
 internal static class ZoneIdentifierCollector
@@ -43,7 +45,7 @@ internal static class ZoneIdentifierCollector
 
                     using (
                         var stream = new FileStream(
-                            streamPath,
+                            InspectionScope.RequirePath(streamPath),
                             FileMode.Open,
                             FileAccess.Read,
                             FileShare.ReadWrite | FileShare.Delete))
@@ -129,12 +131,12 @@ internal static class ZoneIdentifierCollector
     {
         try
         {
-            FileInfo info = new(path);
+            FileInfo info = new(InspectionScope.RequirePath(path));
             if (info.Length > 250L * 1024L * 1024L)
                 return "";
 
             using FileStream stream = new(
-                path,
+                InspectionScope.RequirePath(path),
                 FileMode.Open,
                 FileAccess.Read,
                 FileShare.ReadWrite | FileShare.Delete);

@@ -1,3 +1,4 @@
+using File = Vorken.Agent.ScanFile;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -49,6 +50,8 @@ internal static class WindowProtectionCollector
                             Process.GetProcessById(checked((int)pid));
 
                         processName = process.ProcessName;
+
+                        if (InspectionScope.IsExcludedProcess(processName)) return true;
 
                         try
                         {

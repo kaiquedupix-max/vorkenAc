@@ -1,3 +1,5 @@
+using Directory = Vorken.Agent.ScanDirectory;
+using File = Vorken.Agent.ScanFile;
 namespace Vorken.Agent;
 
 internal static class CrashArtifactCollector
@@ -113,7 +115,7 @@ internal static class CrashArtifactCollector
                         ".mdmp",
                         StringComparison.OrdinalIgnoreCase))
                 {
-                    FileInfo info = new(file);
+                    FileInfo info = new(InspectionScope.RequirePath(file));
 
                     result.Add(new CrashArtifactRecord
                     {
@@ -198,7 +200,7 @@ internal static class CrashArtifactCollector
                 }
             }
 
-            FileInfo info = new(path);
+            FileInfo info = new(InspectionScope.RequirePath(path));
 
             result.Add(new CrashArtifactRecord
             {

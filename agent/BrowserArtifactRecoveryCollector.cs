@@ -1,3 +1,5 @@
+using Directory = Vorken.Agent.ScanDirectory;
+using File = Vorken.Agent.ScanFile;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -75,7 +77,7 @@ internal static class BrowserArtifactRecoveryCollector
         HashSet<string> seen)
     {
         using var stream = new FileStream(
-            artifact.Path,
+            InspectionScope.RequirePath(artifact.Path),
             FileMode.Open,
             FileAccess.Read,
             FileShare.ReadWrite | FileShare.Delete);
