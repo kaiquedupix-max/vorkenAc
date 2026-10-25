@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { lookupDiscordUser } from './discordUsers.js';
 import { notificationSettings, verificationSettings, canPublish } from './vorkenSettings.js';
 import fs from 'node:fs';
 import { createDiscordGuildCache } from './discordGuildCache.js';
@@ -634,6 +635,12 @@ export function installVorkenPlatform(app, { pool, publicUrl, requireAdmin, lear
     if(!r.rows[0]) fail(404,'Plano não encontrado.');
     await audit(pool,'owner','plan_updated',req.params.id,{priceCents,maxServers,enabled});res.json({ok:true});
   }));
+  app.get('/api/vorken/admin/discord-users/:id',requireAdmin,route(async(req,res)=>{
+    if(!snowflake(req.params.id))fail(400,'ID Discord inválido.');
+    const user=await lookupDiscordUser(req.params.id);
+    res.set('Cache-Control','no-store').json({user});
+  }));
+
   app.patch('/api/vorken/admin/customers/:id/quota',requireAdmin,csrf,route(async(req,res)=>{
     const count=req.body.maxServers;if(!uuid(req.params.id)||!Number.isInteger(count)||count<1||count>100)fail(400,'Informe de 1 a 100 servidores.');
     await tx(async db=>{

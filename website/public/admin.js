@@ -1415,6 +1415,27 @@ async function openReport(id, options = {}) {
   document.getElementById("reportTitle").textContent =
     "#" + analysis.id + " · " + analysis.label;
 
+  let discordInfo = document.getElementById("reportDiscordUser");
+  if (!discordInfo) {
+    discordInfo = document.createElement("p");
+    discordInfo.id = "reportDiscordUser";
+    document.getElementById("reportTitle").after(discordInfo);
+  }
+  const discordId = analysis.external_discord_user_id || scopedSessionState?.discord_user_id;
+  const discordUser = analysis.discord_user;
+  discordInfo.hidden = !discordId;
+  discordInfo.replaceChildren();
+  if (discordId && /^\d{16,20}$/.test(String(discordId))) {
+    const profile = document.createElement("a");
+    profile.href = "https://discord.com/users/" + discordId;
+    profile.target = "_blank";
+    profile.rel = "noopener noreferrer";
+    profile.textContent = discordUser
+      ? "Discord: " + discordUser.displayName + " (@" + discordUser.username + ") · " + discordId
+      : "Discord: " + discordId + " · Nome indisponível";
+    discordInfo.append(profile);
+  }
+
   currentClientReportReleased =
     analysis.client_report_released === true;
 

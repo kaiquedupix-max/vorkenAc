@@ -11,7 +11,7 @@ async function run(fn,b){if(b)b.disabled=true;try{await fn();}catch(e){notice(e.
 const licenseActive=c=>c.status==='active'&&c.license_status==='active'&&new Date(c.license_until)>new Date();
 function renderCustomers(){
   const q=$('search').value.toLowerCase();
-  $('customers').innerHTML=data.customers.filter(c=>(c.name+' '+c.discord_id).toLowerCase().includes(q)).map(c=>'<tr><td>'+esc(c.name)+'<small>'+esc(c.discord_id)+'<br>'+esc(c.email||'')+'</small></td><td>'+esc(c.status)+'</td><td><span class="badge '+(licenseActive(c)?'active':'inactive')+'">'+(licenseActive(c)?'Ativa':esc(c.license_status||'Sem licença'))+'</span></td><td>'+date(c.license_until)+'</td><td>'+'<label class="quota-label">Servidores liberados<input data-quota-input="'+c.id+'" aria-label="Servidores liberados para '+esc(c.name)+'" type="number" min="1" max="100" step="1" value="'+Number(c.max_servers||1)+'" '+(!c.license_status?'disabled':'')+'></label><button data-quota="'+c.id+'" '+(!c.license_status?'disabled':'')+'>Salvar limite</button>'+'</td><td><select data-period="'+c.id+'">'+data.plans.map(p=>'<option value="'+p.id+'">'+esc(p.name)+'</option>').join('')+'</select><div class="actions"><button data-grant="'+c.id+'">Conceder / renovar</button><button data-license="'+c.id+'" data-action="'+(c.license_status==='suspended'?'resume':'suspend')+'">'+(c.license_status==='suspended'?'Reativar':'Suspender')+'</button><button data-license="'+c.id+'" data-action="revoke" class="danger">Revogar</button><button data-customer="'+c.id+'" data-status="'+(c.status==='active'?'suspended':'active')+'">'+(c.status==='active'?'Bloquear cadastro':'Reativar cadastro')+'</button></div></td></tr>').join('')||'<tr><td colspan="6">Nenhum cliente encontrado.</td></tr>';
+  $('customers').innerHTML=data.customers.filter(c=>(c.name+' '+c.discord_id+' '+(c.discord_user?.username||'')).toLowerCase().includes(q)).map(c=>'<tr><td>'+esc(c.name)+'<small>'+esc(c.discord_id)+'<br><span data-discord-profile="'+esc(c.discord_id)+'">'+(c.discord_user?'@'+esc(c.discord_user.username)+' · '+esc(c.discord_user.displayName):'<button type="button" data-discord-lookup="'+esc(c.discord_id)+'">Consultar usuário Discord</button>')+'</span><br>'+esc(c.email||'')+'</small></td><td>'+esc(c.status)+'</td><td><span class="badge '+(licenseActive(c)?'active':'inactive')+'">'+(licenseActive(c)?'Ativa':esc(c.license_status||'Sem licença'))+'</span></td><td>'+date(c.license_until)+'</td><td>'+'<label class="quota-label">Servidores liberados<input data-quota-input="'+c.id+'" aria-label="Servidores liberados para '+esc(c.name)+'" type="number" min="1" max="100" step="1" value="'+Number(c.max_servers||1)+'" '+(!c.license_status?'disabled':'')+'></label><button data-quota="'+c.id+'" '+(!c.license_status?'disabled':'')+'>Salvar limite</button>'+'</td><td><select data-period="'+c.id+'">'+data.plans.map(p=>'<option value="'+p.id+'">'+esc(p.name)+'</option>').join('')+'</select><div class="actions"><button data-grant="'+c.id+'">Conceder / renovar</button><button data-license="'+c.id+'" data-action="'+(c.license_status==='suspended'?'resume':'suspend')+'">'+(c.license_status==='suspended'?'Reativar':'Suspender')+'</button><button data-license="'+c.id+'" data-action="revoke" class="danger">Revogar</button><button data-customer="'+c.id+'" data-status="'+(c.status==='active'?'suspended':'active')+'">'+(c.status==='active'?'Bloquear cadastro':'Reativar cadastro')+'</button></div></td></tr>').join('')||'<tr><td colspan="6">Nenhum cliente encontrado.</td></tr>';
 }
 async function refresh(){
   try{data=await api('/admin');}catch(e){if(e.status===401){$('login').hidden=false;$('admin-workspace').hidden=true;return;}throw e;}
@@ -52,3 +52,15 @@ document.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)r
 },b);});
 $('search').addEventListener('input',renderCustomers);$('refresh').addEventListener('click',()=>run(refresh,$('refresh')));
 refresh().catch(e=>notice(e.message,true));
+
+$('customers').addEventListener('click',async event=>{
+  const button=event.target.closest('[data-discord-lookup]');if(!button)return;
+  event.stopPropagation();
+  await run(async()=>{
+    const id=button.dataset.discordLookup;
+    const result=await api('/admin/discord-users/'+encodeURIComponent(id));
+    if(!result.user){notice('Nome do Discord indisponível. Confira a configuração do bot ou tente novamente em instantes.',true);return;}
+    for(const customer of data.customers)if(customer.discord_id===id)customer.discord_user=result.user;
+    renderCustomers();
+  },button);
+});

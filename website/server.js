@@ -1,4 +1,5 @@
 import express from "express";
+import { lookupDiscordUser } from "./discordUsers.js";
 import compression from "compression";
 import cookieParser from "cookie-parser";
 import crypto from "node:crypto";
@@ -9390,7 +9391,7 @@ async function loadSharedAnalysisReport(id, serverId = null) {
   };
 
   return {
-    analysis,
+    analysis: { ...analysis, discord_user: await lookupDiscordUser(analysis.external_discord_user_id) },
     report: reportResult.rows[0] || null,
     findings: findingsResult.rows.map((finding) => ({
       ...finding,
