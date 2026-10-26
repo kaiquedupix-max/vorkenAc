@@ -14,6 +14,6 @@ Execuções registradas nos logs Security (4688) e Sysmon (1), do início desta 
 
 ## Build
 
-Releases single-file passam pelo Obfuscar.GlobalTool 2.2.50 antes de empacotar, tanto no CI como no Docker. Nomes de propriedades, campos, interoperabilidade nativa, tipos gerados e formulário principal são preservados. Não há proteção contra depuração, packer ou driver. Mapeamentos ficam em obj e não são distribuídos. A ofuscação dificulta a leitura do executável, mas não impede engenharia reversa e não substitui manter segredos no servidor.
+Releases single-file passam pelo Obfuscar.GlobalTool 2.2.50 antes de empacotar, tanto no CI como no Docker. A proteção cobre o assembly completo do agente, incluindo formulário principal, métodos públicos/privados, campos, eventos, tipos gerados e ocultação de strings. Nomes de propriedades do contrato JSON, tipos anônimos e exceções explícitas de interoperabilidade são preservados para compatibilidade. Não há proteção contra depuração, packer ou driver. Mapeamentos ficam em obj e não são distribuídos. A ofuscação dificulta a leitura do executável, mas não impede engenharia reversa e não substitui manter segredos no servidor. Bibliotecas externas, código entregue ao navegador e o plugin C# entregue ao servidor Rust não recebem essa transformação do assembly do agente.
 
 A validação usa diretórios temporários e eventos sintéticos: não inicia coleta no computador nem abre o jogo. As exclusões não constituem promessa de ausência de banimento por qualquer anticheat.

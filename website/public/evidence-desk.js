@@ -106,7 +106,7 @@
     const select=e.target.closest('[data-select-client]');
     if(select){selectedClientId=select.dataset.selectClient;renderFleet();document.querySelector('[data-admin-tab="sessions"]').click();}
     const unban=e.target.closest('[data-unban-steam]');
-    if(unban && confirm(`Desbanir ${unban.dataset.unbanSteam} de todos os servidores deste cliente?`)){
+    if(unban && !unban.disabled){
       unban.disabled=true;
       try {const result=await request('/api/admin/fleet/unban',{clientId:Number(unban.dataset.unbanClient),steamId:unban.dataset.unbanSteam});toast(result.message);await loadBans();}
       catch(error){toast(error.message,true);unban.disabled=false;}

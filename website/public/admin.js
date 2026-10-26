@@ -2,7 +2,22 @@ const scopedReport=new URLSearchParams(location.search).get('session');
 const scopedServer=new URLSearchParams(location.search).get('server');
 const scopedOwner=new URLSearchParams(location.search).get('owner')==='1';
 let scopedSessionState=null;
+let currentReversal=null;
 const scopedBase=()=>scopedServer?'/api/vorken/'+(scopedOwner?'admin/operations':'operations')+'/'+encodeURIComponent(scopedServer)+'/sessions/'+encodeURIComponent(scopedReport):'/api/vorken/sessions/'+encodeURIComponent(scopedReport);
+document.getElementById('gfUnbanBtn')?.addEventListener('click',async()=>{
+ const button=document.getElementById('gfUnbanBtn');
+ const reversal=scopedReport?scopedSessionState?.reversal:currentReversal;
+ if(!reversal?.allowed)return;
+ button.disabled=true;
+ try{
+  const url=scopedReport?scopedBase()+'/unban':'/api/vorken/admin/bans/'+encodeURIComponent(reversal.banId)+'/reverse';
+  const response=await fetch(url,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-Vorken-Request':'portal'},body:'{}'});
+  const result=await response.json();if(!response.ok)throw new Error(result.message||'Não foi possível desbanir.');
+  await openReportSafe(currentReportId,{force:true});
+  document.getElementById('gfUnbanStatus').textContent=result.message;
+ }catch(error){document.getElementById('gfUnbanStatus').textContent=error.message;}
+ finally{button.disabled=false;}
+});
 const loginView = document.getElementById("loginView");
 const dashboardView = document.getElementById("dashboardView");
 const logoutBtn = document.getElementById("logoutBtn");
@@ -10,6 +25,13 @@ const analysesBody = document.getElementById("analysesBody");
 const rulesList = document.getElementById("rulesList");
 const reportCard = document.getElementById("reportCard");
 let currentReportId = null;
+let reversalPollInFlight=false;
+setInterval(async()=>{
+ const reversal=scopedReport?scopedSessionState?.reversal:currentReversal;
+ if(document.hidden||reversalPollInFlight||!currentReportId||!reversal?.commands?.some(c=>c.status==='pending'))return;
+ reversalPollInFlight=true;
+ try{await openReportSafe(currentReportId,{force:true});}catch{}finally{reversalPollInFlight=false;}
+},10000);
 let showTechnicalResult = false;
 let currentClientReportReleased = false;
 let currentGuerraFriaLinked = false;
@@ -1526,6 +1548,19 @@ async function openReport(id, options = {}) {
     gfReleaseBtn.classList.toggle("hidden", !currentGuerraFriaLinked);
     gfReleaseBtn.disabled = decisionLocked;
   }
+  currentReversal=null;
+  if(!scopedReport){
+    try{const response=await fetch('/api/vorken/admin/analyses/'+encodeURIComponent(analysis.id)+'/reversal');if(response.ok)currentReversal=await response.json();}catch{}
+  }
+  const reversal=scopedReport?scopedSessionState?.reversal:currentReversal;
+  const unbanButton=document.getElementById('gfUnbanBtn');
+  if(unbanButton){
+    unbanButton.classList.toggle('hidden',!reversal?.allowed);
+    unbanButton.disabled=!!reversal?.requested && !(reversal.commands||[]).some(c=>c.status==='failed');
+    unbanButton.textContent=reversal?.requested?'Tentar desbanimento novamente':'Desbanir jogador';
+  }
+  const unbanStatus=document.getElementById('gfUnbanStatus');
+  if(unbanStatus)unbanStatus.textContent=reversal?.requested?(reversal.commands||[]).map(c=>({pending:'Aguardando confirmação do plugin',applied:'Desbanimento confirmado no Rust',failed:'Falha no desbanimento: '+(c.result||'tente novamente')})[c.status]||c.status).join(' · '):'';
 
   const gfTrustAllBtn =
     document.getElementById("gfTrustAllBtn");

@@ -242,8 +242,8 @@ if (!source.includes('private void SetVorkenBan(')) {
 
         private void Init()`);
 }
-if (!source.includes('public string sourceSteamId, sourcePlayerName;'))
-  source = source.replace('        private class BridgeEvent\n        {', '        private class BridgeEvent\n        {\n            public string sourceSteamId, sourcePlayerName;\n            public int associationDays;');
+if (!/private class BridgeEvent\s*\{[^}]*public string sourceSteamId, sourcePlayerName;/.test(source))
+  source = source.replace(/(private class BridgeEvent\s*\{)/, '$1\n            public string sourceSteamId, sourcePlayerName;\n            public int associationDays;');
 // The central ban helper now announces all six direct-ban paths exactly once.
 source = source.replaceAll('AnnounceBridge("deny", name);', '')
   .replace('AnnounceBridge(command.action, name);', 'if (command.action == "approve") AnnounceBridge("approve", name);');
@@ -278,6 +278,10 @@ if(!source.includes('command.action == "unban"')){
   source=source.replace('            public bool detachedSession;','            public string[] expectedReasons;\n            public bool detachedSession;');
   source=source.replace('                    if (!bridgeActive) { ReleaseBridgeSessions(); return; }',
     '                    if (!bridgeActive) { if (data.commands != null) foreach (BridgeCommand cleanup in data.commands) if (cleanup.action == "unban") ApplyBridgeCommand(cleanup); ReleaseBridgeSessions(); return; }');
+}
+if(!source.includes('[VORKEN] DESBANIMENTO')){
+  source=source.replace('                        ServerUsers.Remove(steamId);\n                        ServerUsers.Save();',
+    '                        ServerUsers.Remove(steamId);\n                        ServerUsers.Save();\n                        if (bridgeNotifications.rustBans) Server.Broadcast("<color=#38E0B0>[VORKEN] DESBANIMENTO</color> Jogador " + steamId + " desbanido pela administracao.");');
 }
 source=source.replace(/\[Info\("Vorken", "Kaique", "2\.0\.\d+"\)\]/,'[Info("Vorken", "Kaique", "2.0.11")]')
   .replace(/version = "2\.0\.\d+"/g,'version = "2.0.11"');

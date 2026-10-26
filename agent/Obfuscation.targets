@@ -14,20 +14,18 @@
       <_ObfuscationConfig>&lt;Obfuscator&gt;
 &lt;Var name="InPath" value="$(_ObfuscationInput)" /&gt;
 &lt;Var name="OutPath" value="$(_ObfuscationOutput)" /&gt;
-&lt;Var name="KeepPublicApi" value="true" /&gt;
+&lt;Var name="KeepPublicApi" value="false" /&gt;
 &lt;Var name="HidePrivateApi" value="true" /&gt;
-&lt;Var name="HideStrings" value="false" /&gt;
+&lt;Var name="HideStrings" value="true" /&gt;
 &lt;Var name="RenameProperties" value="false" /&gt;
-&lt;Var name="RenameEvents" value="false" /&gt;
-&lt;Var name="RenameFields" value="false" /&gt;
+&lt;Var name="RenameEvents" value="true" /&gt;
+&lt;Var name="RenameFields" value="true" /&gt;
 &lt;Var name="UseUnicodeNames" value="false" /&gt;
-&lt;Var name="SkipGenerated" value="true" /&gt;
-&lt;Var name="OptimizeMethods" value="false" /&gt;
+&lt;Var name="SkipGenerated" value="false" /&gt;
+&lt;Var name="OptimizeMethods" value="true" /&gt;
 &lt;Var name="SuppressIldasm" value="false" /&gt;
 &lt;Module file="$(_ObfuscationInput)/$(TargetFileName)"&gt;
 &lt;SkipProperty type="*" name="*" /&gt;
-&lt;SkipField type="*" name="*" /&gt;
-&lt;SkipType name="Vorken.Agent.AgentMainForm*" skipMethods="true" skipFields="true" skipProperties="true" skipEvents="true" /&gt;
 &lt;SkipType name="^.*AnonymousType.*" skipMethods="true" skipFields="true" skipProperties="true" /&gt;
 &lt;/Module&gt;
 &lt;/Obfuscator&gt;</_ObfuscationConfig>

@@ -411,7 +411,7 @@ test('platform routes isolate customers, confirm decisions and activate payments
     const endpoint='/admin/bans/'+ban+'/reverse';
     assert.equal((await request(endpoint,{body:{reason:'Erro revisado'}})).status,401);
     assert.equal((await request(endpoint,{owner:true,origin:'https://evil.test',body:{reason:'Erro revisado'}})).status,403);
-    assert.equal((await request(endpoint,{owner:true,body:{reason:'x'}})).status,400);
+    assert.equal((await request(endpoint,{owner:true,body:{}})).status,409);
     assert.equal((await request(endpoint,{owner:true,body:{reason:'Erro revisado'}})).status,409);
     await pool.query("UPDATE vorken_servers SET plugin_version='2.0.11' WHERE id=$1",[s1]);
     assert.equal((await request(endpoint,{owner:true,body:{reason:'Erro revisado'}})).status,200);
@@ -435,6 +435,35 @@ test('platform routes isolate customers, confirm decisions and activate payments
     assert.equal((await pool.query('SELECT status FROM vorken_commands WHERE id=$1',[commands[1].id])).rows[0].status,'applied');
     const listing=await request('/admin/bans',{owner:true});assert.equal(listing.status,200);
     assert.equal(listing.data.bans.find(b=>b.id===ban).reversal_commands[0].status,'applied');
+  });
+  await t.test('customer unbans from analysis without reason, includes associations and confirms notifications once',async()=>{
+    const principal=crypto.randomUUID(),associated=crypto.randomUUID(),foreign=crypto.randomUUID();
+    const steam=event.steamId,teammate='76561198000000991';
+    await pool.query(`INSERT INTO vorken_bans(id,server_id,steam_id,reason,evidence,network_eligible) VALUES($1,$2,$3,'Principal revisado','[]',TRUE)`,[principal,s1,steam]);
+    await pool.query(`INSERT INTO vorken_bans(id,server_id,steam_id,reason,evidence,network_eligible,kind,source_steam_id) VALUES($1,$2,$3,'Associado revisado','[]',TRUE,'association',$4)`,[associated,s1,teammate,steam]);
+    await pool.query(`INSERT INTO vorken_bans(id,server_id,steam_id,reason,evidence,network_eligible,kind,source_steam_id) VALUES($1,$2,$3,'Outro cliente','[]',TRUE,'association',$4)`,[foreign,s2,teammate,steam]);
+    const endpoint='/sessions/'+event.sessionId+'/unban';
+    assert.equal((await request(endpoint,{customerId:c2,body:{}})).status,404);
+    assert.equal((await request('/operations/'+s2+'/sessions/'+event.sessionId+'/unban',{body:{}})).status,404);
+    assert.equal((await request(endpoint,{origin:'https://evil.test',body:{}})).status,403);
+    const report=await request('/sessions/'+event.sessionId+'/report');assert.equal(report.data.session.reversal.allowed,true);
+    const adminStatus=await request('/admin/analyses/'+report.data.session.analysis_id+'/reversal',{owner:true});assert.equal(adminStatus.data.banId,principal);
+    assert.equal((await request(endpoint,{body:{}})).status,200);
+    assert.equal((await request(endpoint,{body:{}})).status,200);
+    const commands=(await pool.query('SELECT * FROM vorken_commands WHERE reversal_ban_id=$1',[principal])).rows;
+    assert.equal(commands.length,2);assert.deepEqual(new Set(commands.map(c=>c.steam_id)),new Set([steam,teammate]));
+    assert.equal((await pool.query('SELECT active FROM vorken_bans WHERE id=$1',[associated])).rows[0].active,false);
+    assert.equal((await pool.query('SELECT active FROM vorken_bans WHERE id=$1',[foreign])).rows[0].active,true);
+    const teammateCommand=commands.find(c=>c.steam_id===teammate);
+    await request('/plugin/sync',{token:token1,body:{version:'2.0.11',receipts:[{id:teammateCommand.id,ok:false,result:'Falha temporária'}]}});
+    assert.equal((await request(endpoint,{body:{}})).status,200);
+    const retried=(await pool.query("SELECT * FROM vorken_commands WHERE reversal_ban_id=$1 AND status='pending'",[principal])).rows;
+    assert.equal(retried.length,2);assert.equal(retried.filter(c=>c.steam_id===teammate).length,1);
+    const receipts=retried.map(c=>({id:c.id,ok:true,result:'Desbanido'}));
+    for(let i=0;i<2;i++)await request('/plugin/sync',{token:token1,body:{version:'2.0.11',receipts}});
+    const notices=(await pool.query("SELECT * FROM vorken_notices WHERE kind='command' AND payload->>'action'='unban' AND payload->>'steamId'=$1",[teammate])).rows;
+    assert.equal(notices.length,2);assert.equal(notices.filter(n=>n.payload.ok).length,1);
+    const updated=await request('/sessions/'+event.sessionId+'/report');assert(updated.data.session.reversal.commands.every(c=>c.status==='applied'));
   });
   await t.test('signed Mercado Pago payment validates price and cannot grant twice',async()=>{
     const checkout=await request('/checkout',{body:{planId:'trimestral'}});assert.equal(checkout.status,200);

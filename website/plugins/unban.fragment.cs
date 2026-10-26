@@ -7,6 +7,7 @@
                             throw new Exception("Ban atual difere do registro Vorken. Revise manualmente; nenhuma alteracao feita.");
                         ServerUsers.Remove(steamId);
                         ServerUsers.Save();
+                        if (bridgeNotifications.rustBans) Server.Broadcast("<color=#38E0B0>[VORKEN] DESBANIMENTO</color> Jogador " + steamId + " desbanido pela administracao.");
                     }
                     receipt.ok = true;
                     receipt.result = "Reversao confirmada no Rust. Historico preservado no Vorken.";

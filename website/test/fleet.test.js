@@ -100,7 +100,10 @@ test('fleet end-to-end: quotas, tenant isolation, evidence, retries, association
   assert.equal(expired.bans.some(x=>x.steam_id===mate||x.steam_id===fifth),false);
   assert.equal(expired.bans.some(x=>x.steam_id===player),true);
   await api('/api/admin/fleet/unban',{clientId:a.id,steamId:player});
-  for(const s of [s1,s2,s3])assert.equal((await sync(s.token)).data.bans.some(x=>x.steam_id===player),false);
+  for(const s of [s1,s2,s3]){
+    const bans=(await sync(s.token)).data.bans;
+    assert.equal(bans.some(x=>x.steam_id===player||x.source_steam_id===player),false);
+  }
   await sync(s2.token,{events:[{id:'test-native-unban-0003',type:'unban',steamId:third}]});
   assert.equal((await sync(s1.token)).data.bans.some(x=>x.steam_id===third),false);
   fleet=(await api('/api/admin/fleet')).data;

@@ -12,6 +12,9 @@ var context=new AssemblyLoadContext("published-agent",true);
 context.Resolving+=(ctx,name)=>{string candidate=Path.Combine(Path.GetDirectoryName(input)!,name.Name+".dll");return File.Exists(candidate)?ctx.LoadFromAssemblyPath(candidate):null;};
 var assembly=context.LoadFromAssemblyPath(output);
 var types=assembly.GetTypes();
+foreach(string name in new[]{"Program","AgentMainForm","ProcessJournalCollector","InspectionScope"})
+ if(assembly.GetType("Vorken.Agent."+name)!=null)throw new Exception("Implementation type name was not obfuscated: "+name);
+if(types.SelectMany(t=>t.GetFields(BindingFlags.Static|BindingFlags.NonPublic|BindingFlags.Public)).Any(f=>f.Name=="RegisteredRustRoots"))throw new Exception("Private field names were not obfuscated");
 var report=types.Single(t=>t.GetProperty("ProcessJournal")!=null&&t.GetProperty("Processes")!=null);
 var instance=Activator.CreateInstance(report,true)!;
 var json=JsonSerializer.Serialize(instance,report,new JsonSerializerOptions{PropertyNamingPolicy=JsonNamingPolicy.CamelCase});
@@ -19,7 +22,7 @@ if(JsonSerializer.Deserialize(json,report,new JsonSerializerOptions{PropertyNami
 using var doc=JsonDocument.Parse(json);
 if(doc.RootElement.GetProperty("processJournal").GetProperty("events").GetArrayLength()!=0)throw new Exception("Unexpected default journal");
 if(doc.RootElement.GetProperty("processes").GetArrayLength()!=0)throw new Exception("Unexpected default processes");
-var scope=types.Single(t=>t.GetMethods(BindingFlags.Static|BindingFlags.Public|BindingFlags.NonPublic).Any(m=>m.GetParameters().Length==1&&m.GetParameters()[0].ParameterType==typeof(string)&&m.ReturnType==typeof(bool)) && t.GetFields(BindingFlags.Static|BindingFlags.NonPublic).Any(f=>f.Name=="RegisteredRustRoots"));
+var scope=types.Single(t=>t.GetMethods(BindingFlags.Static|BindingFlags.Public|BindingFlags.NonPublic).Any(m=>m.GetParameters().Length==1&&m.GetParameters()[0].ParameterType==typeof(string)&&m.ReturnType==typeof(bool)) && t.GetFields(BindingFlags.Static|BindingFlags.NonPublic).Any(f=>f.FieldType==typeof(Lazy<string[]>)));
 var excluded=scope.GetMethods(BindingFlags.Static|BindingFlags.Public|BindingFlags.NonPublic).Where(m=>m.ReturnType==typeof(bool)&&m.GetParameters().Length==1&&m.GetParameters()[0].ParameterType==typeof(string));
 if(!excluded.Any(m=>(bool)m.Invoke(null,new object[]{"RustClient.exe"})! && !(bool)m.Invoke(null,new object[]{"ordinary-app.exe"})!))throw new Exception("Game exclusion failed after obfuscation");
 if(args.Length>2 && File.ReadAllBytes(Path.GetFullPath(args[2])).AsSpan().IndexOf(File.ReadAllBytes(output))<0)throw new Exception("Published executable does not contain the obfuscated assembly");

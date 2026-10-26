@@ -19,9 +19,7 @@ get('bans').onclick=async e=>{
  if(reverse){
    const b=rows[Number(reverse.dataset.reverse)];
    if(b.reversed_at&&!(b.reversal_commands||[]).some(c=>c.status==='failed')){await load();return;}
-   if(!confirm('Reverter os bans Vorken de '+b.steam_id+' nos servidores deste cliente? O histórico será preservado. Bans de outros clientes não serão alterados.'))return;
-   const reason=prompt('Motivo da reversão (mínimo 5 caracteres):');
-   if(!reason||reason.trim().length<5)return;
+   const reason='Desbanimento solicitado no painel.';
    reverse.disabled=true;
    try{const response=await fetch('/api/vorken/admin/bans/'+encodeURIComponent(b.id)+'/reverse',{method:'POST',headers:{'Content-Type':'application/json','X-Vorken-Request':'portal'},body:JSON.stringify({reason})});const result=await response.json();if(!response.ok)throw new Error(result.message||'Não foi possível reverter.');await load();get('status').textContent=result.message;}
    catch(error){get('status').textContent=error.message;}finally{reverse.disabled=false;}

@@ -570,7 +570,7 @@ export async function startVorkenBot(platform){
           const channel=await client.channels.fetch(n.alerts_channel_id).catch(()=>null);
           if(!channel?.isSendable())continue;
           if(n.kind==='command'){
-            const embed=new EmbedBuilder().setColor(p.ok?0x2bf0c9:0xe53935).setTitle(p.ok?'✅ Verificação iniciada':'⚠️ Verificação não iniciada')
+            const embed=new EmbedBuilder().setColor(p.ok?0x2bf0c9:0xe53935).setTitle(p.action==='unban'?(p.ok?'✅ Desbanimento confirmado':'⚠️ Falha no desbanimento'):(p.ok?'✅ Verificação iniciada':'⚠️ Verificação não iniciada'))
               .addFields({name:'Servidor',value:clean(p.serverName,100)||'—',inline:true},{name:'SteamID',value:clean(p.steamId,32)||'—',inline:true},{name:'Resultado',value:clean(p.result,500)||'—'})
               .setFooter({text:'Vorken Scanner'}).setTimestamp();
             await channel.send({embeds:[embed],allowedMentions:noMentions});

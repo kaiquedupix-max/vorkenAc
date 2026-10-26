@@ -8,4 +8,5 @@ website/agent-build/
 *.user
 *.suo
 *.pdb
+artifacts/
 *.zip

@@ -116,7 +116,7 @@ async function addBan(db, client, input, teams) {
 
 async function revoke(db, clientId, steamId) {
   if (!STEAM.test(String(steamId))) throw fault(400, 'SteamID64 inválido.');
-  const result = await db.query('UPDATE fleet_bans SET revoked_at=NOW() WHERE client_id=$1 AND steam_id=$2 AND revoked_at IS NULL RETURNING id', [clientId, steamId]);
+  const result = await db.query("UPDATE fleet_bans SET revoked_at=NOW() WHERE client_id=$1 AND (steam_id=$2 OR (kind='association' AND source_steam_id=$2)) AND revoked_at IS NULL RETURNING id", [clientId, steamId]);
   if (result.rows.length) await db.query('UPDATE fleet_clients SET revision=revision+1 WHERE id=$1', [clientId]);
   return result.rows.length;
 }
