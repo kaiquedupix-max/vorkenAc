@@ -35,7 +35,9 @@ export function activityRelevance(item, knownPaths = new Set()) {
 }
 
 export function buildProcessActivity(payload = {}, findings = []) {
-  const systemDirectory=normal(payload.processJournal?.systemDirectory).replace(/\\+$/,'');
+  // Older agents did not report the OS directory. Preserve the conventional
+  // Windows installation path as a compatibility fallback, never a substring match.
+  const systemDirectory=normal(payload.processJournal?.systemDirectory || payload.systemDirectory || 'C:\\Windows\\System32').replace(/\\+$/,'');
   const isRealSystem32=row=>/^[a-z]:\\/.test(systemDirectory) && !pathOf(row).split('\\').some(part=>part==='.'||part==='..') &&
     normal(pathOf(row)).startsWith(systemDirectory+'\\');
   const knownPaths = new Set(array(findings).filter(x => ["critical", "high", "medium"].includes(x.severity)).flatMap(x => [x.artifact_value, x.evidence?.path, x.evidence?.processPath, x.evidence?.fullPath]).filter(x => typeof x === "string" && /[\\/]/.test(x)).map(normal));

@@ -23,9 +23,9 @@ test('Journal enforces this boot window and discloses source limitations',()=>{
  assert.equal(result.journal.items.length,1);assert.equal(result.journal.coverage,'limited');
  assert.equal(buildProcessActivity({processCreationEvents:[row('2026-10-23T11:00:00Z')]}).journal.coverage,'legacy');
 });
-test('projection retains all relevant rows and correlation overrides common suppression',()=>{
+test('projection retains application rows while System32 stays hidden even with correlated findings',()=>{
  const processes=Array.from({length:80},(_,pid)=>({pid,path:'C:\\Tools\\app'+pid+'.exe'}));
  assert.equal(projectReportPayloadForAdmin({processes}).processActivity.open.items.length,80);
  const item={name:'svchost.exe',path:'C:\\Windows\\System32\\svchost.exe',signed:true,signerSubject:'Microsoft Corporation'};
- assert.equal(buildProcessActivity({processes:[item]},[{severity:'high',artifact_value:item.path}]).open.items.length,1);
+ assert.equal(buildProcessActivity({processes:[item]},[{severity:'high',artifact_value:item.path}]).open.items.length,0);
 });

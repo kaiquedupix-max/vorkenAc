@@ -49,5 +49,12 @@ test('System32 filtering uses the directory reported by Windows, independent of 
   {path:'D:\\OS\\System32\\..\\Other\\app.exe'}];
  const result=buildProcessActivity({processJournal:{systemDirectory:'D:\\OS\\System32'},processes});
  assert.equal(result.open.commonCount,2);assert.equal(result.open.items.length,3);
- assert.equal(buildProcessActivity({processes:[{path:'C:\\Windows\\System32\\WebTouch.exe'}]}).open.items.length,1);
+ assert.equal(buildProcessActivity({processes:[{path:'C:\\Windows\\System32\\WebTouch.exe'}]}).open.items.length,0);
+});
+test('legacy reports hide unsigned System32 processes from snapshots and both Journal periods',()=>{
+ const events=['conhost.exe','wevtutil.exe'].map((name,index)=>({processPath:'C:\\Windows\\System32\\'+name,processId:String(index+1),eventId:5,timeCreatedUtc:'2026-10-26T11:00:00Z',signed:false}));
+ const result=buildProcessActivity({processes:events.map(row=>({path:row.processPath,pid:row.processId,signed:false})),processJournal:{bootTimeUtc:boot,capturedAtUtc:captured,collectionScope:'retained-history',events}});
+ assert.equal(result.open.items.length,0);assert.equal(result.journal.items.length,0);assert.equal(result.journal.sessions.length,0);
+ const copies=buildProcessActivity({processes:[{path:'C:\\Users\\Player\\Windows\\System32\\conhost.exe'},{path:'C:\\Windows\\System32-copy\\wevtutil.exe'}]});
+ assert.equal(copies.open.items.length,2);
 });
