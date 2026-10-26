@@ -243,7 +243,7 @@
 
             <section class="report-deep-sections">
 <details class="report-section activity-section" data-report-group="processes"><summary>Processos abertos</summary><p id="activity-open-status" role="status"></p><p class="muted">Itens comuns são ocultados por assinatura e localização. A presença nesta lista não indica trapaça.</p><label>Pesquisar nome, caminho ou PID<input id="activity-open-search" type="search" placeholder="Pesquisar nesta lista"></label><div id="activity-open-list"></div><button type="button" id="activity-open-more" class="button ghost" hidden>Mostrar mais</button></details>
-<details class="report-section activity-section" data-report-group="journal"><summary>Journal · execuções desde a inicialização</summary><p id="activity-journal-status" role="status"></p><p class="muted">Itens comuns são ocultados por assinatura e localização. A presença nesta lista não indica trapaça.</p><label>Pesquisar nome, caminho ou PID<input id="activity-journal-search" type="search" placeholder="Pesquisar nesta lista"></label><div id="activity-journal-list"></div><button type="button" id="activity-journal-more" class="button ghost" hidden>Mostrar mais</button></details>
+<details class="report-section activity-section" data-report-group="journal"><summary>Journal · histórico de processos</summary><label>Período do Journal<select id="activity-journal-mode"><option value="boot">Verificar desde a inicialização do PC</option><option value="full">Verificar Journal completo disponível</option></select></label><p id="activity-journal-status" role="status"></p><p class="muted">Cada linha mostra uma execução: abertura em verde e fechamento em vermelho, nos horários registrados pelo Windows. Se faltar um evento, seu horário aparece como não registrado. Processos da System32 real do Windows são ocultados.</p><label>Pesquisar nome, caminho ou PID<input id="activity-journal-search" type="search" placeholder="Pesquisar nesta lista"></label><div id="activity-journal-list"></div><button type="button" id="activity-journal-more" class="button ghost" hidden>Mostrar mais</button></details>
               <details class="report-section info-inventory" data-report-group="inventory">
                 <summary>
                   <span>Itens ignorados pelos filtros locais</span>
@@ -562,8 +562,8 @@
   <link rel="stylesheet" href="/evidence-inspector.css?v=20261015">
   <script src="/evidence-inspector.js?v=20261015"></script>
   <script src="/battle-metrics-ui.js?v=20261015" defer></script>
-  <link rel="stylesheet" href="/process-activity.css?v=20261026">
-  <script src="/process-activity-ui.js?v=20261026" defer></script>
+  <link rel="stylesheet" href="/process-activity.css?v=20261026-journal2">
+  <script src="/process-activity-ui.js?v=20261026-journal2" defer></script>
   <script src="/admin.js?v=20261015-battlemetrics" defer></script>
   <script type="module" src="/operations.js?v=20261004"></script>
 </body>

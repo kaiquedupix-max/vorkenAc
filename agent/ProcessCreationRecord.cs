@@ -10,6 +10,7 @@ internal sealed class ProcessCreationRecord
     public bool ProcessPresent { get; set; }
     public string DriveType { get; set; } = "";
     public string ProcessId { get; set; } = "";
+    public string ProcessGuid { get; set; } = "";
     public string Source { get; set; } = "Security";
     public int EventId { get; set; } = 4688;
     public bool Signed { get; set; }

@@ -1,3 +1,4 @@
+import {buildProcessSessions} from './processSessions.js';
 const array = value => Array.isArray(value) ? value : [];
 const pathOf = item => String(item.path || item.processPath || "").replaceAll("/", "\\");
 const nameOf = item => String(item.name || item.processName || pathOf(item).split("\\").pop() || "");
@@ -34,6 +35,9 @@ export function activityRelevance(item, knownPaths = new Set()) {
 }
 
 export function buildProcessActivity(payload = {}, findings = []) {
+  const systemDirectory=normal(payload.processJournal?.systemDirectory).replace(/\\+$/,'');
+  const isRealSystem32=row=>/^[a-z]:\\/.test(systemDirectory) && !pathOf(row).split('\\').some(part=>part==='.'||part==='..') &&
+    normal(pathOf(row)).startsWith(systemDirectory+'\\');
   const knownPaths = new Set(array(findings).filter(x => ["critical", "high", "medium"].includes(x.severity)).flatMap(x => [x.artifact_value, x.evidence?.path, x.evidence?.processPath, x.evidence?.fullPath]).filter(x => typeof x === "string" && /[\\/]/.test(x)).map(normal));
   function select(rows) {
     let excludedCount = 0, commonCount = 0;
@@ -41,6 +45,7 @@ export function buildProcessActivity(payload = {}, findings = []) {
     for (const row of rows) {
       if (!row || typeof row !== "object") continue;
       if (excludedGameActivity(row)) { excludedCount++; continue; }
+      if (isRealSystem32(row)) { commonCount++; continue; }
       const reasons = activityRelevance(row, knownPaths);
       if (!reasons.length) { commonCount++; continue; }
       // Whitelist fields; command lines and arbitrary raw event XML are never projected.
@@ -48,7 +53,7 @@ export function buildProcessActivity(payload = {}, findings = []) {
         parentName: excludedGameActivity({path:row.parentProcessPath,name:row.parentProcessName}) ? "" : row.parentProcessName || "", parentPath: excludedGameActivity({ path: row.parentProcessPath, name: row.parentProcessName }) ? "" : row.parentProcessPath || "",
         signed: row.signed === true, signer: row.signerSubject || "", sha256: row.sha256 || "",
         inspectionStatus: row.inspectionStatus || "legacy", source: row.source || "", eventId: row.eventId || null,
-        action: [4689, 5].includes(Number(row.eventId)) ? "closed" : "opened", reasons });
+        action: [4689, 5].includes(Number(row.eventId)) ? "closed" : "opened", processGuid:row.processGuid||'', reasons });
     }
     return { items, commonCount, excludedCount, collectedCount: rows.length };
   }
@@ -68,5 +73,8 @@ export function buildProcessActivity(payload = {}, findings = []) {
   journal.sources = array(report?.sources).map(s => ({channel:s.channel, eventId:s.eventId, state:s.state, eventsRead:s.eventsRead, limitReached:s.limitReached === true, error:s.error || ""}));
   journal.legacy = !report;
   journal.coverage = !report ? "legacy" : journal.sources.some(s => s.limitReached) ? "limited" : journal.sources.some(s => s.state === "available") ? "recorded-events" : "unavailable";
+  const history=select(report?.collectionScope==='retained-history' ? array(report.events).filter(row=>Number.isFinite(Date.parse(row?.timeCreatedUtc))&&Date.parse(row.timeCreatedUtc)<=captured) : events);
+  journal.sessions=buildProcessSessions(history.items,journal.bootTimeUtc);
+  journal.fullHistory=report?.collectionScope==='retained-history';
   return { open, journal };
 }

@@ -16,10 +16,13 @@ Check(ProcessJournalCollector.ParseEvent(Event(@"C:\Tools\app.exe",captured.AddS
 Check(ProcessJournalCollector.ParseEvent(Event(@"C:\Tools\app.exe",boot.AddHours(1),1,"Microsoft-Windows-Sysmon/Operational"),boot,captured)?.Source=="Microsoft-Windows-Sysmon/Operational","Sysmon missing");
 Check(ProcessJournalCollector.ParseEvent(Event(@"C:\Tools\app.exe",boot.AddHours(1),2,"Security"),boot,captured)==null,"Unrelated event retained");
 Check(ProcessJournalCollector.ParseEvent("not xml",boot,captured)==null,"Malformed event retained");
-Console.WriteLine($"PASS: {assertions} assertions; synthetic Windows events only, no game access.");
 foreach(var pair in new[]{(4689,"Security"),(5,"Microsoft-Windows-Sysmon/Operational")}) {
  string xml=Event(@"C:\Tools\app.exe",boot.AddHours(1),pair.Item1,pair.Item2);
  if(pair.Item1==4689) xml=xml.Replace("Name=\"Image\"","Name=\"ProcessName\"");
  var closed=ProcessJournalCollector.ParseEvent(xml,boot,captured);
  Check(closed?.EventId==pair.Item1 && closed.ProcessPath==@"C:\Tools\app.exe","Termination event missing");
 }
+Check(ProcessJournalCollector.ParseEvent(Event(@"C:\Tools\app.exe",boot.AddDays(-1)),DateTime.MinValue,captured)!=null,"Retained history before boot missing");
+var metadata=new ProcessJournalReport();
+Check(metadata.CollectionScope=="retained-history" && metadata.SystemDirectory==Environment.GetFolderPath(Environment.SpecialFolder.System),"Windows System32 identity missing");
+Console.WriteLine($"PASS: {assertions} assertions; synthetic Windows events only, no game access.");

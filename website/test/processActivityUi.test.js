@@ -13,4 +13,15 @@ test('process and Journal lists render safely, search, paginate, and disclose un
  get('activity-open-more').handlers.click();assert.equal(get('activity-open-list').children.length,80);
  get('activity-open-search').value='app79';get('activity-open-search').handlers.input();assert.equal(get('activity-open-list').children.length,1);
  assert.match(get('activity-journal-status').textContent,/fonte indisponível/);
+ const current={name:'Discord.exe',pid:42,path:'C:\\Apps\\Discord.exe',state:'open',sinceBoot:true,openedAtUtc:'2026-10-26T11:00:00Z',closedAtUtc:null};
+ const historical={...current,state:'closed',sinceBoot:false,openedAtUtc:'2026-10-25T10:00:00Z',closedAtUtc:'2026-10-25T11:00:00Z'};
+ events['vorken:report']({detail:{report:{payload:{processActivity:{open:{items:[]},journal:{items:[],sessions:[current,historical],fullHistory:true,sources:[]}}}}}});
+ assert.equal(get('activity-journal-list').children.length,1);
+ assert.match(get('activity-journal-list').children[0].className,/activity-opened/);
+ get('activity-journal-mode').value='full';get('activity-journal-mode').handlers.change();
+ const cards=get('activity-journal-list').children;assert.equal(cards.length,2);
+ assert.match(cards[1].className,/activity-closed/);
+ assert(cards[1].children.some(n=>n.textContent.startsWith('Aberto em: ')));
+ assert(cards[1].children.some(n=>n.textContent.startsWith('Fechado em: ')));
+ assert.match(get('activity-journal-status').textContent,/Histórico completo disponível/);
 });

@@ -23,9 +23,8 @@ internal static class ProcessJournalCollector
             result.Sources.Add(status);
             try
             {
-                string from = result.BootTimeUtc.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture);
                 string to = captured.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture);
-                string query = $"*[System[(EventID={source.Item2}) and TimeCreated[@SystemTime >= '{from}' and @SystemTime <= '{to}']]]";
+                string query = $"*[System[(EventID={source.Item2}) and TimeCreated[@SystemTime <= '{to}']]]";
                 using var reader = new EventLogReader(new EventLogQuery(source.Item1, PathType.LogName, query) { ReverseDirection = true });
                 var clock = Stopwatch.StartNew();
                 while (status.EventsRead < MaximumEventsPerSource && clock.Elapsed < TimeSpan.FromSeconds(15))
@@ -33,7 +32,7 @@ internal static class ProcessJournalCollector
                     using EventRecord? record = reader.ReadEvent(TimeSpan.FromSeconds(1));
                     if (record == null) break;
                     status.EventsRead++;
-                    var item = ParseEvent(record.ToXml(), result.BootTimeUtc, captured);
+                    var item = ParseEvent(record.ToXml(), DateTime.MinValue, captured);
                     if (item != null) result.Events.Add(item);
                 }
                 status.LimitReached = status.EventsRead == MaximumEventsPerSource || clock.Elapsed >= TimeSpan.FromSeconds(15);
@@ -91,7 +90,8 @@ internal static class ProcessJournalCollector
                 TimeCreatedUtc = timestamp.UtcDateTime, ProcessPath = path, ProcessName = name,
                 ParentProcessPath = parent, ParentProcessName = Path.GetFileName(parent),
                 ProcessId = Value(eventId == 4688 ? "NewProcessId" : "ProcessId"),
-                Source = channel, EventId = eventId
+                Source = channel, EventId = eventId,
+                ProcessGuid = Value("ProcessGuid")
             };
         }
         catch (Exception ex) when (ex is System.Xml.XmlException || ex is ArgumentException) { return null; }
@@ -100,6 +100,8 @@ internal static class ProcessJournalCollector
 
 internal sealed class ProcessJournalReport
 {
+    public string CollectionScope { get; set; } = "retained-history";
+    public string SystemDirectory { get; set; } = Environment.GetFolderPath(Environment.SpecialFolder.System);
     public DateTime BootTimeUtc { get; set; }
     public DateTime CapturedAtUtc { get; set; }
     public List<ProcessCreationRecord> Events { get; set; } = new();
