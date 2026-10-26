@@ -63,6 +63,13 @@ async function collectFinal(report, helperOverrides = {}) {
   return findings;
 }
 
+test('Ubisoft, Steam and Store historical entries do not trigger generic deletion or random-name alerts', async()=>{
+ for(const path of ['C:\\Users\\r6fox\\AppData\\Local\\Ubisoft\\r6s\\RainbowSix.exe','C:\\Users\\joao\\AppData\\Local\\Ubisoft\\r6s\\RainbowSix.exe','D:\\Steam\\steamapps\\common\\Game\\AbC9xQ2LmN7.exe','microsoftstore.exe','XboxPcApp.exe']){
+  const findings=await collectFinal({collectedAtUtc:'2026-09-26T12:00:00Z',prefetchExecutions:[{resolvedExecutablePath:path,executablePresent:false,lastRunUtc:'2026-09-25T11:00:00Z'}],peInspections:[{path,signed:false,randomLikeName:true}]});
+  assert.equal(findings.some(x=>x.artifactType==='correlated_executable_v2'),false,path);
+ }
+});
+
 test("every structured direct catalog visit is preserved for review", async () => {
   const findings = await collect({
     collectedAtUtc: "2026-09-26T12:00:00Z",

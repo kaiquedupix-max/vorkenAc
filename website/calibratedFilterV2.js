@@ -1,3 +1,4 @@
+import { installedApplicationContext } from './installedApplicationContext.js';
 import {
   classifyExplicitCheatNameEvidence,
   classifyUnknownExecutableEvidence,
@@ -1061,6 +1062,8 @@ export async function runCalibratedFilterV2({
         evidenceForTrust,
         helpers
       )
+      || (installedApplicationContext(representative, evidenceForTrust) &&
+          helpers.knownCheatExecutableMatch?.(representative, evidenceForTrust)?.matched !== true)
     ) {
       continue;
     }

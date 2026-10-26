@@ -3,9 +3,15 @@ import assert from 'node:assert/strict';
 import {buildProcessActivity} from '../processActivity.js';
 import {projectReportPayloadForAdmin} from '../reportPayloadProjection.js';
 const bootTimeUtc='2026-10-23T10:00:00Z',capturedAtUtc='2026-10-23T12:00:00Z';
-test('common components require trusted signature and location; scripts remain visible',()=>{
+test('normal apps remain visible and every recorded open/close is retained',()=>{
+ const path='C:\\Users\\Player\\AppData\\Local\\Discord\\Discord.exe';
+ const result=buildProcessActivity({processes:[{name:'Discord.exe',path,signed:true,signerSubject:'Discord Inc.'}],processJournal:{bootTimeUtc,capturedAtUtc,events:[4688,4689,1,5].map(eventId=>({processPath:path,processId:'42',timeCreatedUtc:'2026-10-23T11:00:00Z',eventId}))}});
+ assert.equal(result.open.items.length,1);
+ assert.deepEqual(result.journal.items.map(x=>x.action),['opened','closed','opened','closed']);
+});
+test('common components and consoles are hidden only with trusted signature and location',()=>{
  const result=buildProcessActivity({processes:[{name:'svchost.exe',path:'C:\\Windows\\System32\\svchost.exe',signed:true,signerSubject:'Microsoft Corporation'},{name:'svchost.exe',path:'C:\\Temp\\svchost.exe',signed:true,signerSubject:'Microsoft Corporation'},{name:'powershell.exe',path:'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',signed:true,signerSubject:'Microsoft Corporation'}]});
- assert.equal(result.open.commonCount,1);assert.equal(result.open.items.length,2);
+ assert.equal(result.open.commonCount,2);assert.equal(result.open.items.length,1);
 });
 test('game and EAC excluded; excluded parent metadata not exposed',()=>{
  const result=buildProcessActivity({processes:[{name:'RustClient.exe'},{path:'C:\\SteamLibrary\\steamapps\\common\\OtherName\\x.dll'},{path:'C:\\Program Files\\EasyAntiCheat_EOS\\x.exe'},{path:'C:\\Tools\\app.exe',parentProcessName:'Rust.exe',parentProcessPath:'C:\\Rust\\Rust.exe',commandLine:'secret'}]});

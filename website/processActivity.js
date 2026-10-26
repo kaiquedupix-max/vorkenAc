@@ -13,11 +13,15 @@ export function excludedGameActivity(item) {
 }
 
 export function activityRelevance(item, knownPaths = new Set()) {
-  const path = normal(pathOf(item)), name = nameOf(item).toLowerCase();
+  const path = normal(pathOf(item)), rawName = nameOf(item).toLowerCase();
+  const name = rawName.endsWith('.exe') ? rawName : rawName + '.exe';
   const signer = String(item.signerSubject || item.processSigner || "");
   const reasons = [];
   if (knownPaths.has(path)) reasons.push("Correlacionado a um achado do relatório");
   if (/(?:^|\\)(?:temp|downloads|desktop|public|recycle\.bin|\$recycle\.bin)(?:\\|$)/i.test(path)) reasons.push("Executável em pasta de interesse");
+  if (!reasons.length && item.signed === true && /Microsoft/i.test(signer) &&
+      /^[a-z]:\\windows\\(?:system32|syswow64)\\/i.test(path) &&
+      (systemNames.has(name) || scriptHosts.has(name))) return [];
   if (scriptHosts.has(name)) reasons.push("Interpretador ou utilitário de execução");
   if (!path) reasons.push("Caminho indisponível; somente metadados");
   if (reasons.length) return reasons;
@@ -25,7 +29,7 @@ export function activityRelevance(item, knownPaths = new Set()) {
   const windowsPath = /^[a-z]:\\windows\\(?:system32|syswow64|winsxs|systemapps|servicing)\\/i.test(path) || /^[a-z]:\\windows\\explorer\.exe$/i.test(path);
   if (signed && /Microsoft/i.test(signer) && windowsPath && systemNames.has(name)) return [];
   const installedPath = /^[a-z]:\\program files(?: \(x86\))?\\/i.test(path) || /\\appdata\\local\\(?:discord|spotify|microsoft)\\/i.test(path);
-  if (signed && installedPath && appNames.has(name) && /(?:Microsoft|Google|Mozilla|Valve|Discord|Spotify)/i.test(signer)) return [];
+  if (signed && installedPath && appNames.has(name)) return ["Aplicativo em execução / registrado no histórico"];
   return [signed ? "Aplicativo fora da lista de componentes comuns" : "Assinatura não confirmada; revisão de contexto"];
 }
 
@@ -43,12 +47,13 @@ export function buildProcessActivity(payload = {}, findings = []) {
       items.push({ name: nameOf(row), path: pathOf(row), pid: row.pid ?? row.processId ?? "", timeUtc: row.timeCreatedUtc || row.startTimeUtc || null,
         parentName: excludedGameActivity({path:row.parentProcessPath,name:row.parentProcessName}) ? "" : row.parentProcessName || "", parentPath: excludedGameActivity({ path: row.parentProcessPath, name: row.parentProcessName }) ? "" : row.parentProcessPath || "",
         signed: row.signed === true, signer: row.signerSubject || "", sha256: row.sha256 || "",
-        inspectionStatus: row.inspectionStatus || "legacy", source: row.source || "", eventId: row.eventId || null, reasons });
+        inspectionStatus: row.inspectionStatus || "legacy", source: row.source || "", eventId: row.eventId || null,
+        action: [4689, 5].includes(Number(row.eventId)) ? "closed" : "opened", reasons });
     }
     return { items, commonCount, excludedCount, collectedCount: rows.length };
   }
   const open = select(array(payload.processes));
-  open.capturedAtUtc = payload.processSnapshotUtc || payload.scannedAtUtc || null;
+  open.capturedAtUtc = payload.processSnapshotUtc || payload.scannedAtUtc || payload.collectedAtUtc || null;
   const report = payload.processJournal && typeof payload.processJournal === "object" ? payload.processJournal : null;
   const boot = Date.parse(report?.bootTimeUtc), captured = Date.parse(report?.capturedAtUtc);
   // Old reports lack a boot boundary: never label their historic 4688 records as this boot.

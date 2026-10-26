@@ -9,10 +9,12 @@
     const rows=data.items.filter(r=>[r.name,r.path,r.pid,r.parentName,r.parentPath].join(' ').toLocaleLowerCase().includes(query));
     host.replaceChildren();
     for(const row of rows.slice(0,limits[kind])){
-      const card=document.createElement('article');card.className='activity-card';
+      const closed=kind==='journal' && row.action==='closed';
+      const card=document.createElement('article');card.className='activity-card '+(closed?'activity-closed':'activity-opened');
       const heading=document.createElement('h3');heading.textContent=row.name||'Processo sem nome';card.append(heading);
       line(card,'PID: ',String(row.pid||'indisponível'));line(card,'Caminho: ',row.path||'indisponível');
-      line(card,kind==='journal'?'Executado em: ':'Iniciado em: ',date(row.timeUtc));
+      line(card,'Estado: ',kind==='open'?'Aberto no momento do scan':closed?'Fechado':'Aberto');
+      line(card,closed?'Fechado em: ':'Aberto em: ',date(row.timeUtc));
       line(card,'Origem: ',kind==='journal'?row.source+' · evento '+row.eventId:({scanned:'Arquivo analisado', 'metadata-only':'Somente metadados','file-excluded':'Arquivo fora do escopo',legacy:'Relatório anterior'})[row.inspectionStatus]||row.inspectionStatus);
       line(card,'Assinatura: ',row.signed ? row.signer||'confirmada' : 'não confirmada');
       line(card,'SHA-256: ',row.sha256);line(card,'Processo pai: ',[row.parentName,row.parentPath].filter(Boolean).join(' · '));
@@ -35,7 +37,7 @@
       let status=counts+' · Coletado em '+date(data.capturedAtUtc)+'.';
       if(kind==='journal'){
         status=counts+' · Inicialização: '+date(data.bootTimeUtc)+' · Fim da coleta: '+date(data.capturedAtUtc)+'. ';
-        status+=data.legacy?'Este agente não enviou um Journal com limite de inicialização.': 'Mostra apenas execuções registradas pelo Windows (Security 4688 / Sysmon 1). Não é um histórico completo garantido. ';
+        status+=data.legacy?'Este agente não enviou um Journal com limite de inicialização.': 'Aberturas e fechamentos registrados desde a inicialização (Security 4688/4689 e Sysmon 1/5). Cada linha representa um evento; horários ausentes não são estimados. O histórico depende da auditoria disponível. ';
         for(const s of data.sources||[])status+=' '+s.channel+': '+({available:'eventos disponíveis','no-events':'sem eventos no período',unavailable:'fonte indisponível'})[s.state]+(s.limitReached?' (limite de coleta atingido)':'')+'.';
       }
       el('activity-'+kind+'-status').textContent=status;render(kind);

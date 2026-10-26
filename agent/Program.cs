@@ -261,7 +261,7 @@ internal static class Program
                 errors);
 
             ProcessJournalReport processJournal = ProcessJournalCollector.Collect();
-            List<ProcessCreationRecord> processCreationEvents = processJournal.Events;
+            List<ProcessCreationRecord> processCreationEvents = processJournal.Events.Where(x => x.EventId is 4688 or 1).ToList();
 
             List<ProcessTerminationRecord> processTerminationEvents = SafeCollect(
                 "Event Log 4689",

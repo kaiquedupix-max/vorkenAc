@@ -17,7 +17,7 @@ internal static class ProcessJournalCollector
             CapturedAtUtc = captured,
             BootTimeUtc = captured.AddMilliseconds(-Environment.TickCount64)
         };
-        foreach (var source in new[] { ("Security", 4688), ("Microsoft-Windows-Sysmon/Operational", 1) })
+        foreach (var source in new[] { ("Security", 4688), ("Security", 4689), ("Microsoft-Windows-Sysmon/Operational", 1), ("Microsoft-Windows-Sysmon/Operational", 5) })
         {
             var status = new JournalSourceStatus { Channel = source.Item1, EventId = source.Item2 };
             result.Sources.Add(status);
@@ -74,13 +74,13 @@ internal static class ProcessJournalCollector
             var system = document.Root?.Element(ns + "System");
             int.TryParse(system?.Element(ns + "EventID")?.Value, out int eventId);
             string channel = system?.Element(ns + "Channel")?.Value ?? "";
-            if (!((eventId == 4688 && channel == "Security") || (eventId == 1 && channel == "Microsoft-Windows-Sysmon/Operational"))) return null;
+            if (!((eventId is 4688 or 4689 && channel == "Security") || (eventId is 1 or 5 && channel == "Microsoft-Windows-Sysmon/Operational"))) return null;
             if (!DateTimeOffset.TryParse(system?.Element(ns + "TimeCreated")?.Attribute("SystemTime")?.Value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var timestamp)) return null;
             if (timestamp.UtcDateTime < boot || timestamp.UtcDateTime > captured) return null;
             var data = document.Descendants(ns + "Data").GroupBy(x => x.Attribute("Name")?.Value ?? "")
                 .ToDictionary(x => x.Key, x => x.First().Value, StringComparer.OrdinalIgnoreCase);
             string Value(string key) => data.GetValueOrDefault(key, "");
-            string path = Value(eventId == 4688 ? "NewProcessName" : "Image");
+            string path = Value(eventId == 4688 ? "NewProcessName" : eventId == 4689 ? "ProcessName" : "Image");
             string name = Path.GetFileName(path);
             if (string.IsNullOrWhiteSpace(path) || InspectionScope.IsExcludedProcess(name) || !InspectionScope.CanInspectPath(path)) return null;
             string parent = Value(eventId == 4688 ? "ParentProcessName" : "ParentImage");
