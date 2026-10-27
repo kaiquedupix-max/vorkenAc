@@ -5,7 +5,7 @@ import { communityVerificationEmbed, instructionMessagesToRemove } from './vorke
 import { ensureVerifiedRole } from './vorkenRoles.js';
 import { notificationSettings, publicNotice, verificationEmbed } from './vorkenSettings.js';
 import {
-  Client, GatewayIntentBits, PermissionFlagsBits as P, ChannelType,
+  Client, GatewayIntentBits, PermissionFlagsBits as P, ChannelType, OverwriteType,
   SlashCommandBuilder, MessageFlags, ActivityType, EmbedBuilder,
   ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder
 } from 'discord.js';
@@ -163,9 +163,9 @@ export async function startVorkenBot(platform){
       const screening=await role(stored.screening_role_id,'🔎 Em telagem','Em telagem',0xf39c12,'🔎');
       const staffRoles=guild.roles.cache.filter(r=>r.id!==guild.id&&!r.managed&&(r.permissions.has(P.Administrator)||r.permissions.has(P.BanMembers)));
       const botId=client.user.id;
-      const privateOverwrites=[{id:guild.id,deny:[P.ViewChannel]},
-        {id:botId,allow:[P.ViewChannel,P.SendMessages,P.ReadMessageHistory,P.ManageChannels,P.ManageMessages,P.AttachFiles,P.EmbedLinks]},
-        ...staffRoles.map(r=>({id:r.id,allow:[P.ViewChannel,P.SendMessages,P.ReadMessageHistory]}))];
+      const privateOverwrites=[{id:guild.id,type:OverwriteType.Role,deny:[P.ViewChannel]},
+        {id:botId,type:OverwriteType.Member,allow:[P.ViewChannel,P.SendMessages,P.ReadMessageHistory,P.ManageChannels,P.ManageMessages,P.AttachFiles,P.EmbedLinks]},
+        ...staffRoles.map(r=>({id:r.id,type:OverwriteType.Role,allow:[P.ViewChannel,P.SendMessages,P.ReadMessageHistory]}))];
       const normalize=name=>name.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
       const channel=async(id,name,type,overwrites)=>guild.channels.cache.get(id)||
         (type===ChannelType.GuildCategory?guild.channels.cache.find(c=>c.type===type&&normalize(c.name)===normalize(name)):null)||
@@ -174,15 +174,15 @@ export async function startVorkenBot(platform){
       if(category.name!=='Verificação Vorken')await category.setName('Verificação Vorken');
       const previousInstructions=stored.verification_channel_id||guild.channels.cache.find(c=>c.type===ChannelType.GuildText&&c.parentId===category.id&&normalize(c.name)==='verificacao')?.id;
       const instructions=await channel(previousInstructions,'verificacao',ChannelType.GuildText,[
-        {id:guild.id,allow:[P.ViewChannel,P.ReadMessageHistory,P.SendMessages],deny:[P.AttachFiles,P.EmbedLinks]},
-        {id:botId,allow:[P.ViewChannel,P.SendMessages,P.ReadMessageHistory,P.EmbedLinks,P.ManageMessages]}]);
+        {id:guild.id,type:OverwriteType.Role,allow:[P.ViewChannel,P.ReadMessageHistory,P.SendMessages],deny:[P.AttachFiles,P.EmbedLinks]},
+        {id:botId,type:OverwriteType.Member,allow:[P.ViewChannel,P.SendMessages,P.ReadMessageHistory,P.EmbedLinks,P.ManageMessages]}]);
       const previousAlerts=stored.alerts_channel_id||guild.channels.cache.find(c=>c.type===ChannelType.GuildText&&c.parentId===category.id&&normalize(c.name)==='vorken-alertas')?.id;
       const alerts=await channel(previousAlerts,'vorken-alertas',ChannelType.GuildText,privateOverwrites);
       if(alerts.parentId!==category.id)await alerts.setParent(category.id,{lockPermissions:false});
       await alerts.permissionOverwrites.set(privateOverwrites);
       if(instructions.parentId!==category.id)await instructions.setParent(category.id,{lockPermissions:false});
-      await instructions.permissionOverwrites.edit(guild.id,{ViewChannel:true,ReadMessageHistory:true,SendMessages:true,AttachFiles:false,EmbedLinks:false});
-      await instructions.permissionOverwrites.edit(botId,{ViewChannel:true,SendMessages:true,ReadMessageHistory:true,EmbedLinks:true,ManageMessages:true});
+      await instructions.permissionOverwrites.edit(guild.id,{ViewChannel:true,ReadMessageHistory:true,SendMessages:true,AttachFiles:false,EmbedLinks:false},{type:OverwriteType.Role});
+      await instructions.permissionOverwrites.edit(botId,{ViewChannel:true,SendMessages:true,ReadMessageHistory:true,EmbedLinks:true,ManageMessages:true},{type:OverwriteType.Member});
       const previousMessages=await instructions.messages.fetch({limit:50});
       for(const message of previousMessages.values()){
         const oldFeedback=message.author.id===botId&&/^<@!?\d+> /.test(message.content)&&/código (inválido|validado)|Não foi possível validar o código/.test(message.content);
@@ -292,12 +292,12 @@ export async function startVorkenBot(platform){
     await guild.channels.fetch();
     let ticket=guild.channels.cache.get(session.ticket_channel_id)||guild.channels.cache.find(c=>c.topic==='VORKEN_SESSION:'+session.id);
     if(!ticket){
-      const overwrites=[{id:guild.id,deny:[P.ViewChannel]},
-        {id:client.user.id,allow:[P.ViewChannel,P.SendMessages,P.ReadMessageHistory,P.ManageChannels,P.AttachFiles,P.EmbedLinks]},
-        ...guild.roles.cache.filter(r=>r.id!==guild.id&&!r.managed&&(r.permissions.has(P.Administrator)||r.permissions.has(P.BanMembers))).map(r=>({id:r.id,allow:[P.ViewChannel,P.SendMessages,P.ReadMessageHistory]}))];
-      if(session.discord_user_id)overwrites.push({id:session.discord_user_id,allow:[P.ViewChannel,P.SendMessages,P.ReadMessageHistory],deny:[]});
+      const overwrites=[{id:guild.id,type:OverwriteType.Role,deny:[P.ViewChannel]},
+        {id:client.user.id,type:OverwriteType.Member,allow:[P.ViewChannel,P.SendMessages,P.ReadMessageHistory,P.ManageChannels,P.AttachFiles,P.EmbedLinks]},
+        ...guild.roles.cache.filter(r=>r.id!==guild.id&&!r.managed&&(r.permissions.has(P.Administrator)||r.permissions.has(P.BanMembers))).map(r=>({id:r.id,type:OverwriteType.Role,allow:[P.ViewChannel,P.SendMessages,P.ReadMessageHistory]}))];
+      if(session.discord_user_id)overwrites.push({id:session.discord_user_id,type:OverwriteType.Member,allow:[P.ViewChannel,P.SendMessages,P.ReadMessageHistory],deny:[]});
       const admin=await administratorIdentity(guild,session.administrator_id,db);
-      if(admin.id&&admin.id!==session.discord_user_id)overwrites.push({id:admin.id,allow:[P.ViewChannel,P.SendMessages,P.ReadMessageHistory],deny:[]});
+      if(admin.id&&admin.id!==session.discord_user_id)overwrites.push({id:admin.id,type:OverwriteType.Member,allow:[P.ViewChannel,P.SendMessages,P.ReadMessageHistory],deny:[]});
       ticket=await guild.channels.create({name:'vorken-'+session.steam_id.slice(-6),type:ChannelType.GuildText,parent:config.category_id,topic:'VORKEN_SESSION:'+session.id,permissionOverwrites:overwrites});
     }
     const member=session.discord_user_id?await guild.members.fetch(session.discord_user_id).catch(()=>null):null;
