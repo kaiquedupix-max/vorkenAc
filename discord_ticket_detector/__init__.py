@@ -11,11 +11,11 @@ import unicodedata
 from typing import Iterable, Mapping
 
 EVENT_PATTERNS = {
-    "opened": (r"\\bticket\\s*(?:created|opened|open)\\b", r"\\b(?:ticket|chamado)\\s*(?:aberto|criado)\\b", r"\\b(?:nuevo ticket|ticket abierto)\\b"),
-    "closed": (r"\\bticket\\s*(?:closed|deleted|archived)\\b", r"\\b(?:ticket|chamado)\\s*(?:fechado|encerrado|arquivado)\\b", r"\\b(?:ticket cerrado|ticket archivado)\\b"),
+    "opened": (r"\bticket\s*(?:created|opened|open)\b", r"\b(?:ticket|chamado)\s*(?:aberto|criado)\b", r"\b(?:nuevo ticket|ticket abierto)\b"),
+    "closed": (r"\bticket\s*(?:closed|deleted|archived)\b", r"\b(?:ticket|chamado)\s*(?:fechado|encerrado|arquivado)\b", r"\b(?:ticket cerrado|ticket archivado)\b"),
 }
-ORDER_PATTERN = re.compile(r"\\b(?:purchase completed|order (?:ready|completed)|compra (?:aprovada|concluida)|pedido (?:entregue|concluido))\\b")
-SNOWFLAKE = re.compile(r"^\\d{17,20}$")
+ORDER_PATTERN = re.compile(r"\b(?:purchase completed|order (?:ready|completed)|compra (?:aprovada|concluida)|pedido (?:entregue|concluido))\b")
+SNOWFLAKE = re.compile(r"^\d{17,20}$")
 
 
 def normalize(value: str) -> str:
